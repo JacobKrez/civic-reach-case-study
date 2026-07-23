@@ -8,6 +8,7 @@ from typing import Any, Callable
 from pydantic import ValidationError
 
 from .calculator import calculate_eligibility
+from .guardrails.crisis import crisis_response, detect_crisis
 from .llm_client import LLMClient
 from .retrieval import retrieve
 from .state import AssessmentState
@@ -117,9 +118,15 @@ class CivicReachAgent:
         )
 
     def turn(self, user_message: str) -> str:
-        """Process one user turn and return the LLM's assistant text."""
+        """Process one user turn, prioritizing deterministic crisis resources."""
         self.state.turn_count += 1
         self._messages.append({"role": "user", "content": user_message})
+
+        if detect_crisis(user_message):
+            self.state.is_crisis = True
+            content = crisis_response()
+            self._messages.append({"role": "assistant", "content": content})
+            return content
 
         response = self.llm_client.chat(
             [*self._messages, {"role": "user", "content": self._context()}],
