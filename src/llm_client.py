@@ -23,8 +23,8 @@ class LLMClient:
     # Keys .env is allowed to fill in even when already present in the
     # environment, but only if the existing value is empty. python-dotenv's
     # default load_dotenv() never overrides an already-set var - including
-    # one set to "" - so a stray empty export (e.g. a shell may have
-    # MINIMAX_API_KEY="" pre-exported in the shell environment) silently
+    # one set to "" - so a stray empty export (e.g. MINIMAX_API_KEY=""
+    # pre-exported in the shell environment) silently
     # shadows the real value in .env. override=True would fix that but also
     # stomps deliberate test-time monkeypatch.setenv() calls, so we only
     # clear the specific empty-string case before the normal (non-override)
