@@ -89,8 +89,9 @@ def _monthly(annual: float, multiplier: float) -> float:
 def _build_limits() -> Dict[int, Dict[str, float]]:
     """Build both the gross (130%) and net (100%) monthly limit tables.
 
-    Returns a nested dict ``{household_size: {"gross": ..., "net": ...}}``
-    so the calculator can pick the right track in one lookup.
+    Returns a nested dict ``{household_size: {"gross": ..., "net": ..., "expanded": ...}}``
+    so the calculator can pick the right track and the expanded 200% band in
+    one lookup.
     """
     limits: Dict[int, Dict[str, float]] = {}
     for size in range(1, _MAX_HOUSEHOLD_SIZE + 1):
@@ -104,6 +105,7 @@ def _build_limits() -> Dict[int, Dict[str, float]]:
         limits[size] = {
             "gross": _monthly(annual, 1.30),  # 130% of poverty — gross test
             "net": _monthly(annual, 1.00),    # 100% of poverty — net test
+            "expanded": _monthly(annual, 2.00),  # 200% of poverty — apply-anyway band
         }
     return limits
 
@@ -155,6 +157,12 @@ def calculate_eligibility(
       conservative bias toward the stricter net test.
     * ``household_size`` (int) — echoed back so callers don't have to
       thread the input through separately.
+    * ``expanded_limit`` (float) — the 200% of poverty guideline monthly
+      limit used to identify households that should apply anyway.
+    * ``outcome`` (str) — ``"likely_eligible"`` when the applicable test
+      passes, ``"uncertain_apply_anyway"`` when it fails but gross income is
+      at or below 200% of poverty, or ``"likely_ineligible"`` when gross
+      income is above 200% of poverty.
     * ``notes`` (str) — human-readable explanation of the result and the
       rule applied, suitable for surfacing in the user-facing summary.
 
@@ -174,7 +182,15 @@ def calculate_eligibility(
 
     test_used = "net" if has_elderly_or_disabled else "gross"
     limit = _limit_for(household_size, test_used)
+    expanded_limit = _limit_for(household_size, "expanded")
     qualifies = gross_monthly_income <= limit
+
+    if qualifies:
+        outcome = "likely_eligible"
+    elif gross_monthly_income <= expanded_limit:
+        outcome = "uncertain_apply_anyway"
+    else:
+        outcome = "likely_ineligible"
 
     if has_elderly_or_disabled:
         rule_note = (
@@ -192,18 +208,37 @@ def calculate_eligibility(
     if gross_monthly_income == limit:
         boundary_note = " Income equals the limit exactly and qualifies."
 
+    if outcome == "uncertain_apply_anyway":
+        outcome_note = (
+            " The household fails the initial applicable income test but may "
+            "still qualify after allowable deductions because gross income is "
+            "at or below 200% of the poverty guideline. Apply anyway or use "
+            "the NC ePASS portal for a full determination."
+        )
+    elif outcome == "likely_eligible":
+        outcome_note = " The household passes the initial applicable income test."
+    else:
+        outcome_note = (
+            " Gross income is above 200% of the poverty guideline, so the "
+            "household is unlikely to qualify based on income."
+        )
+
     notes = (
         f"{rule_note} Monthly income ${gross_monthly_income:,.2f} vs "
         f"{test_used} limit ${limit:,.2f} for household of {household_size}."
-        f"{boundary_note} Result: {'likely qualifies' if qualifies else 'likely does not qualify'}."
+        f"{boundary_note} Result: "
+        f"{'likely qualifies' if qualifies else 'likely does not qualify'}."
+        f"{outcome_note}"
     )
 
     return {
         "qualifies": qualifies,
         "test_used": test_used,
         "limit": limit,
+        "expanded_limit": expanded_limit,
         "income_considered": gross_monthly_income,
         "household_size": household_size,
+        "outcome": outcome,
         "notes": notes,
     }
 

@@ -156,3 +156,57 @@ def test_negative_income_rejected():
 def test_source_url_is_a_real_https_link():
     assert _POVERTY_GUIDELINES_SOURCE_URL.startswith("https://")
     assert "aspe.hhs.gov" in _POVERTY_GUIDELINES_SOURCE_URL
+
+
+# ---------- three-outcome eligibility band (130-200% expanded band) ----------
+def test_non_elderly_likely_eligible_outcome():
+    result = calculate_eligibility(1, HH1_GROSS_LIMIT, False)
+    assert result["qualifies"] is True
+    assert result["outcome"] == "likely_eligible"
+
+
+def test_non_elderly_uncertain_apply_anyway_outcome():
+    result = calculate_eligibility(1, 2500.0, False)
+    assert result["qualifies"] is False
+    assert result["outcome"] == "uncertain_apply_anyway"
+    assert "allowable deductions" in result["notes"]
+    assert "NC ePASS" in result["notes"]
+
+
+def test_non_elderly_exactly_at_200_percent_is_uncertain():
+    result = calculate_eligibility(1, 2_608.33, False)
+    assert result["outcome"] == "uncertain_apply_anyway"
+    assert result["qualifies"] is False
+    assert result["income_considered"] == result["expanded_limit"]
+
+
+def test_non_elderly_above_200_percent_is_likely_ineligible():
+    result = calculate_eligibility(1, 9000.0, False)
+    assert result["qualifies"] is False
+    assert result["outcome"] == "likely_ineligible"
+
+
+def test_elderly_disabled_likely_eligible_outcome():
+    result = calculate_eligibility(1, HH1_NET_LIMIT, True)
+    assert result["qualifies"] is True
+    assert result["outcome"] == "likely_eligible"
+
+
+def test_elderly_disabled_uncertain_apply_anyway_outcome():
+    result = calculate_eligibility(1, 2500.0, True)
+    assert result["qualifies"] is False
+    assert result["outcome"] == "uncertain_apply_anyway"
+    assert "net income test" in result["notes"]
+
+
+def test_elderly_disabled_exactly_at_200_percent_is_uncertain():
+    result = calculate_eligibility(1, 2_608.33, True)
+    assert result["outcome"] == "uncertain_apply_anyway"
+    assert result["qualifies"] is False
+    assert result["income_considered"] == result["expanded_limit"]
+
+
+def test_elderly_disabled_above_200_percent_is_likely_ineligible():
+    result = calculate_eligibility(1, 9000.0, True)
+    assert result["qualifies"] is False
+    assert result["outcome"] == "likely_ineligible"
