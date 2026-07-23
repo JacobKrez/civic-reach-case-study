@@ -96,22 +96,30 @@ class CivicReachAgent:
         # surfaced via ``_context()`` so the model can reference past
         # corrections naturally without re-deriving them.
         self._corrections: list[dict[str, Any]] = []
+        # Retrieval hits (list of {doc, snippet, score}) behind the most
+        # recent eligibility result. Populated when a result is first
+        # produced (see turn()). Exposed for the web UI's citation panel
+        # and so a reviewer can see WHICH documents grounded the answer.
+        self.last_citations: list[dict[str, Any]] = []
 
     @property
     def eligibility_result(self) -> dict[str, Any] | None:
         return self._eligibility_result
 
+    def _track_query(self) -> str:
+        """The retrieval query for the household's applicable income track."""
+        if self.state.missing_fields():
+            return "NC FNS eligibility intake questions"
+        track = (
+            "elderly disabled household net income rule"
+            if self.state.has_elderly_or_disabled_member
+            else "gross income 130 percent rule"
+        )
+        return f"NC FNS {track}"
+
     def _context(self) -> str:
         missing = self.state.missing_fields()
-        query = "NC FNS eligibility intake questions"
-        if not missing:
-            track = (
-                "elderly disabled household net income rule"
-                if self.state.has_elderly_or_disabled_member
-                else "gross income 130 percent rule"
-            )
-            query = f"NC FNS {track}"
-        rule_text = self._retrieve(query)
+        rule_text = self._retrieve(self._track_query())
         payload: dict[str, Any] = {
             "assessment_state": self.state.model_dump(),
             "missing_fields": missing,
@@ -280,9 +288,31 @@ class CivicReachAgent:
             # ``new_corrections`` keeps its default empty value so no
             # phantom suffix is appended below.
             pass
+        had_result = self._eligibility_result is not None
         self._calculate_once()
+        result_just_produced = not had_result and self._eligibility_result is not None
 
         content = str(response.get("content") or "")
+
+        # When an eligibility result is first produced, ground it visibly:
+        # capture the retrieval hits for the applicable track and append a
+        # deterministic "Sources:" line naming the documents. This is
+        # code-templated (not model-generated) so the citation cannot be
+        # hallucinated, and it makes the RAG grounding demonstrable live
+        # instead of invisible. Hits are also stored on self.last_citations
+        # for the web UI's citation panel.
+        if result_just_produced:
+            hits = self._retrieve(self._track_query())
+            if isinstance(hits, list):
+                self.last_citations = hits
+                docs: list[str] = []
+                for h in hits:
+                    doc = h.get("doc") if isinstance(h, dict) else None
+                    if doc and doc not in docs:
+                        docs.append(doc)
+                if docs:
+                    sources = f"(Sources: {', '.join(docs)}.)"
+                    content = f"{content} {sources}" if content else sources
         # Append a deterministic, code-templated suffix line for every
         # intake-field correction observed on THIS turn. The model does
         # not write these lines — they are generated from
