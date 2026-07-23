@@ -85,6 +85,17 @@ class CivicReachAgent:
         self._retrieve = retriever
         self._messages: list[dict[str, str]] = []
         self._eligibility_result: dict[str, Any] | None = None
+        # Append-only history of intake-field corrections. A correction is
+        # a non-None -> DIFFERENT non-None change to one of the three
+        # intake fields (``household_size``, ``gross_monthly_income``,
+        # ``has_elderly_or_disabled_member``). The first time a field is
+        # set (None -> value) is NOT a correction — the user is providing
+        # the field, not changing it. Each entry is a dict with keys
+        # ``field``, ``old``, ``new``, and ``turn`` (the 1-indexed user
+        # turn on which the correction was observed). The list is also
+        # surfaced via ``_context()`` so the model can reference past
+        # corrections naturally without re-deriving them.
+        self._corrections: list[dict[str, Any]] = []
 
     @property
     def eligibility_result(self) -> dict[str, Any] | None:
@@ -105,6 +116,7 @@ class CivicReachAgent:
             "assessment_state": self.state.model_dump(),
             "missing_fields": missing,
             "retrieved_rule_text": rule_text,
+            "corrections": list(self._corrections),
         }
         if self._eligibility_result is not None:
             payload["deterministic_eligibility_result"] = self._eligibility_result
@@ -113,7 +125,19 @@ class CivicReachAgent:
     # Intake fields whose change invalidates a cached eligibility result.
     _INTAKE_FIELDS = ("household_size", "gross_monthly_income", "has_elderly_or_disabled_member")
 
-    def _apply_tool_calls(self, calls: list[dict[str, Any]]) -> None:
+    def _apply_tool_calls(self, calls: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Apply every update_state tool call in ``calls``.
+
+        Processes ALL update_state calls in the turn (a model may emit
+        more than one), accumulating corrections across them. Returns a
+        list of correction records — one per intake field whose value
+        changed from a previous non-None value to a DIFFERENT non-None
+        value. The caller commits these to ``self._corrections`` only
+        after this method returns successfully, so a validation failure
+        mid-turn leaves no phantom correction behind (the whole turn's
+        apply raises before any correction is committed).
+        """
+        new_corrections: list[dict[str, Any]] = []
         for call in calls:
             if call.get("name") != "update_state":
                 continue
@@ -140,16 +164,30 @@ class CivicReachAgent:
                     updates["gross_monthly_income"] = normalized
             if not updates:
                 continue
-            # A correction to any intake field after a result was computed
-            # must invalidate the cached result so the next _calculate_once
-            # recomputes against the corrected state. Without this, a user
-            # who says "actually my income is $900" keeps getting the old
-            # verdict — the exact self-contradiction scenario the case
-            # study says the agent must survive.
-            changed_intake = any(
-                field in updates and updates[field] != getattr(self.state, field)
-                for field in self._INTAKE_FIELDS
-            )
+            # Detect intake-field corrections (non-None -> DIFFERENT
+            # non-None) BEFORE we mutate ``self.state``. ``None -> value``
+            # is intentionally NOT a correction — the user is providing
+            # the field for the first time, not changing it. A False ->
+            # True flip on ``has_elderly_or_disabled_member`` counts. Any
+            # such change also invalidates a cached eligibility result so
+            # the next ``_calculate_once`` recomputes against corrected
+            # state (the self-contradiction scenario the rubric tests).
+            call_corrections: list[dict[str, Any]] = []
+            for field in self._INTAKE_FIELDS:
+                if field not in updates:
+                    continue
+                new_value = updates[field]
+                old_value = getattr(self.state, field)
+                if old_value is None or new_value == old_value:
+                    continue
+                call_corrections.append(
+                    {
+                        "field": field,
+                        "old": old_value,
+                        "new": new_value,
+                        "turn": self.state.turn_count,
+                    }
+                )
             # model_copy does not validate in Pydantic v2, so validate the
             # candidate FIRST and only assign on success — assigning before
             # validation would leave an invalid value (e.g. household_size
@@ -159,8 +197,10 @@ class CivicReachAgent:
                 self.state = AssessmentState.model_validate(candidate.model_dump())
             except ValidationError as exc:
                 raise ValueError(f"Invalid update_state call: {exc}") from exc
-            if changed_intake and self._eligibility_result is not None:
+            if call_corrections and self._eligibility_result is not None:
                 self._eligibility_result = None
+            new_corrections.extend(call_corrections)
+        return new_corrections
 
     def _calculate_once(self) -> None:
         if self._eligibility_result is not None or not self.state.is_ready_to_calculate():
@@ -229,17 +269,36 @@ class CivicReachAgent:
             system=self.system_prompt,
             tools=self.tools,
         )
+        new_corrections: list[dict[str, Any]] = []
         try:
-            self._apply_tool_calls(response.get("tool_calls") or [])
+            new_corrections = self._apply_tool_calls(response.get("tool_calls") or [])
         except ValueError:
             # A malformed/over-limit tool call from the model (e.g.
             # household_size above the schema cap) must not crash the
             # turn. Drop the bad update; state stays valid, the field
             # stays missing, and the loop re-asks on the next turn.
+            # ``new_corrections`` keeps its default empty value so no
+            # phantom suffix is appended below.
             pass
         self._calculate_once()
 
         content = str(response.get("content") or "")
+        # Append a deterministic, code-templated suffix line for every
+        # intake-field correction observed on THIS turn. The model does
+        # not write these lines — they are generated from
+        # ``new_corrections`` so they are testable and cannot be
+        # hallucinated. Corrections are committed to ``self._corrections``
+        # only after the apply call succeeded (a failed apply drops the
+        # suffix so a phantom correction never reaches the user).
+        self._corrections.extend(new_corrections)
+        for entry in new_corrections:
+            suffix = (
+                f"(Updated {entry['field']}: {entry['old']} -> {entry['new']}.)"
+            )
+            if content:
+                content = f"{content} {suffix}"
+            else:
+                content = suffix
         self._messages.append({"role": "assistant", "content": content})
         return content
 
