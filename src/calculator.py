@@ -122,6 +122,29 @@ def _limit_for(household_size: int, test: str) -> float:
     return _LIMITS[household_size][test]
 
 
+def income_limits(household_size: int) -> Dict[str, float]:
+    """Public accessor for the monthly income limits at a household size.
+
+    Returns ``{"gross": ..., "net": ..., "expanded": ...}`` (130% / 100% /
+    200% of the federal poverty guideline, monthly). This is the single
+    source of truth other modules must read from — the knowledge-base
+    income table (``knowledge_base/02_income_limits.md``) is *generated*
+    from this so the agent's cited numbers can never drift from the
+    numbers it actually computes with. See ``scripts/generate_kb_table.py``.
+    """
+    if household_size < 1 or household_size > _MAX_HOUSEHOLD_SIZE:
+        raise ValueError(
+            f"household_size must be between 1 and {_MAX_HOUSEHOLD_SIZE}; "
+            f"got {household_size}"
+        )
+    return dict(_LIMITS[household_size])
+
+
+def max_household_size() -> int:
+    """The largest household size the limit table covers."""
+    return _MAX_HOUSEHOLD_SIZE
+
+
 def calculate_eligibility(
     household_size: int,
     gross_monthly_income: float,
@@ -243,4 +266,4 @@ def calculate_eligibility(
     }
 
 
-__all__ = ["calculate_eligibility", "_POVERTY_GUIDELINES_SOURCE_URL"]
+__all__ = ["calculate_eligibility", "income_limits", "max_household_size", "_POVERTY_GUIDELINES_SOURCE_URL"]
