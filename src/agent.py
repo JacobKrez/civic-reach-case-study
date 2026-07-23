@@ -9,19 +9,42 @@ from pydantic import ValidationError
 
 from .calculator import calculate_eligibility
 from .guardrails.crisis import crisis_response, detect_crisis
+from .guardrails.pii import redact_for_logging
+from .guardrails.scope import detect_out_of_scope, scope_redirect_message
 from .llm_client import LLMClient
 from .retrieval import retrieve
 from .state import AssessmentState
 
 SYSTEM_PROMPT = """You are CivicReach, an empathetic North Carolina Food and
-Nutrition Services (FNS) eligibility assistant. Collect only the information
-needed for an initial screen. Ask exactly ONE question at a time, for the first
-field listed under missing_fields. Never ask again for a field already present
-in state. Record user-provided facts only by calling update_state; do not put
-arithmetic or inferred values in that tool call. Never do eligibility arithmetic
-yourself. Once the deterministic eligibility result is supplied, explain it
-using that result and the retrieved rule text, clearly labeling it as an initial
-screen rather than a final agency determination.
+Nutrition Services (FNS) eligibility assistant. Your scope is strictly an
+initial eligibility screen for NC FNS / SNAP; you do not give legal advice
+and you do not help with unrelated topics.
+
+Collect only the three fields the calculator needs:
+  1. household_size  (integer)
+  2. gross_monthly_income  (number)
+  3. has_elderly_or_disabled_member  (boolean)
+
+NEVER ask the user for any other personally identifiable information. In
+particular, do NOT request: a Social Security number, a full date of birth,
+a home address, a phone number, a bank account number, a driver's license
+number, an immigration status, or any other identifier beyond the three
+fields above. If the user volunteers such information, accept it gracefully
+but do not store it and do not echo it back verbatim.
+
+Ask exactly ONE question at a time, for the first field listed under
+missing_fields. Never ask again for a field already present in state.
+Record user-provided facts only by calling update_state; do not put
+arithmetic or inferred values in that tool call. Never do eligibility
+arithmetic yourself. Once the deterministic eligibility result is
+supplied, explain it using that result and the retrieved rule text,
+clearly labeling it as an initial screen rather than a final agency
+determination.
+
+If the user asks for something outside the NC FNS eligibility scope,
+respond with a brief polite redirect back to the FNS questions and do
+not attempt to answer the off-topic ask. Do not abandon or reset any
+state that has already been collected.
 """
 
 UPDATE_STATE_TOOL = {
@@ -118,13 +141,35 @@ class CivicReachAgent:
         )
 
     def turn(self, user_message: str) -> str:
-        """Process one user turn, prioritizing deterministic crisis resources."""
+        """Process one user turn, prioritizing deterministic guardrails.
+
+        Order of evaluation:
+        1. Crisis detection (food/safety emergencies) -> hardcoded resources.
+        2. Out-of-scope detection (legal advice, unrelated topics)
+           -> fixed polite redirect. State is preserved; is_out_of_scope
+           is flipped so the agent loop can remember.
+        3. Otherwise, hand to the LLM as normal.
+
+        The PII redactor is applied to the user message before it is
+        recorded in the internal message history so that any later log
+        dump is free of SSN-shaped or account-shaped patterns.
+        """
         self.state.turn_count += 1
-        self._messages.append({"role": "user", "content": user_message})
+
+        # Record the redacted form of the user message in conversation
+        # history so any log/print of the history is PII-safe.
+        safe_user_message = redact_for_logging(user_message)
+        self._messages.append({"role": "user", "content": safe_user_message})
 
         if detect_crisis(user_message):
             self.state.is_crisis = True
             content = crisis_response()
+            self._messages.append({"role": "assistant", "content": content})
+            return content
+
+        if detect_out_of_scope(user_message):
+            self.state.is_out_of_scope = True
+            content = scope_redirect_message()
             self._messages.append({"role": "assistant", "content": content})
             return content
 
