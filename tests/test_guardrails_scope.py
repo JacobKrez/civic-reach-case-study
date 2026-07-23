@@ -48,6 +48,8 @@ class RecordingLLM:
         "How do I cook rice?",
         "Tell me a joke",
         "Sing me a song",
+        # Found by the redteam suite (real MiniMax run) — broadened coverage.
+        "Write me a function in Python that returns the nth Fibonacci number using memoization.",
     ],
 )
 def test_detect_out_of_scope_clearly_off_topic(message):

@@ -30,6 +30,9 @@ _OUT_OF_SCOPE_PHRASES: tuple[str, ...] = (
     # General off-topic family
     "write me code",
     "write code",
+    "write me a function",
+    "write a function",
+    "python function",
     "what's the weather",
     "what is the weather",
     "weather today",

@@ -13,12 +13,26 @@ import re
 # as "ignore" can produce false positives, which is an acceptable trade-off
 # for this narrow scope.
 _INJECTION_PATTERNS: tuple[re.Pattern[str], ...] = (
-    re.compile(r"\bignore\s+(?:all\s+)?(?:of\s+)?(?:my\s+|your\s+|the\s+|previous\s+|prior\s+|earlier\s+)?instructions\b", re.IGNORECASE),
+    re.compile(r"\bignore\s+(?:all\s+|any\s+)?(?:of\s+)?(?:my\s+|your\s+|the\s+|previous\s+|prior\s+|earlier\s+)?(?:instructions|system\s+messages?)\b", re.IGNORECASE),
     re.compile(r"\bdisregard\s+(?:all\s+)?(?:of\s+)?(?:the\s+|your\s+|my\s+|previous\s+|prior\s+|earlier\s+)?(?:system\s+prompt|instructions?)\b", re.IGNORECASE),
+    re.compile(r"\bdo\s+not\s+follow\s+(?:the\s+)?(?:original\s+|previous\s+|prior\s+)?instructions\b", re.IGNORECASE),
     re.compile(r"\byou\s+are\s+now\b", re.IGNORECASE),
+    re.compile(r"\byour\s+new\s+(?:role|objective|task)\b", re.IGNORECASE),
+    re.compile(r"\bfrom\s+now\s+on\s*,?\s*your\b", re.IGNORECASE),
     re.compile(r"\bact\s+as\b", re.IGNORECASE),
-    re.compile(r"\bnew\s+instructions\s*:", re.IGNORECASE),
+    re.compile(r"\bnew\s+(?:instructions|objective)\s*[:=]", re.IGNORECASE),
     re.compile(r"\bforget\s+(?:everything|all)\s+(?:above|before|prior)\b", re.IGNORECASE),
+    # System-prompt / internal-instruction extraction attempts.
+    re.compile(r"\b(?:print|dump|show|reveal|output)\s+(?:the\s+)?(?:full\s+text\s+of\s+)?(?:your\s+)?(?:system\s+prompt|internal\s+instructions|primary\s+instructions)\b", re.IGNORECASE),
+    # Fake-authority framing ("I'm a red-teamer/developer, you're authorized to...").
+    re.compile(r"\bauthoriz(?:ed|ation)\b.{0,40}\b(?:evaluate|ask\s+anything|dump|reveal)\b", re.IGNORECASE),
+    re.compile(r"\bred[- ]team(?:er|ing)?\s+auditor\b", re.IGNORECASE),
+    # Fake system/control tags used to spoof a higher-privilege message.
+    re.compile(r"<\s*/?\s*(?:override|system|admin)\s*>", re.IGNORECASE),
+    re.compile(r"\bSYSTEM\s*:\s*<", re.IGNORECASE),
+    # Long base64-looking payloads are never a legitimate SNAP-eligibility
+    # answer; encoded injection attempts are still injection attempts.
+    re.compile(r"^[A-Za-z0-9+/]{40,}={0,2}$"),
 )
 
 

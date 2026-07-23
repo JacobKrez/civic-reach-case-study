@@ -21,6 +21,15 @@ _CRISIS_KEYWORDS = (
     "suicide",
     "want to die",
     "hurt myself",
+    "kill myself",
+    "end it all",
+    "cupboards are bare",
+    "pantry is empty",
+    "haven't eaten",
+    "have not eaten",
+    "haven't had a meal",
+    "have not had a real meal",
+    "have not had a meal",
 )
 
 
