@@ -1,0 +1,17 @@
+# Planning artifacts — not part of the deliverable, and "email chain.txt"
+# contains personal contact info. Never let these leak into the repo
+# that gets shared with CivicReach.
+Civic Reach Case Study.txt
+dumb agent initial thoughts.txt
+email chain.txt
+plan mode with dumb agent.txt
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.env
+
+# Red-team run output (regenerated, not source)
+redteam/report_latest.json
