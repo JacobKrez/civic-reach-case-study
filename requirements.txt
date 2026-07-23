@@ -1,0 +1,6 @@
+pydantic>=2
+pytest>=8
+python-dotenv
+requests
+anthropic
+openai

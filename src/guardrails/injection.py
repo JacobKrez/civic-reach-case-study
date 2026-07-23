@@ -1,0 +1,1 @@
+"""Injection guardrail stub."""

@@ -1,0 +1,1 @@
+"""Ambiguity guardrail stub."""
