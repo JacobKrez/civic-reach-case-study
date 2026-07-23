@@ -3,17 +3,18 @@
 Why this script exists
 ----------------------
 The red-team harness writes a structured report to ``report_latest.json``
-after every run. Turning those failures into concrete follow-up work is a manual triage
-step. This script closes the loop: it walks the latest report, extracts
-every failed case, appends each one to a local JSONL queue
-(``failures_queue.jsonl``), and prints a one-line summary. A developer
-then reads the queue and decides which regressions to fix next.
+after every run. Turning those failures into concrete follow-up work is
+a manual triage step. This script closes the loop: it walks the latest
+report, extracts every failed case, appends each one to a local JSONL
+queue (``failures_queue.jsonl``), and prints a one-line summary. A
+developer then reads the queue and decides which regressions to fix
+next.
 
 Scope (deliberately narrow)
 ---------------------------
 - This script ONLY writes to ``failures_queue.jsonl`` (the local red-team
-  queue). It does not escalate anywhere else or open tickets; keeping the
-  queue local and inert is intentional.
+  queue). It does not escalate anywhere else or open tickets; keeping
+  the queue local and inert is intentional.
 - De-duplication is by ``case id``. A case that fails on run #1 and
   fails again on run #5 will appear in the queue exactly once, with
   the latest failure details.

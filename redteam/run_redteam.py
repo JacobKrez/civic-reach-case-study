@@ -51,7 +51,8 @@ Running this script with a real LLM provider API key costs real money.
 Pass ``--dry-run`` to validate the harness and fixtures without calling
 the LLM; in dry-run the calculator is still monkey-patched so we can
 prove the wiring is correct end-to-end without spending tokens. Run it
-without ``--dry-run`` for a real end-to-end pass against a live provider.
+without ``--dry-run`` when you want a real end-to-end pass against a
+live provider.
 """
 
 from __future__ import annotations

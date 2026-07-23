@@ -7,7 +7,7 @@ This module implements `retrieve(query, k)` which:
      cosine similarity scorer (no sklearn dependency).
   4. Returns the top-k chunks as dicts: {doc, snippet, score}.
 
-Why hand-rolled: the project's `requirements.txt` does not list scikit-learn,
+Why hand-rolled: the project's `requirements.txt` does not list scikit-learn.
 Hand-rolling keeps the dependency surface small and makes the scoring
 behavior inspectable in this educational case-study repo.
 """
