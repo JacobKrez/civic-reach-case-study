@@ -3,6 +3,7 @@
 import pytest
 
 from src.agent import CivicReachAgent
+from src.guardrails.classifier import CLASSIFIER_SYSTEM_PROMPT
 from src.guardrails.crisis import CRISIS_RESOURCES, crisis_response, detect_crisis
 
 
@@ -13,6 +14,11 @@ class RecordingLLM:
         self.calls = []
 
     def chat(self, messages, system=None, tools=None):
+        # The classifier layer runs before the agent's main LLM call.
+        # Skip recording it so the test contract (call counts, message
+        # shape) stays meaningful at the agent level.
+        if system == CLASSIFIER_SYSTEM_PROMPT:
+            return {"content": "normal", "tool_calls": []}
         self.calls.append(messages)
         return {
             "content": "To continue, how many people are in your household?",

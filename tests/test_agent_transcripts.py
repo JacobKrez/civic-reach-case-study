@@ -3,6 +3,7 @@
 from unittest.mock import Mock
 
 from src.agent import CivicReachAgent
+from src.guardrails.classifier import CLASSIFIER_SYSTEM_PROMPT
 
 
 class FakeLLMClient:
@@ -37,6 +38,11 @@ class FakeLLMClient:
 
     def chat(self, messages, system=None, tools=None):
         self.calls.append({"messages": messages, "system": system, "tools": tools})
+        # The classifier layer runs before the agent's main LLM call.
+        # Reply "normal" without consuming a queued response so the
+        # scripted queue contract stays intact across the extra call.
+        if system == CLASSIFIER_SYSTEM_PROMPT:
+            return {"content": "normal", "tool_calls": []}
         return next(self.responses)
 
 
@@ -75,8 +81,12 @@ def test_scripted_transcript_accumulates_state_and_calculates_once(monkeypatch):
         gross_monthly_income=1800.0,
         has_elderly_or_disabled=False,
     )
-    assert fake.calls[0]["tools"][0]["name"] == "update_state"
-    assert "missing_fields" in fake.calls[0]["messages"][-1]["content"]
+    # The classifier runs first (call 0, system=CLASSIFIER_SYSTEM_PROMPT, no tools);
+    # the agent's main call (call 1, system=SYSTEM_PROMPT) carries the tools.
+    assert fake.calls[0]["system"] == CLASSIFIER_SYSTEM_PROMPT
+    assert fake.calls[0]["tools"] is None
+    assert fake.calls[1]["tools"][0]["name"] == "update_state"
+    assert "missing_fields" in fake.calls[1]["messages"][-1]["content"]
 
 
 def test_free_text_is_never_parsed_into_state():

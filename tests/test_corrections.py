@@ -10,6 +10,7 @@ changes an intake field they already provided, the agent must:
 """
 
 from src.agent import CivicReachAgent
+from src.guardrails.classifier import CLASSIFIER_SYSTEM_PROMPT
 
 
 class ScriptedLLM:
@@ -21,6 +22,9 @@ class ScriptedLLM:
 
     def chat(self, messages, system=None, tools=None):
         self.calls.append({"messages": messages, "system": system, "tools": tools})
+        # The classifier layer runs before the agent's main LLM call.
+        if system == CLASSIFIER_SYSTEM_PROMPT:
+            return {"content": "normal", "tool_calls": []}
         if self._responses:
             return self._responses.pop(0)
         return {"content": "ok", "tool_calls": []}

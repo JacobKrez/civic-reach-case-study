@@ -9,6 +9,7 @@ from pydantic import ValidationError
 
 from .calculator import calculate_eligibility
 from .guardrails.ambiguity import normalize_income
+from .guardrails.classifier import classify_intent
 from .guardrails.crisis import crisis_response, detect_crisis
 from .guardrails.injection import detect_injection, injection_response
 from .guardrails.pii import redact_for_logging
@@ -267,6 +268,33 @@ class CivicReachAgent:
             return content
 
         if detect_out_of_scope(user_message):
+            self.state.is_out_of_scope = True
+            content = scope_redirect_message()
+            self._messages.append({"role": "assistant", "content": content})
+            return content
+
+        # Layer 2 (defense in depth): the LLM intent classifier runs
+        # AFTER the keyword guardrails. The keyword layer is fast,
+        # deterministic, auditable, and works offline — it stays first.
+        # The classifier catches novel phrasings the keyword lists miss
+        # (the red-team suite already proved keyword lists are brittle
+        # on unseen inputs). On any classifier failure (exception,
+        # unparseable output, or 'normal'), the agent falls through to
+        # the ordinary LLM call below. The classifier is disabled by
+        # env var GUARDRAIL_CLASSIFIER=off so unit tests, offline runs,
+        # and the model bake-off can opt out of the extra LLM call.
+        intent = classify_intent(user_message, self.llm_client)
+        if intent == "crisis":
+            self.state.is_crisis = True
+            content = crisis_response()
+            self._messages.append({"role": "assistant", "content": content})
+            return content
+        if intent == "injection":
+            self.state.is_injection_attempt = True
+            content = injection_response()
+            self._messages.append({"role": "assistant", "content": content})
+            return content
+        if intent == "off_topic":
             self.state.is_out_of_scope = True
             content = scope_redirect_message()
             self._messages.append({"role": "assistant", "content": content})

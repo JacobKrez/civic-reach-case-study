@@ -3,6 +3,7 @@
 import pytest
 
 from src.agent import CivicReachAgent
+from src.guardrails.classifier import CLASSIFIER_SYSTEM_PROMPT
 from src.guardrails.injection import detect_injection, injection_response
 
 
@@ -13,6 +14,9 @@ class RecordingLLM:
         self.calls = []
 
     def chat(self, messages, system=None, tools=None):
+        # Classifier call: skip recording, return normal.
+        if system == CLASSIFIER_SYSTEM_PROMPT:
+            return {"content": "normal", "tool_calls": []}
         self.calls.append({"messages": messages, "system": system, "tools": tools})
         return {
             "content": "To begin, how many people are in your household?",

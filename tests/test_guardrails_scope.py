@@ -12,6 +12,7 @@ The agent must:
 import pytest
 
 from src.agent import CivicReachAgent
+from src.guardrails.classifier import CLASSIFIER_SYSTEM_PROMPT
 from src.guardrails.scope import (
     detect_out_of_scope,
     scope_redirect_message,
@@ -123,13 +124,29 @@ def test_out_of_scope_does_not_destroy_collected_state():
     llm = RecordingLLM()
 
     # Pre-seed state via a scripted first turn that echoes a tool call.
+    # The classifier runs first (calls toward the LLM see CLASSIFIER_SYSTEM_PROMPT);
+    # the agent's main call comes second. The classifier is told 'normal' so the
+    # scripted queue contract holds across the extra call.
     class ScriptedLLM:
         def __init__(self):
             self.calls = []
 
         def chat(self, messages, system=None, tools=None):
             self.calls.append((messages, system, tools))
+            if system == CLASSIFIER_SYSTEM_PROMPT:
+                return {"content": "normal", "tool_calls": []}
             if len(self.calls) == 1:
+                # Only reachable if the classifier is disabled. Kept for
+                # parity with the original test contract.
+                return {
+                    "content": "How many people are in your household?",
+                    "tool_calls": [
+                        {"name": "update_state", "input": {"household_size": 4}}
+                    ],
+                }
+            # The classifier call (call index 1) used the queue slot above;
+            # the agent's main call is index 2 onward.
+            if len(self.calls) == 2:
                 return {
                     "content": "How many people are in your household?",
                     "tool_calls": [
@@ -166,8 +183,9 @@ def test_in_scope_message_does_not_set_out_of_scope_flag():
 
     agent.turn("There are three of us in my household.")
     assert agent.state.is_out_of_scope is False
-    # LLM SHOULD have been called for in-scope messages.
-    assert len(llm.calls) == 1
+    # LLM SHOULD have been called for in-scope messages (classifier +
+    # agent's main call = 2 with the layered guardrail active).
+    assert len(llm.calls) == 2
 
 
 def test_redirect_message_does_not_leak_prior_state():

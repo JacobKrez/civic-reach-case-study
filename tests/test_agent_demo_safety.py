@@ -7,6 +7,7 @@ These were found in a full-code review pass, not by the red-team suite:
 """
 
 from src.agent import CivicReachAgent
+from src.guardrails.classifier import CLASSIFIER_SYSTEM_PROMPT
 from src.guardrails.crisis import CRISIS_RESOURCES
 
 
@@ -19,6 +20,11 @@ class ScriptedLLM:
 
     def chat(self, messages, system=None, tools=None):
         self.calls.append({"messages": messages, "system": system, "tools": tools})
+        # The classifier layer runs before the agent's main LLM call.
+        # Reply "normal" without consuming a queued response so the
+        # scripted queue contract stays intact across the extra call.
+        if system == CLASSIFIER_SYSTEM_PROMPT:
+            return {"content": "normal", "tool_calls": []}
         if self._responses:
             return self._responses.pop(0)
         return {"content": "ok", "tool_calls": []}
