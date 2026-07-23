@@ -118,9 +118,13 @@ class CivicReachAgent:
         )
         return f"NC FNS {track}"
 
-    def _context(self) -> str:
+    def _context(self, user_message: str = "") -> str:
         missing = self.state.missing_fields()
-        rule_text = self._retrieve(self._track_query())
+        phase_query = self._track_query()
+        # Keep the phase guidance, but let the user's latest question steer
+        # retrieval (for example, toward deductions during intake).
+        query = f"{phase_query} {user_message}"[:200]
+        rule_text = self._retrieve(query)
         payload: dict[str, Any] = {
             "assessment_state": self.state.model_dump(),
             "missing_fields": missing,
@@ -301,7 +305,7 @@ class CivicReachAgent:
             return content
 
         response = self.llm_client.chat(
-            [*self._messages, {"role": "user", "content": self._context()}],
+            [*self._messages, {"role": "user", "content": self._context(user_message)}],
             system=self.system_prompt,
             tools=self.tools,
         )

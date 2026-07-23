@@ -128,13 +128,23 @@ def _load_corpus(kb_dir: str) -> List[Dict]:
     return records
 
 
-# Module-level cache so we only read + tokenize files once per process.
+# Module-level cache so we only read + tokenize files once per process. The
+# cached records also carry corpus-wide IDF-weighted vectors.
 _CORPUS_CACHE: Dict[str, List[Dict]] = {}
 
 
 def _get_corpus(kb_dir: str) -> List[Dict]:
     if kb_dir not in _CORPUS_CACHE:
-        _CORPUS_CACHE[kb_dir] = _load_corpus(kb_dir)
+        records = _load_corpus(kb_dir)
+        df_counter: Counter = Counter()
+        for rec in records:
+            df_counter.update(set(rec["tokens"]))
+        n_docs = len(records)
+        idf = {term: _idf(term, df_counter, n_docs) for term in df_counter}
+        for rec in records:
+            rec["idf"] = idf
+            rec["vector"] = _tfidf_vector(rec["tokens"], idf)
+        _CORPUS_CACHE[kb_dir] = records
     return _CORPUS_CACHE[kb_dir]
 
 
@@ -206,18 +216,13 @@ def retrieve(query: str, k: int = 3, kb_dir: str | None = None) -> List[Dict]:
             for rec in corpus[:k]
         ]
 
-    # Build IDF from the chunk-level corpus.
-    df_counter: Counter = Counter()
-    for rec in corpus:
-        df_counter.update(set(rec["tokens"]))
-    n_docs = len(corpus)
-    idf = {term: _idf(term, df_counter, n_docs) for term in df_counter}
-
+    # IDF and document vectors are precomputed in _get_corpus.
+    idf = corpus[0]["idf"]
     q_vec = _tfidf_vector(query_tokens, idf)
 
     scored: List[Dict] = []
     for rec in corpus:
-        d_vec = _tfidf_vector(rec["tokens"], idf)
+        d_vec = rec["vector"]
         score = _cosine(q_vec, d_vec)
         scored.append(
             {
