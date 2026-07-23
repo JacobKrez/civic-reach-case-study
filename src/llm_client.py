@@ -53,18 +53,66 @@ class LLMClient:
             raise ValueError(
                 f"Invalid or missing LLM_PROVIDER {provider!r}; valid options are: {valid}"
             )
-        result = getattr(self, f"_chat_{provider}")(messages, system, tools)
-        return self._normalize(result)
+        try:
+            result = getattr(self, f"_chat_{provider}")(messages, system, tools)
+            return self._normalize(result, provider_used=provider)
+        except Exception as primary_exc:
+            fallback = self._fallback_provider(provider)
+            if fallback is None:
+                raise
+            try:
+                result = getattr(self, f"_chat_{fallback}")(messages, system, tools)
+            except Exception:
+                # Fallback also failed (or raised). Re-raise the ORIGINAL
+                # primary exception so callers see the same error they'd see
+                # without a fallback configured. Fallback failures are
+                # operational noise here, not the signal.
+                raise primary_exc
+            return self._normalize(result, provider_used=fallback)
+
+    def _fallback_provider(self, primary: str) -> str | None:
+        """Return the configured fallback provider, or None.
+
+        Validation rules:
+        - env var unset / empty -> None (fallback disabled, default behavior)
+        - value not in VALID_PROVIDERS -> ignore (treat as unset; don't
+          shadow the primary exception with a config typo)
+        - value equals primary -> ignore (must differ)
+        - value's API key is missing -> ignore (no point retrying without
+          credentials; would just re-raise with a different error)
+        """
+        raw = os.getenv("LLM_FALLBACK_PROVIDER", "").strip().lower()
+        if not raw:
+            return None
+        if raw not in self.VALID_PROVIDERS:
+            return None
+        if raw == primary:
+            return None
+        if not self._has_api_key(raw):
+            return None
+        return raw
 
     @staticmethod
-    def _normalize(result: dict) -> dict:
+    def _has_api_key(provider: str) -> bool:
+        key = {
+            "anthropic": "ANTHROPIC_API_KEY",
+            "openai": "OPENAI_API_KEY",
+            "minimax": "MINIMAX_API_KEY",
+        }.get(provider)
+        return bool(key and os.getenv(key))
+
+    @staticmethod
+    def _normalize(result: dict, provider_used: str | None = None) -> dict:
         content = result.get("content", "")
         if content is None:
             content = ""
-        return {
+        normalized = {
             "content": str(content),
             "tool_calls": list(result.get("tool_calls") or []),
         }
+        if provider_used is not None:
+            normalized["provider_used"] = provider_used
+        return normalized
 
     def _model(self, provider: str) -> str:
         return os.getenv("LLM_MODEL", "").strip() or self.DEFAULT_MODELS[provider]

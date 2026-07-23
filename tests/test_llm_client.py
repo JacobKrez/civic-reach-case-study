@@ -14,7 +14,11 @@ def test_dispatches_anthropic_and_normalizes(monkeypatch):
     monkeypatch.setattr(client, "_chat_anthropic", method)
     result = client.chat([{"role": "user", "content": "hi"}])
     method.assert_called_once()
-    assert result == {"content": "anthropic", "tool_calls": []}
+    assert result == {
+        "content": "anthropic",
+        "tool_calls": [],
+        "provider_used": "anthropic",
+    }
 
 
 def test_dispatches_openai_and_normalizes(monkeypatch):
@@ -24,7 +28,11 @@ def test_dispatches_openai_and_normalizes(monkeypatch):
     monkeypatch.setattr(client, "_chat_openai", method)
     result = client.chat([])
     method.assert_called_once()
-    assert result == {"content": "openai", "tool_calls": []}
+    assert result == {
+        "content": "openai",
+        "tool_calls": [],
+        "provider_used": "openai",
+    }
 
 
 def test_dispatches_minimax_and_normalizes(monkeypatch):
@@ -37,6 +45,7 @@ def test_dispatches_minimax_and_normalizes(monkeypatch):
     assert result == {
         "content": "",
         "tool_calls": [{"name": "lookup", "input": {}}],
+        "provider_used": "minimax",
     }
 
 
