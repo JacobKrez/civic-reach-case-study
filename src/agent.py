@@ -10,6 +10,7 @@ from pydantic import ValidationError
 from .calculator import calculate_eligibility
 from .guardrails.ambiguity import normalize_income
 from .guardrails.crisis import crisis_response, detect_crisis
+from .guardrails.injection import detect_injection, injection_response
 from .guardrails.pii import redact_for_logging
 from .guardrails.scope import detect_out_of_scope, scope_redirect_message
 from .llm_client import LLMClient
@@ -162,11 +163,14 @@ class CivicReachAgent:
         """Process one user turn, prioritizing deterministic guardrails.
 
         Order of evaluation:
-        1. Crisis detection (food/safety emergencies) -> hardcoded resources.
-        2. Out-of-scope detection (legal advice, unrelated topics)
+        1. Prompt-injection detection -> a hardcoded refusal. The next
+           ordinary message is evaluated normally; the flag is historical
+           and does not lock the conversation into refusal mode.
+        2. Crisis detection (food/safety emergencies) -> hardcoded resources.
+        3. Out-of-scope detection (legal advice, unrelated topics)
            -> fixed polite redirect. State is preserved; is_out_of_scope
            is flipped so the agent loop can remember.
-        3. Otherwise, hand to the LLM as normal.
+        4. Otherwise, hand to the LLM as normal.
 
         The PII redactor is applied to the user message before it is
         recorded in the internal message history so that any later log
@@ -178,6 +182,12 @@ class CivicReachAgent:
         # history so any log/print of the history is PII-safe.
         safe_user_message = redact_for_logging(user_message)
         self._messages.append({"role": "user", "content": safe_user_message})
+
+        if detect_injection(user_message):
+            self.state.is_injection_attempt = True
+            content = injection_response()
+            self._messages.append({"role": "assistant", "content": content})
+            return content
 
         if detect_crisis(user_message):
             self.state.is_crisis = True
