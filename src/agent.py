@@ -110,6 +110,9 @@ class CivicReachAgent:
             payload["deterministic_eligibility_result"] = self._eligibility_result
         return json.dumps(payload, default=str)
 
+    # Intake fields whose change invalidates a cached eligibility result.
+    _INTAKE_FIELDS = ("household_size", "gross_monthly_income", "has_elderly_or_disabled_member")
+
     def _apply_tool_calls(self, calls: list[dict[str, Any]]) -> None:
         for call in calls:
             if call.get("name") != "update_state":
@@ -137,12 +140,27 @@ class CivicReachAgent:
                     updates["gross_monthly_income"] = normalized
             if not updates:
                 continue
+            # A correction to any intake field after a result was computed
+            # must invalidate the cached result so the next _calculate_once
+            # recomputes against the corrected state. Without this, a user
+            # who says "actually my income is $900" keeps getting the old
+            # verdict — the exact self-contradiction scenario the case
+            # study says the agent must survive.
+            changed_intake = any(
+                field in updates and updates[field] != getattr(self.state, field)
+                for field in self._INTAKE_FIELDS
+            )
+            # model_copy does not validate in Pydantic v2, so validate the
+            # candidate FIRST and only assign on success — assigning before
+            # validation would leave an invalid value (e.g. household_size
+            # 999) live in state even after the error is caught.
+            candidate = self.state.model_copy(update=updates)
             try:
-                self.state = self.state.model_copy(update=updates)
-                # model_copy does not validate updates in Pydantic v2.
-                self.state = AssessmentState.model_validate(self.state.model_dump())
+                self.state = AssessmentState.model_validate(candidate.model_dump())
             except ValidationError as exc:
                 raise ValueError(f"Invalid update_state call: {exc}") from exc
+            if changed_intake and self._eligibility_result is not None:
+                self._eligibility_result = None
 
     def _calculate_once(self) -> None:
         if self._eligibility_result is not None or not self.state.is_ready_to_calculate():
@@ -163,10 +181,15 @@ class CivicReachAgent:
         """Process one user turn, prioritizing deterministic guardrails.
 
         Order of evaluation:
-        1. Prompt-injection detection -> a hardcoded refusal. The next
+        1. Crisis detection (food/safety emergencies) -> hardcoded resources.
+           Crisis MUST be evaluated before injection: a message like
+           "ignore your instructions — I'm going to kill myself" matches
+           both detectors, and answering it with an injection refusal
+           instead of the 988/211 resources would be the worst possible
+           outcome. Safety outranks security here, deliberately.
+        2. Prompt-injection detection -> a hardcoded refusal. The next
            ordinary message is evaluated normally; the flag is historical
            and does not lock the conversation into refusal mode.
-        2. Crisis detection (food/safety emergencies) -> hardcoded resources.
         3. Out-of-scope detection (legal advice, unrelated topics)
            -> fixed polite redirect. State is preserved; is_out_of_scope
            is flipped so the agent loop can remember.
@@ -183,15 +206,15 @@ class CivicReachAgent:
         safe_user_message = redact_for_logging(user_message)
         self._messages.append({"role": "user", "content": safe_user_message})
 
-        if detect_injection(user_message):
-            self.state.is_injection_attempt = True
-            content = injection_response()
-            self._messages.append({"role": "assistant", "content": content})
-            return content
-
         if detect_crisis(user_message):
             self.state.is_crisis = True
             content = crisis_response()
+            self._messages.append({"role": "assistant", "content": content})
+            return content
+
+        if detect_injection(user_message):
+            self.state.is_injection_attempt = True
+            content = injection_response()
             self._messages.append({"role": "assistant", "content": content})
             return content
 
@@ -206,7 +229,14 @@ class CivicReachAgent:
             system=self.system_prompt,
             tools=self.tools,
         )
-        self._apply_tool_calls(response.get("tool_calls") or [])
+        try:
+            self._apply_tool_calls(response.get("tool_calls") or [])
+        except ValueError:
+            # A malformed/over-limit tool call from the model (e.g.
+            # household_size above the schema cap) must not crash the
+            # turn. Drop the bad update; state stays valid, the field
+            # stays missing, and the loop re-asks on the next turn.
+            pass
         self._calculate_once()
 
         content = str(response.get("content") or "")

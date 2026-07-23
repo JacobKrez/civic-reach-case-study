@@ -25,7 +25,7 @@ from .llm_client import LLMClient
 _BANNER = (
     "CivicReach \u2014 NC Food & Nutrition Services (FNS) eligibility assistant.\n"
     "This is an initial screen, not a final agency determination.\n"
-    "Type your situation and press Enter. Press Ctrl-C or send an empty line to exit."
+    "Type your situation and press Enter. Type 'exit' or press Ctrl-C to leave."
 )
 
 
@@ -62,9 +62,14 @@ def _run_repl(agent: CivicReachAgent, input_stream=sys.stdin, output=sys.stdout)
             print("Goodbye.", file=output)
             return 0
         user_message = line.rstrip("\n").rstrip("\r")
-        if not user_message.strip():
+        if user_message.strip().lower() in {"exit", "quit"}:
             print("Goodbye.", file=output)
             return 0
+        if not user_message.strip():
+            # An accidental extra Enter must NOT end the session — in a
+            # live demo that would kill the conversation mid-flow. Exit
+            # is explicit ("exit"/"quit"), Ctrl-C, or EOF.
+            continue
         try:
             reply = agent.turn(user_message)
         except KeyboardInterrupt:
