@@ -8,6 +8,7 @@ from typing import Any, Callable
 from pydantic import ValidationError
 
 from .calculator import calculate_eligibility
+from .guardrails.ambiguity import normalize_income
 from .guardrails.crisis import crisis_response, detect_crisis
 from .guardrails.pii import redact_for_logging
 from .guardrails.scope import detect_out_of_scope, scope_redirect_message
@@ -116,6 +117,23 @@ class CivicReachAgent:
             if not isinstance(raw, dict):
                 raise ValueError("update_state input must be an object")
             updates = {key: value for key, value in raw.items() if key in _ALLOWED_UPDATES}
+            if not updates:
+                continue
+            # ``gross_monthly_income`` is the only intake field that can
+            # legitimately arrive as a fuzzy string like "$2,500" or
+            # "$600/week" rather than a plain float. Run every incoming
+            # value through ``normalize_income`` (which is total: it
+            # accepts numbers, strings, and None, and returns None on
+            # unparseable input) so the calculator downstream only sees
+            # a clean monthly float. A None return means the caller
+            # forgot to pass a usable value and we drop that field
+            # rather than write garbage into state.
+            if "gross_monthly_income" in updates:
+                normalized = normalize_income(updates["gross_monthly_income"])
+                if normalized is None:
+                    updates.pop("gross_monthly_income", None)
+                else:
+                    updates["gross_monthly_income"] = normalized
             if not updates:
                 continue
             try:
