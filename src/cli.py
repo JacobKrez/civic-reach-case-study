@@ -78,6 +78,11 @@ def _run_repl(agent: CivicReachAgent, input_stream=sys.stdin, output=sys.stdout)
 
 
 def main() -> int:
+    # See LLMClient._ENV_KEYS for why this loop exists (an empty ambient
+    # env var, not just a missing one, must not shadow the repo's .env).
+    for key in LLMClient._ENV_KEYS:
+        if os.environ.get(key) == "":
+            del os.environ[key]
     load_dotenv()
     provider = os.getenv("LLM_PROVIDER", "").strip().lower()
     error = _missing_key_error(provider)

@@ -20,7 +20,25 @@ class LLMClient:
         "minimax": "MiniMax-Text-01",
     }
 
+    # Keys .env is allowed to fill in even when already present in the
+    # environment, but only if the existing value is empty. python-dotenv's
+    # default load_dotenv() never overrides an already-set var - including
+    # one set to "" - so a stray empty export (e.g. a shell may have
+    # MINIMAX_API_KEY="" pre-exported in the shell environment) silently
+    # shadows the real value in .env. override=True would fix that but also
+    # stomps deliberate test-time monkeypatch.setenv() calls, so we only
+    # clear the specific empty-string case before the normal (non-override)
+    # load.
+    _ENV_KEYS = (
+        "LLM_PROVIDER", "LLM_MODEL",
+        "ANTHROPIC_API_KEY", "OPENAI_API_KEY",
+        "MINIMAX_API_KEY", "MINIMAX_BASE_URL",
+    )
+
     def __init__(self) -> None:
+        for key in self._ENV_KEYS:
+            if os.environ.get(key) == "":
+                del os.environ[key]
         load_dotenv()
 
     def chat(
@@ -50,6 +68,32 @@ class LLMClient:
 
     def _model(self, provider: str) -> str:
         return os.getenv("LLM_MODEL", "").strip() or self.DEFAULT_MODELS[provider]
+
+    @staticmethod
+    def _to_openai_tools(tools: list | None) -> list | None:
+        """Translate Anthropic-shaped tool defs (name/description/input_schema)
+        into the OpenAI/MiniMax-compatible shape (type=function wrapper,
+        parameters instead of input_schema). Tool defs are authored once in
+        agent.py using the Anthropic shape; every non-Anthropic provider needs
+        this translation or the API rejects the request outright."""
+        if tools is None:
+            return None
+        converted = []
+        for t in tools:
+            if "function" in t and t.get("type") == "function":
+                converted.append(t)  # already OpenAI-shaped
+                continue
+            converted.append(
+                {
+                    "type": "function",
+                    "function": {
+                        "name": t["name"],
+                        "description": t.get("description", ""),
+                        "parameters": t.get("input_schema", {"type": "object", "properties": {}}),
+                    },
+                }
+            )
+        return converted
 
     def _chat_anthropic(
         self, messages: list[dict], system: str | None, tools: list | None
@@ -97,7 +141,7 @@ class LLMClient:
             "messages": outgoing,
         }
         if tools is not None:
-            kwargs["tools"] = tools
+            kwargs["tools"] = self._to_openai_tools(tools)
         response = OpenAI(api_key=os.getenv("OPENAI_API_KEY")).chat.completions.create(
             **kwargs
         )
@@ -123,7 +167,7 @@ class LLMClient:
             "messages": outgoing,
         }
         if tools is not None:
-            payload["tools"] = tools
+            payload["tools"] = self._to_openai_tools(tools)
         base_url = os.getenv("MINIMAX_BASE_URL", "https://api.minimax.io/v1").rstrip("/")
         response = requests.post(
             f"{base_url}/chat/completions",
