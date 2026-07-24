@@ -185,6 +185,26 @@ y "(Updated ...)", que se agregan automáticamente y no debes reproducirlas
 ni traducirlas tú mismo).
 """
 
+# Deterministic, code-templated fallback questions for the "model returned
+# a tool call with no text" case -- see the note at the end of turn().
+# Phrasing matches what the system prompt already asks the model to do.
+_NEXT_FIELD_QUESTION: dict[str, dict[str, str]] = {
+    "en": {
+        "household_size": "How many people are in your household?",
+        "gross_monthly_income": "What is your household's gross monthly income?",
+        "has_elderly_or_disabled_member": (
+            "Does anyone in your household have an elderly (60+) or disabled member?"
+        ),
+    },
+    "es": {
+        "household_size": "¿Cuántas personas hay en su hogar?",
+        "gross_monthly_income": "¿Cuál es el ingreso mensual bruto de su hogar?",
+        "has_elderly_or_disabled_member": (
+            "¿Alguna persona en su hogar tiene 60 años o más, o tiene una discapacidad?"
+        ),
+    },
+}
+
 UPDATE_STATE_TOOL = {
     "name": "update_state",
     "description": "Record explicitly supplied assessment fields.",
@@ -779,6 +799,19 @@ class CivicReachAgent:
                 content = f"{content} {suffix}"
             else:
                 content = suffix
+
+        # Deterministic backstop: some models return a bare tool call with
+        # NO accompanying text when they successfully record a field (most
+        # visible on the very first substantive reply of a conversation).
+        # Content staying empty here would show the user a blank message
+        # with no indication of what to answer next. If the intake is
+        # still incomplete and nothing above produced any text, ask for
+        # the next missing field in code -- this mirrors exactly what the
+        # system prompt already instructs the model to do; it only fires
+        # as a safety net when the model didn't.
+        if not content and self.state.missing_fields():
+            content = _NEXT_FIELD_QUESTION[self.state.language][self.state.missing_fields()[0]]
+
         self._messages.append({"role": "assistant", "content": content})
         # W20: the de-escalation context applied to this turn's LLM call
         # only. Reset so the next turn's message is judged on its own and a
