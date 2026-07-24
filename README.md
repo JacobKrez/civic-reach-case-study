@@ -196,6 +196,12 @@ What we would build next, in priority order, given more time:
 2. **Case-worker handoff.** A "talk to a human" handoff that produces a
    print-ready summary of the intake and the rule citations behind the
    screen, in plain English, so a DSS case worker can pick up mid-flow.
+   The on-screen summary is the reliable, dependency-free path (what gets
+   demoed live). On top of that, a best-effort notification fires only if
+   SMTP env vars are configured — it demonstrates the *mechanism* a real
+   deployment would use to alert a case worker's queue, not a real
+   integration; the recipient is read from env only and is never a real
+   agency address.
 3. **Spanish localization.** Spanish system prompt, Spanish crisis /
    injection / scope keyword lists, Spanish knowledge-base chunks. The
    most-requested gap for any NC benefits tool.
