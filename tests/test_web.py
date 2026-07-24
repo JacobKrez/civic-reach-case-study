@@ -42,6 +42,17 @@ def test_root_returns_self_contained_html(client):
     assert "<script" in response.text
 
 
+def test_root_includes_mobile_and_high_stakes_message_treatments(client):
+    html = client.get("/").text
+    assert "font-size:16px" in html
+    assert "100dvh" in html
+    assert "overflow-x:hidden" in html
+    assert "crisis-response" in html
+    assert "d.setAttribute('role','alert')" in html
+    assert "citation-suffix" in html
+    assert "#handoff-summary" in html
+
+
 def test_chat_round_trips_state_within_session(client):
     first = client.post("/chat", json={"session_id": "same", "message": "household 4"})
     assert first.status_code == 200
