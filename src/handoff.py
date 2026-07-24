@@ -1,8 +1,7 @@
 """Case-worker handoff summary (W17).
 
 Renders a print-ready, plain-English summary of a completed eligibility
-screen so a DSS case worker can pick up mid-flow. Two hard rules from the
-chunk spec:
+screen so a DSS case worker can pick up mid-flow. Two hard rules:
 
 1. The summary is CODE-TEMPLATED, never model-generated — same rule as
    citations. Every number and every sentence comes from the live
