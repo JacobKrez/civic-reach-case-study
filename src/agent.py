@@ -819,33 +819,37 @@ class CivicReachAgent:
                 except ValueError:
                     pass
 
-        # Out-of-order income correction: a user who is being asked about
-        # a DIFFERENT field (typically has_elderly_or_disabled_member,
-        # the last question) sometimes replies with a correction to
-        # income instead ("50k" right after answering "50"). Observed
-        # live: the model recognizes this eventually, but often not
-        # until a LATER turn -- a visible one-turn lag ("seems behind").
-        # Fires only when income had a value BEFORE this turn (a real
-        # correction, not a first fill), the model's OWN tool call this
-        # turn didn't already handle it (never double-process a value
-        # the model just set correctly), and the currently-asked field
-        # is something else. Conservative by construction:
-        # normalize_income() only matches money-shaped text, so it can't
-        # misfire on an actual yes/no answer to the field really asked.
+        # Out-of-order income correction is intentionally narrow: require an
+        # explicit correction cue and an income-related noun in the same message.
+        # Deduction terms take precedence so ordinary expenses cannot overwrite income.
+        correction_cue = re.search(
+            r"\b(?:actually|sorry|i\s+meant|correction|no\s+wait|that(?:s|\s+is)\s+wrong|"
+            r"en realidad|perd[oó]n|quer[ií]a decir|correcci[oó]n|no\s+espera)\b",
+            user_message, re.I,
+        )
+        income_cue = re.search(
+            r"\b(?:income|make|makes|earn|paid|pay\s+me|salary|salaries|wages|"
+            r"per\s+month)\b", user_message, re.I,
+        )
+        deduction_cue = re.search(
+            r"\b(?:rent|mortgage|childcare|daycare|medical|car|utilities?|insurance|bills?|"
+            r"gas|electric)\b", user_message, re.I,
+        )
         if (
             not fallback_applied
             and income_set_before_this_turn
             and not model_updated_income_this_turn
             and (not asked_field or asked_field[0] != "gross_monthly_income")
+            and correction_cue
+            and income_cue
+            and not deduction_cue
         ):
             parsed_income = normalize_income(user_message)
             if parsed_income is not None and parsed_income != self.state.gross_monthly_income:
                 try:
-                    new_corrections.extend(
-                        self._apply_tool_calls(
-                            [{"name": "update_state", "input": {"gross_monthly_income": parsed_income}}]
-                        )
-                    )
+                    new_corrections.extend(self._apply_tool_calls([
+                        {"name": "update_state", "input": {"gross_monthly_income": parsed_income}}
+                    ]))
                     fallback_applied = True
                 except ValueError:
                     pass
