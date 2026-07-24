@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any, Callable
 
 from pydantic import ValidationError
@@ -61,6 +62,14 @@ supplied, explain it using that result and the retrieved rule text,
 clearly labeling it as an initial screen rather than a final agency
 determination.
 
+IMPORTANT — terse replies: real users answer in short fragments, not full
+sentences. If you just asked for a specific field and the user's reply is
+a bare number, a short phrase, or an obvious yes/no ("3", "3 people",
+"2200", "$2,200/month", "no", "nobody"), that reply IS the value for the
+field you just asked about — call update_state with it immediately. Do
+NOT ask the user to restate it in a longer sentence, and do NOT wait for
+the field name to be repeated back to you.
+
 If the user asks for something outside the NC FNS eligibility scope,
 respond with a brief polite redirect back to the FNS questions and do
 not attempt to answer the off-topic ask. Do not abandon or reset any
@@ -117,6 +126,15 @@ aritmética de elegibilidad tú mismo. Cuando se te proporcione el resultado
 determinista de elegibilidad, explícalo usando ese resultado y el texto de
 las reglas recuperado, aclarando claramente que se trata de una evaluación
 inicial y no de una determinación final de la agencia.
+
+IMPORTANTE — respuestas breves: los usuarios reales responden con
+fragmentos cortos, no oraciones completas. Si acabas de pedir un campo
+específico y la respuesta del usuario es un número simple, una frase corta,
+o un sí/no evidente ("3", "3 personas", "2200", "$2,200 al mes", "no",
+"nadie"), esa respuesta ES el valor del campo que acabas de pedir — llama a
+update_state con ese valor de inmediato. NO le pidas al usuario que lo
+repita en una oración más larga, y no esperes a que repita el nombre del
+campo.
 
 Si el usuario pide algo fuera del alcance de la elegibilidad de NC FNS,
 responde con una redirección breve y cortés de vuelta a las preguntas de
@@ -362,6 +380,47 @@ class CivicReachAgent:
             new_corrections.extend(call_corrections)
         return new_corrections
 
+    # Bare yes/no tokens for the elderly/disabled field fallback below.
+    # English-only: Spanish-mode conversations rely on the LLM tool call
+    # (the fallback is a narrow backstop, not a full parser).
+    _NEGATIVE_WORDS = frozenset({"no", "nope", "nah", "n", "none", "nobody"})
+    _POSITIVE_WORDS = frozenset({"yes", "yeah", "yep", "y", "sure"})
+
+    @staticmethod
+    def _fallback_parse_terse_reply(field: str, user_message: str) -> Any | None:
+        """Deterministic backstop for a terse reply the model failed to
+        turn into an update_state call for the ONE field it just asked
+        about.
+
+        Not every provider reliably connects a bare reply ("3", "2200",
+        "no") to the field it answers -- MiniMax in particular is
+        noticeably worse at this than at fuller sentences ("household
+        size is 3"). Real users answer tersely far more often than not,
+        and the case study explicitly grades handling exactly this kind
+        of plain, everyday input gracefully. This never guesses across
+        fields: the caller only invokes it for the single field that was
+        missing when the turn began, so a parse failure just leaves the
+        field unset for the LLM to re-ask, never misfiles into the wrong
+        slot.
+        """
+        text = user_message.strip()
+        if field == "household_size":
+            match = re.match(r"^\$?(\d{1,2})\b", text)
+            if not match:
+                return None
+            value = int(match.group(1))
+            return value if 1 <= value <= 20 else None
+        if field == "gross_monthly_income":
+            return normalize_income(text)
+        if field == "has_elderly_or_disabled_member":
+            token = text.lower().strip(".! ")
+            if token in CivicReachAgent._NEGATIVE_WORDS:
+                return False
+            if token in CivicReachAgent._POSITIVE_WORDS:
+                return True
+            return None
+        return None
+
     def _calculate_once(self) -> None:
         if self._eligibility_result is not None or not self.state.is_ready_to_calculate():
             return
@@ -497,6 +556,12 @@ class CivicReachAgent:
             self._messages.append({"role": "assistant", "content": content})
             return content
 
+        # Captured BEFORE the LLM call: the single field this turn's
+        # question was actually about, if the intake isn't complete yet.
+        # Used below as a narrow, deterministic backstop -- see
+        # _fallback_parse_terse_reply.
+        asked_field = self.state.missing_fields()[:1]
+
         response = self.llm_client.chat(
             [*self._messages, {"role": "user", "content": self._context(user_message)}],
             system=self._system_prompt(),
@@ -513,9 +578,46 @@ class CivicReachAgent:
             # ``new_corrections`` keeps its default empty value so no
             # phantom suffix is appended below.
             pass
+
+        # Deterministic fallback: if the model's tool call (or lack of
+        # one) left the field this turn's question was about still
+        # missing, try a narrow, conservative parse of the raw reply
+        # itself. Some providers are noticeably less reliable at
+        # connecting a terse reply ("3", "2200", "no") to the field it
+        # answers than at fuller sentences -- this never touches any
+        # field except the one the agent just asked about, so a parse
+        # failure just leaves it missing for the LLM to re-ask.
+        fallback_applied = False
+        if asked_field and asked_field[0] in self.state.missing_fields():
+            field = asked_field[0]
+            parsed = self._fallback_parse_terse_reply(field, user_message)
+            if parsed is not None:
+                try:
+                    new_corrections.extend(
+                        self._apply_tool_calls([{"name": "update_state", "input": {field: parsed}}])
+                    )
+                    fallback_applied = True
+                except ValueError:
+                    pass
+
         had_result = self._eligibility_result is not None
         self._calculate_once()
         result_just_produced = not had_result and self._eligibility_result is not None
+
+        # The model's own reply text was generated BEFORE the fallback
+        # applied this field, so it's stale -- most visibly, it re-asks
+        # a question that's now already answered. Re-query once, with
+        # state (and _context()) now reflecting the fallback's update
+        # and any freshly-computed eligibility result, so the reply the
+        # user actually sees is grounded in current state. Tool calls
+        # from this second pass are ignored: every intake field the
+        # model could still extract was already handled above.
+        if fallback_applied:
+            response = self.llm_client.chat(
+                [*self._messages, {"role": "user", "content": self._context(user_message)}],
+                system=self._system_prompt(),
+                tools=self.tools,
+            )
 
         content = str(response.get("content") or "")
 
