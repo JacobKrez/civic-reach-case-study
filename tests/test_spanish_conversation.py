@@ -128,7 +128,7 @@ class TestSpanishConversationStaysInSpanish:
         main_calls = llm.main_calls()
         # The classifier call is interleaved; the agent's main calls are
         # what carry the intake system prompt. ALL of them must be Spanish.
-        assert len(main_calls) == 4
+        assert len(main_calls) == 5
         for call in main_calls:
             assert call["system"] == SYSTEM_PROMPT_ES
         assert SYSTEM_PROMPT_ES != SYSTEM_PROMPT

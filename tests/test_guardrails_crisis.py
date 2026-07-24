@@ -441,10 +441,11 @@ class TestW20HostilityNonBlockingBehavior:
         # audit note lives in history only, role 'system'.
         assert response == "To continue, how many people are in your household?"
         notes = [
-            m for m in agent._messages
-            if m["role"] == "system" and "hostile" in m["content"]
+            m for m in agent._audit
+            if m["event"] == "hostility_detected" and "hostile" in m["note"]
         ]
         assert len(notes) == 1
+        assert all(m["role"] in ("user", "assistant") for m in agent._messages)
 
     def test_hostility_does_not_suppress_subsequent_normal_turns(self):
         """A hostile turn changes nothing about how later turns behave."""

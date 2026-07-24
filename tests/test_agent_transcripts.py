@@ -31,6 +31,7 @@ class FakeLLMClient:
                         }
                     ],
                 },
+                {"content": "Your initial screen indicates you likely qualify under the retrieved gross-income rule.", "tool_calls": []},
                 {"content": "The completed result remains available.", "tool_calls": []},
             ]
         )

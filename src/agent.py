@@ -340,6 +340,8 @@ class CivicReachAgent:
         self.tools = [UPDATE_STATE_TOOL]
         self._retrieve = retriever
         self._messages: list[dict[str, str]] = []
+        # Internal operational notes are never sent in provider messages[].
+        self._audit: list[dict[str, Any]] = []
         self._eligibility_result: dict[str, Any] | None = None
         # W20: per-turn hostility flag. Set by ``turn()`` when the user's
         # message trips ``detect_hostility`` and no higher-priority guardrail
@@ -679,10 +681,11 @@ class CivicReachAgent:
         # ended and the FNS intake continues normally.
         if detect_hostility(user_message):
             self._hostile_this_turn = True
-            self._messages.append(
+            self._audit.append(
                 {
-                    "role": "system",
-                    "content": (
+                    "turn": self.state.turn_count,
+                    "event": "hostility_detected",
+                    "note": (
                         "[CivicReach audit] The user's previous message was "
                         "flagged as hostile toward the assistant. De-escalation "
                         "context was added to the system prompt for this turn "
@@ -732,18 +735,60 @@ class CivicReachAgent:
         asked_field = self.state.missing_fields()[:1]
         income_set_before_this_turn = self.state.gross_monthly_income is not None
 
-        response = self.llm_client.chat(
+        # Once DECIDE has already produced a result, later turns are
+        # explanation-only and need exactly one provider call.
+        correction_income = normalize_income(user_message)
+        if (
+            self._eligibility_result is not None
+            and correction_income is not None
+            and correction_income != self.state.gross_monthly_income
+        ):
+            self._eligibility_result = None
+        if self._eligibility_result is not None:
+            response = self.llm_client.chat(
+                [*self._messages, {"role": "user", "content": self._context(user_message)}],
+                system=self._system_prompt(),
+                tools=self.tools,
+            )
+            content = str(response.get("content") or "")
+            outcome = str(self._eligibility_result.get("outcome") or "")
+            terms = {
+                "likely_eligible": ("eligible", "qualif", "califica"),
+                "uncertain_apply_anyway": ("screen", "apply", "solicita", "evalu"),
+                "likely_ineligible": ("ineligible", "not qualify", "no califica"),
+            }.get(outcome, (outcome.replace("_", " "),))
+            if not content.strip() or not any(term in content.lower() for term in terms):
+                label = {
+                    "en": {
+                        "likely_eligible": "Screening result: likely eligible.",
+                        "uncertain_apply_anyway": "Screening result: eligibility is uncertain; apply anyway.",
+                        "likely_ineligible": "Screening result: likely ineligible based on income.",
+                    },
+                    "es": {
+                        "likely_eligible": "Resultado de evaluación: probablemente califica.",
+                        "uncertain_apply_anyway": "Resultado de evaluación: elegibilidad incierta; solicite de todos modos.",
+                        "likely_ineligible": "Resultado de evaluación: probablemente no califica según los ingresos.",
+                    },
+                }[self.state.language].get(outcome, outcome)
+                content = f"{label} {self._eligibility_result.get('notes', '')}".strip()
+            self._messages.append({"role": "assistant", "content": content})
+            self._hostile_this_turn = False
+            return content
+
+        # EXTRACT: this pass may update structured state; its prose is never
+        # shown because it was generated from pre-decision context.
+        extract_response = self.llm_client.chat(
             [*self._messages, {"role": "user", "content": self._context(user_message)}],
             system=self._system_prompt(),
             tools=self.tools,
         )
         model_updated_income_this_turn = any(
             call.get("name") == "update_state" and "gross_monthly_income" in (call.get("input") or {})
-            for call in (response.get("tool_calls") or [])
+            for call in (extract_response.get("tool_calls") or [])
         )
         new_corrections: list[dict[str, Any]] = []
         try:
-            new_corrections = self._apply_tool_calls(response.get("tool_calls") or [])
+            new_corrections = self._apply_tool_calls(extract_response.get("tool_calls") or [])
         except ValueError:
             # A malformed/over-limit tool call from the model (e.g.
             # household_size above the schema cap) must not crash the
@@ -809,22 +854,43 @@ class CivicReachAgent:
         self._calculate_once()
         result_just_produced = not had_result and self._eligibility_result is not None
 
-        # The model's own reply text was generated BEFORE the fallback
-        # applied this field, so it's stale -- most visibly, it re-asks
-        # a question that's now already answered. Re-query once, with
-        # state (and _context()) now reflecting the fallback's update
-        # and any freshly-computed eligibility result, so the reply the
-        # user actually sees is grounded in current state. Tool calls
-        # from this second pass are ignored: every intake field the
-        # model could still extract was already handled above.
-        if fallback_applied:
-            response = self.llm_client.chat(
+        # EXPLAIN: once DECIDE produced a result, make a second call with
+        # that result in context. Before intake completion, the extraction
+        # pass's prose remains current and avoids a redundant provider call.
+        if self._eligibility_result is not None:
+            explain_response = self.llm_client.chat(
                 [*self._messages, {"role": "user", "content": self._context(user_message)}],
                 system=self._system_prompt(),
                 tools=self.tools,
             )
+            content = str(explain_response.get("content") or "")
+        else:
+            content = str(extract_response.get("content") or "")
 
-        content = str(response.get("content") or "")
+        # Provider-independent floor: a verdict can never be blank or omit
+        # the outcome. Arithmetic remains exclusively in the calculator.
+        if self._eligibility_result is not None:
+            outcome = str(self._eligibility_result.get("outcome") or "")
+            outcome_terms = {
+                "likely_eligible": ("eligible", "qualif", "califica"),
+                "uncertain_apply_anyway": ("screen", "apply", "solicita", "evalu"),
+                "likely_ineligible": ("ineligible", "not qualify", "no califica"),
+            }.get(outcome, (outcome.replace("_", " "),))
+            if not content.strip() or not any(term in content.lower() for term in outcome_terms):
+                notes = str(self._eligibility_result.get("notes") or "")
+                labels = {
+                    "en": {
+                        "likely_eligible": "Screening result: likely eligible.",
+                        "uncertain_apply_anyway": "Screening result: eligibility is uncertain; apply anyway.",
+                        "likely_ineligible": "Screening result: likely ineligible based on income.",
+                    },
+                    "es": {
+                        "likely_eligible": "Resultado de evaluación: probablemente califica.",
+                        "uncertain_apply_anyway": "Resultado de evaluación: elegibilidad incierta; solicite de todos modos.",
+                        "likely_ineligible": "Resultado de evaluación: probablemente no califica según los ingresos.",
+                    },
+                }
+                content = f"{labels[self.state.language].get(outcome, outcome)} {notes}".strip()
 
         # When an eligibility result is first produced, ground it visibly:
         # capture the retrieval hits for the applicable track and append a
