@@ -1,5 +1,12 @@
-Source: https://www.fns.usda.gov/snap/eligibility-income-and-deductions
-Source: https://www.usda.gov/sites/default/files/guidance-documents/fns.snap-cola-fy26memo.pdf (FY2026 deduction amounts, effective 2025-10-01 through 2026-09-30, 48 States & DC column)
+---
+doc_id: snap-deductions-household-fy2026
+jurisdiction: federal
+authority: USDA Food and Nutrition Service
+source_url: https://www.usda.gov/sites/default/files/guidance-documents/fns.snap-cola-fy26memo.pdf
+retrieved: 2026-07-24
+effective: 2025-10-01..2026-09-30
+supersedes: null
+---
 
 # FNS / SNAP Allowable Deductions
 

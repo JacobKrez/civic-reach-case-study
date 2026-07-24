@@ -232,6 +232,29 @@ UPDATE_STATE_TOOL = {
 
 _ALLOWED_UPDATES = set(UPDATE_STATE_TOOL["input_schema"]["properties"])
 
+_VOLATILE_RULE_RE = re.compile(
+    r"\b(?:immigration|immigrant|non[- ]?citizen|citizenship|visa|green card|"
+    r"asylum|refugee|work requirements?|work registration|ABAWD|"
+    r"able[- ]bodied adult)\b",
+    re.IGNORECASE,
+)
+
+
+def volatile_rule_redirect(lang: str = "en") -> str:
+    """Decline volatile immigration/work-rule opinions deterministically."""
+    if lang == "es":
+        return (
+            "Esta evaluación no determina los requisitos de trabajo ni la "
+            "elegibilidad según el estatus migratorio. Esas reglas cambiaron "
+            "materialmente en 2025. Para una respuesta actual sobre su caso, "
+            "comuníquese con la oficina del DSS de su condado."
+        )
+    return (
+        "This screen does not evaluate work requirements or eligibility based "
+        "on immigration status. Those rules changed materially in 2025. For "
+        "a current answer about your circumstances, contact your county DSS office."
+    )
+
 
 # W21 — explicit first-turn AI / not-a-person disclosure.
 #
@@ -676,6 +699,11 @@ class CivicReachAgent:
         if detect_injection(user_message):
             self.state.is_injection_attempt = True
             content = injection_response(lang)
+            self._messages.append({"role": "assistant", "content": content})
+            return content
+
+        if _VOLATILE_RULE_RE.search(user_message):
+            content = volatile_rule_redirect(lang)
             self._messages.append({"role": "assistant", "content": content})
             return content
 

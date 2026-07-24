@@ -102,3 +102,22 @@ def test_free_text_is_never_parsed_into_state():
     agent.turn("There are nine people and income is $999.")
     assert agent.state.household_size is None
     assert agent.state.gross_monthly_income is None
+
+
+def test_work_requirement_question_gets_deterministic_dss_redirect():
+    llm = Mock()
+    agent = CivicReachAgent(llm_client=llm)
+    reply = agent.turn("Do the ABAWD work requirements apply to me?")
+    assert "does not evaluate work requirements" in reply
+    assert "county DSS" in reply
+    llm.chat.assert_not_called()
+
+
+def test_immigration_status_question_gets_deterministic_dss_redirect():
+    llm = Mock()
+    agent = CivicReachAgent(llm_client=llm)
+    reply = agent.turn("Can a refugee qualify based on immigration status?")
+    assert "does not evaluate" in reply
+    assert "immigration status" in reply
+    assert "county DSS" in reply
+    llm.chat.assert_not_called()

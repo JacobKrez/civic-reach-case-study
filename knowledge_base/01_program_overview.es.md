@@ -1,4 +1,12 @@
-Fuente: https://www.ncdhhs.gov/divisions/social-services/program-benefits/food-and-nutrition-services
+---
+doc_id: nc-fns-overview-es
+jurisdiction: nc
+authority: North Carolina Department of Health and Human Services
+source_url: https://www.ncdhhs.gov/divisions/social-services/program-benefits/food-and-nutrition-services
+retrieved: 2026-07-24
+effective: 2025-10-01..2026-09-30
+supersedes: null
+---
 
 # Servicios de Alimentos y Nutrición (FNS) de Carolina del Norte — Descripción General del Programa
 

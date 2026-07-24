@@ -1,101 +1,52 @@
-Source: https://www.fns.usda.gov/snap/eligibility-citizenship-and-immigration-status
-
-# Non-Financial Eligibility — Citizenship, Work Rules, Residency
-
-## Citizenship / Immigration Status
-To receive FNS/SNAP, every household member must be one of:
-- A U.S. citizen
-- A U.S. national
-- A qualified non-citizen as defined by federal law
-
-Qualified non-citizens generally include lawful permanent residents (LPRs)
-who have met a 5-year residency requirement, refugees, asylees, persons
-with withholding of removal, Cuban/Haitian entrants, certain trafficking
-victims, veterans and active-duty military and their families, and others
-listed in federal rules.
-
-Some members may be "ineligible" due to immigration status, but their
-income and assets can still count toward the household's eligibility if
-they are required to be in the same household.
-
-Non-citizens applying for benefits should not be discouraged from applying;
-qualified non-citizens can receive benefits, and the application is
-confidential.
-
-## Work Registration (Able-Bodied Adults Without Dependents)
-Federal rules require most adult applicants (ages 16–59, not disabled,
-not raising children) to register for work, accept suitable employment,
-and meet the general work requirements.
-
-## ABAWD Time Limit
-Able-Bodied Adults Without Dependents (ABAWDs) — adults 18–49 with no
-children in the household, not pregnant, not disabled — can generally
-only receive FNS/SNAP for **3 months in a 36-month period** unless they:
-- Work at least 20 hours per week on average,
-- Participate in a qualifying workfare or training program, or
-- Live in an area with an approved ABAWD waiver.
-
-North Carolina has had ABAWD waivers covering many counties; the specific
-counties covered change over time. Always check the current FNS ABAWD
-page for NC or ask the local DSS office.
-
-## Residency
-Applicants must live in North Carolina. There is no minimum length of
-residency required. Homeless applicants are eligible; the shelter address
-or a description of where the person stays can be used.
-
-## Social Security Number
-Each household member must either provide or apply for a Social Security
-Number, or have good cause for not doing so.
-
-## Identity
-Applicants must prove identity. Other verification (income, immigration
-status, etc.) follows federal verification rules and may be verified
-electronically.
-
-## Disqualifications
-A person can be disqualified from FNS/SNAP for certain violations,
-including:
-- Intentional Program Violation (IPV) — fraud findings
-- Fleeing felons and probation/parole violators (with state-specific rules)
-- Drug-related felony convictions (NC rules vary; check current NC law)
-- Selling or trading benefits for firearms, ammunition, or explosives
-- Trading FNS benefits for controlled substances
-
+---
+doc_id: nc-fns-nonfinancial-scope-and-apply
+jurisdiction: nc
+authority: North Carolina Department of Health and Human Services
+source_url: https://www.ncdhhs.gov/divisions/social-services/program-benefits/food-and-nutrition-services
+retrieved: 2026-07-24
+effective: 2025-10-01..2026-09-30
+supersedes: null
 ---
 
-# How to Apply in North Carolina
+# Non-Financial Eligibility Scope and How to Apply
 
-## Three Ways to Apply
-1. **Online:** epass.nc.gov — the state's common benefits portal.
-2. **In person:** Visit the local county Department of Social Services
-   (DSS) office. A directory is available on the ncdhhs.gov county
-   services page.
-3. **By mail or fax:** A paper application can be submitted; the form is
-   available from the local DSS office and on ncdhhs.gov.
+## Volatile rules are outside this screen
+Federal work-requirement and non-citizen eligibility rules changed materially
+in 2025. CivicReach does **not** evaluate either topic and does not ask for a
+person's immigration status. A county Department of Social Services (DSS)
+office must evaluate the current rules and any individual exemptions or
+documentation. Do not use an income-screen result from CivicReach as an
+opinion about eligibility under these rules.
 
-## What Happens After You Apply
-- The county DSS will schedule an interview (phone or in person).
-- You will need to provide verification of identity, income, household
-   composition, and other items as requested.
-- Most applications must be processed within 30 days; expedited service
-   is available for households with very low income/assets or certain
-   emergencies, with a 7-day deadline.
+For a current determination, apply through ePASS or contact the applicant's
+county DSS office. A person may apply for other household members without
+asking CivicReach to evaluate anyone's immigration status.
 
-## What to Bring to the Interview
-Typical documents a DSS worker may request:
-- Photo ID
-- Social Security numbers for all household members
-- Proof of income (recent pay stubs, benefit award letters, etc.)
-- Proof of housing costs (rent receipt, mortgage statement)
-- Proof of medical expenses (for elderly/disabled households)
-- Immigration documents (if applicable)
+## Residency and identity
+Applicants seeking NC FNS generally apply through the county where they live.
+The county DSS determines what identity and residency verification is needed.
+CivicReach does not collect identity documents, Social Security numbers,
+addresses, or immigration documents.
 
-## After Approval
-- Benefits are issued on an EBT card.
-- Recertification is required at intervals (commonly 6 or 12 months).
-- Changes in income, household size, or address must be reported.
+## How to apply in North Carolina
 
-## Denial and Appeals
-If an application is denied, the applicant has the right to a fair hearing.
-Information on how to request a hearing is included in the denial notice.
+1. **Online:** use the official ePASS portal linked from the NCDHHS FNS page.
+2. **In person:** visit the local county DSS office listed by NCDHHS.
+3. **By mail or fax:** request the current paper application and submission
+   instructions from the county DSS office.
+
+The county DSS schedules any required interview, requests verification,
+decides eligibility, and explains appeal rights. Processing time and expedited
+service depend on current agency rules and the household's circumstances;
+confirm them with DSS rather than relying on this screen.
+
+## Preparing for DSS
+DSS may request proof concerning identity, household composition, income,
+and allowable expenses. Ask DSS which documents apply before sending
+sensitive records. CivicReach never needs those records to run its limited
+income screen.
+
+## If the application is denied
+Read the denial notice for the stated reason, deadline, and instructions for
+requesting a fair hearing. Contact county DSS for help understanding the
+agency's current process; CivicReach does not provide legal advice.

@@ -1,8 +1,12 @@
-Federal source: https://www.fns.usda.gov/snap/eligibility-income-and-deductions
-North Carolina BBCE source: https://www.ncdhhs.gov/divisions/social-services/program-design-and-policy
-FY2026 SNAP income-eligibility standards (USDA FNS COLA memo, effective
-2025-10-01 through 2026-09-30):
-https://www.usda.gov/sites/default/files/guidance-documents/fns.snap-cola-fy26memo.pdf
+---
+doc_id: nc-fns-income-fy2026
+jurisdiction: nc
+authority: USDA Food and Nutrition Service; North Carolina DHHS
+source_url: https://www.usda.gov/sites/default/files/guidance-documents/fns.snap-cola-fy26memo.pdf
+retrieved: 2026-07-24
+effective: 2025-10-01..2026-09-30
+supersedes: null
+---
 
 # FNS / SNAP Income Limits (Gross, Net, and Expanded Bands)
 
