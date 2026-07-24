@@ -25,7 +25,8 @@ from .llm_client import LLMClient
 _BANNER = (
     "CivicReach \u2014 NC Food & Nutrition Services (FNS) eligibility assistant.\n"
     "This is an initial screen, not a final agency determination.\n"
-    "Type your situation and press Enter. Type 'exit' or press Ctrl-C to leave."
+    "Type your situation and press Enter. Type 'handoff' for a case-worker\n"
+    "handoff summary once the screen is complete. Type 'exit' or press Ctrl-C to leave."
 )
 
 
@@ -65,6 +66,27 @@ def _run_repl(agent: CivicReachAgent, input_stream=sys.stdin, output=sys.stdout)
         if user_message.strip().lower() in {"exit", "quit"}:
             print("Goodbye.", file=output)
             return 0
+        if user_message.strip().lower() == "handoff":
+            # W17: print-ready case-worker handoff summary. Purely local —
+            # renders the deterministic screen result; nothing is
+            # submitted anywhere. Email is best-effort only when SMTP_*
+            # env vars are all present (never in a normal demo env).
+            try:
+                package = agent.handoff_summary()
+            except Exception as exc:  # noqa: BLE001 — never traceback mid-demo
+                print(f"Agent error: {exc}", file=output)
+                continue
+            if package is None:
+                print(
+                    "Handoff summary is not available yet — the eligibility "
+                    "screen must be completed first.",
+                    file=output,
+                )
+            else:
+                print(package["summary"], file=output)
+                print(f"[{package['banner']}]", file=output)
+            output.flush()
+            continue
         if not user_message.strip():
             # An accidental extra Enter must NOT end the session — in a
             # live demo that would kill the conversation mid-flow. Exit

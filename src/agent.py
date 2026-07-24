@@ -14,6 +14,7 @@ from .guardrails.crisis import crisis_response, detect_crisis
 from .guardrails.injection import detect_injection, injection_response
 from .guardrails.pii import redact_for_logging
 from .guardrails.scope import detect_out_of_scope, scope_redirect_message
+from .handoff import _HANDOFF_BANNER, handoff_summary, send_handoff_email
 from .llm_client import LLMClient
 from .retrieval import retrieve
 from .state import AssessmentState
@@ -121,6 +122,35 @@ class CivicReachAgent:
     @property
     def eligibility_result(self) -> dict[str, Any] | None:
         return self._eligibility_result
+
+    def handoff_summary(self) -> dict[str, Any] | None:
+        """Build the W17 case-worker handoff package, or ``None``.
+
+        Returns ``None`` when intake is incomplete or no deterministic
+        eligibility result exists yet — the summary reflects real state
+        only and can never be produced early. On success returns a dict
+        with:
+
+        * ``summary`` — the print-ready plain-English text block
+          (code-templated in src/handoff.py, never model-generated);
+        * ``banner`` — the on-screen confirmation line for the web UI,
+          so the notification concept is visible with zero external
+          dependencies;
+        * ``email_attempted`` / ``email_sent`` — status of the
+          strictly-secondary best-effort SMTP notification (attempted
+          only when all SMTP_* env vars are present; any SMTP failure is
+          swallowed and never degrades the on-screen path).
+        """
+        summary = handoff_summary(self.state, self._eligibility_result, self.last_citations)
+        if summary is None:
+            return None
+        email_sent = send_handoff_email(summary)
+        return {
+            "summary": summary,
+            "banner": _HANDOFF_BANNER,
+            "email_attempted": email_sent,
+            "email_sent": email_sent,
+        }
 
     def _track_query(self) -> str:
         """The retrieval query for the household's applicable income track."""
