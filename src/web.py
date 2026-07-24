@@ -7,15 +7,19 @@ all conversations; this demo does not persist household information.
 from __future__ import annotations
 
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from .agent import CivicReachAgent, first_turn_disclosure
 
 app = FastAPI(title="CivicReach", version="1.0.0")
+STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 # Public injection seam for tests and alternate deployments.
 agent_factory: Callable[[], CivicReachAgent] = CivicReachAgent
@@ -93,7 +97,7 @@ _FIRST_BUBBLE_HTML = (
 PAGE = (
     r"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>CivicReach — NC FNS Screen</title><style>
+<title>CivicReach — NC FNS Screen</title><meta name="theme-color" content="#102a43"><link rel="manifest" href="/static/manifest.json"><link rel="apple-touch-icon" sizes="192x192" href="/static/icons/icon-192.png"><style>
 :root{--navy:#102a43;--blue:#2563eb;--pale:#f4f7fb;--line:#d9e2ec;--ink:#243b53;--muted:#627d98;--green:#15803d}*{box-sizing:border-box}
 body{margin:0;background:var(--pale);color:var(--ink);font:15px/1.5 system-ui,-apple-system,Segoe UI,sans-serif}.top{background:var(--navy);color:white;padding:16px 24px}.top b{font-size:21px}.top span{opacity:.75;margin-left:12px}.layout{display:grid;grid-template-columns:minmax(0,1.6fr) minmax(300px,.8fr);gap:18px;max-width:1200px;margin:20px auto;padding:0 18px;height:calc(100vh - 105px)}.card{background:white;border:1px solid var(--line);border-radius:12px;box-shadow:0 4px 14px #102a4312}.chat{display:flex;flex-direction:column;min-height:0}.messages{padding:20px;overflow:auto;flex:1}.bubble{max-width:82%;padding:11px 14px;border-radius:14px;margin:0 0 12px;white-space:pre-wrap}.assistant{background:#eaf2ff;border-bottom-left-radius:3px}.user{background:var(--navy);color:white;margin-left:auto;border-bottom-right-radius:3px}.composer{display:flex;gap:9px;padding:14px;border-top:1px solid var(--line)}input{flex:1;padding:12px;border:1px solid #bcccdc;border-radius:8px;font:inherit}button{border:0;border-radius:8px;background:var(--blue);color:white;padding:0 20px;font-weight:650;cursor:pointer}button:disabled{opacity:.55}.panel{padding:18px;overflow:auto}.panel h2{margin:0 0 4px;font-size:17px}.hint{color:var(--muted);font-size:12px;margin-bottom:18px}.section{border-top:1px solid var(--line);padding-top:14px;margin-top:14px}.section h3{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:0 0 9px}pre{background:#f6f8fa;border-radius:7px;padding:10px;overflow:auto;font-size:12px}.tag{display:inline-block;background:#fff3cd;padding:3px 7px;border-radius:10px;margin:2px;font-size:12px}.good{color:var(--green)}.error{color:#b91c1c}.banner{background:#dcfce7;border:1px solid var(--green);color:var(--green);border-radius:8px;padding:9px 12px;margin-top:10px;font-weight:650;font-size:13px}#handoff{margin-top:4px;padding:10px 16px}#handoff-summary{margin-top:10px;white-space:pre-wrap}@media(max-width:760px){.layout{grid-template-columns:1fr;height:auto}.chat{height:65vh}.panel{min-height:300px}.top span{display:block;margin:2px 0 0}}
 </style></head><body><header class="top"><b>CivicReach</b><span>North Carolina FNS initial eligibility screen</span></header><main class="layout"><section class="card chat"><div id="messages" class="messages">"""
@@ -105,6 +109,7 @@ function render(data){document.querySelector('#state').textContent=JSON.stringif
 form.addEventListener('submit',async e=>{e.preventDefault();const message=input.value.trim();if(!message)return;bubble(message,'user');input.value='';send.disabled=true;try{const r=await fetch('/chat',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({message,session_id:sid})});const data=await r.json();if(!r.ok)throw new Error(data.detail||'Request failed');bubble(data.reply,'assistant');render(data)}catch(err){bubble('Sorry, the assistant is unavailable: '+err.message,'assistant error')}finally{send.disabled=false;input.focus()}});
 const handoffBtn=document.querySelector('#handoff'),handoffBanner=document.querySelector('#handoff-banner'),handoffSummary=document.querySelector('#handoff-summary');
 handoffBtn.addEventListener('click',async()=>{handoffBtn.disabled=true;try{const r=await fetch('/handoff',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({session_id:sid})});const data=await r.json();if(!r.ok)throw new Error(data.detail||'Request failed');handoffBanner.textContent=data.banner;handoffBanner.style.display='block';handoffSummary.textContent=data.summary;handoffSummary.style.display='block'}catch(err){handoffBanner.textContent='';handoffBanner.style.display='none';handoffSummary.style.display='none';bubble('Handoff unavailable: '+err.message,'assistant error')}finally{handoffBtn.disabled=false}});
+if('serviceWorker' in navigator){window.addEventListener('load',()=>navigator.serviceWorker.register('/static/service-worker.js').catch(()=>{}));}
 </script></body></html>"""
 )
 
