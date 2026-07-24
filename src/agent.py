@@ -8,7 +8,7 @@ from typing import Any, Callable
 
 from pydantic import ValidationError
 
-from .calculator import calculate_eligibility
+from .calculator import calculate_eligibility, income_limits
 from .guardrails.ambiguity import normalize_income
 from .guardrails.classifier import classify_intent
 from .guardrails.crisis import crisis_response, detect_crisis
@@ -389,6 +389,9 @@ class CivicReachAgent:
         # produced (see turn()). Exposed for the web UI's citation panel
         # and so a reviewer can see WHICH documents grounded the answer.
         self.last_citations: list[dict[str, Any]] = []
+        # Exact grounding blocks placed in the most recent prompt. Final
+        # citations are derived from this list, never from a second retrieval.
+        self._prompt_citations: list[dict[str, Any]] = []
 
     @property
     def eligibility_result(self) -> dict[str, Any] | None:
@@ -464,11 +467,44 @@ class CivicReachAgent:
         # Keep the phase guidance, but let the user's latest question steer
         # retrieval (for example, toward deductions during intake).
         query = f"{phase_query} {user_message}"[:200]
-        rule_text = self._retrieve(query)
+        retrieved = self._retrieve(query)
+        # Custom test/demo retrievers may return prose; the production
+        # retriever returns records. Preserve both interfaces.
+        retrieval_hits = retrieved if isinstance(retrieved, list) else []
+        grounding_blocks: list[Any] = []
+        prompt_citations: list[dict[str, Any]] = []
+
+        # Structured grounding is generated from the calculator's own source
+        # of truth once intake is complete. Thus the displayed/cited threshold
+        # equals the threshold used by calculate_eligibility().
+        if not missing and self.state.household_size is not None:
+            limits = income_limits(self.state.household_size)
+            structured = {
+                "doc": "calculator.income_limits()",
+                "snippet": (
+                    f"Household size {self.state.household_size}: gross 130 percent "
+                    f"limit ${limits['gross']:,.2f}; net 100 percent limit "
+                    f"${limits['net']:,.2f}; NC BBCE expanded 200 percent limit "
+                    f"${limits['expanded']:,.2f}."
+                ),
+                "score": 1.0,
+                "kind": "structured",
+            }
+            grounding_blocks.append(structured)
+            prompt_citations.append(structured)
+
+        if retrieval_hits:
+            grounding_blocks.extend(retrieval_hits)
+            prompt_citations.extend(
+                hit for hit in retrieval_hits if isinstance(hit, dict)
+            )
+        elif not isinstance(retrieved, list):
+            grounding_blocks.append(retrieved)
+        self._prompt_citations = prompt_citations
         payload: dict[str, Any] = {
             "assessment_state": self.state.model_dump(),
             "missing_fields": missing,
-            "retrieved_rule_text": rule_text,
+            "retrieved_rule_text": grounding_blocks,
             "corrections": list(self._corrections),
         }
         if self._eligibility_result is not None:
@@ -964,9 +1000,11 @@ class CivicReachAgent:
         # instead of invisible. Hits are also stored on self.last_citations
         # for the web UI's citation panel.
         if result_just_produced:
-            hits = self._retrieve(self._track_query())
+            # _context() built the explanation prompt immediately above; cite
+            # those exact blocks rather than issuing a different retrieval.
+            hits = self._prompt_citations
             if isinstance(hits, list):
-                self.last_citations = hits
+                self.last_citations = list(hits)
                 docs: list[str] = []
                 for h in hits:
                     doc = h.get("doc") if isinstance(h, dict) else None

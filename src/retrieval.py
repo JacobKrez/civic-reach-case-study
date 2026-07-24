@@ -17,6 +17,7 @@ from __future__ import annotations
 import math
 import os
 import re
+import unicodedata
 from collections import Counter
 from typing import Dict, List
 
@@ -40,11 +41,18 @@ _STOPWORDS = {
     "do", "does", "did", "can", "could", "should", "would", "will",
     "may", "might", "must",
     "not", "no", "yes",
+    # Spanish function words used by localized queries. Domain nouns are
+    # translated below; these should not dilute the bilingual query vector.
+    "cual", "cuales", "es", "el", "la", "los", "las", "de", "para", "un", "una",
 }
 
-# Token pattern: word characters, allowing the % and $ signs to remain as part
-# of tokens (so "$5,500" and "130%" are preserved as searchable terms).
-_TOKEN_RE = re.compile(r"[A-Za-z0-9%$]+")
+# Currency and percent punctuation carry no retrieval meaning. Keeping them
+# attached made ``130%`` fail to match ``130 percent`` and produced awkward
+# currency tokens. Words and each numeric component are indexed separately.
+_TOKEN_RE = re.compile(r"[A-Za-z]+|\d+")
+
+# Do not ground answers on coincidental/zero-overlap chunks.
+_MIN_SCORE = 0.15
 
 # ---------------------------------------------------------------------------
 # Spanish-language detection + localized retrieval preference (W15)
@@ -112,8 +120,14 @@ def _is_spanish_doc(fname: str) -> bool:
 
 def _tokenize(text: str) -> List[str]:
     """Lowercase, split into tokens, drop stopwords and very short tokens."""
-    tokens = [t.lower() for t in _TOKEN_RE.findall(text)]
-    return [t for t in tokens if t not in _STOPWORDS and len(t) > 1]
+    ascii_text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode()
+    tokens = [t.lower() for t in _TOKEN_RE.findall(ascii_text)]
+    aliases = {
+        "ingresos": "income", "ingreso": "income", "limite": "limit",
+        "hogar": "household", "bruto": "gross", "mensual": "monthly",
+    }
+    expanded = [aliases[t] if t in aliases else t for t in tokens]
+    return [t for t in expanded if t not in _STOPWORDS and len(t) > 1]
 
 
 def _split_chunks(text: str) -> List[str]:
@@ -176,6 +190,23 @@ def _split_chunks(text: str) -> List[str]:
     return chunks
 
 
+def _table_index_text(chunk: str) -> str | None:
+    """Return compact searchable prose for a Markdown income-limit row."""
+    match = re.fullmatch(
+        r"\|\s*(\d+)\s*\|\s*\$?([\d,]+(?:\.\d+)?)\s*\|"
+        r"\s*\$?([\d,]+(?:\.\d+)?)\s*\|\s*\$?([\d,]+(?:\.\d+)?)\s*\|",
+        chunk.strip(),
+    )
+    if not match:
+        return None
+    size, gross, net, expanded = match.groups()
+    return (
+        f"NC FNS income limit table household size {size} "
+        f"gross 130 percent {gross} net 100 percent {net} "
+        f"expanded 200 percent {expanded}"
+    )
+
+
 def _load_corpus(kb_dir: str) -> List[Dict]:
     """Load every *.md file under kb_dir into a list of chunk records."""
     records: List[Dict] = []
@@ -192,8 +223,18 @@ def _load_corpus(kb_dir: str) -> List[Dict]:
         except OSError:
             continue
 
-        for chunk in _split_chunks(text):
-            tokens = _tokenize(chunk)
+        chunks = _split_chunks(text)
+        # Add one independently scored record per income-table data row.
+        # The original table block remains available, while compact rows avoid
+        # its large cosine norm and let household-size lookups rank directly.
+        table_rows = [line.strip() for chunk in chunks for line in chunk.splitlines()
+                      if _table_index_text(line)]
+        for chunk in [*chunks, *table_rows]:
+            # Markdown income tables are otherwise dominated by unrelated
+            # numeric tokens. Index every data row as a compact semantic row
+            # while preserving the original row as the returned snippet.
+            index_text = _table_index_text(chunk) or chunk
+            tokens = _tokenize(index_text)
             if not tokens:
                 continue
             records.append(
@@ -201,6 +242,22 @@ def _load_corpus(kb_dir: str) -> List[Dict]:
                     "doc": fname,
                     "snippet": chunk,
                     "tokens": tokens,
+                }
+            )
+        if table_rows:
+            # Generic table questions need a compact record whose snippet is
+            # the actual table rows, not a heading or deductions prose.
+            records.append(
+                {
+                    "doc": fname,
+                    "snippet": (
+                        "NC FNS monthly income limit table — household size, "
+                        "gross 130%, net 100%, expanded 200%\n" + "\n".join(table_rows)
+                    ),
+                    "tokens": _tokenize(
+                        "NC FNS gross monthly income limit table household size "
+                        "gross 130 percent net 100 percent expanded 200 percent"
+                    ),
                 }
             )
     return records
@@ -287,12 +344,7 @@ def retrieve(query: str, k: int = 3, kb_dir: str | None = None) -> List[Dict]:
 
     query_tokens = _tokenize(query)
     if not query_tokens:
-        # Graceful fallback: return the first k chunks with a small constant
-        # score so an off-topic nonsense query still gets SOMETHING.
-        return [
-            {"doc": rec["doc"], "snippet": rec["snippet"], "score": 0.0}
-            for rec in corpus[:k]
-        ]
+        return []
 
     # IDF and document vectors are precomputed in _get_corpus.
     idf = corpus[0]["idf"]
@@ -325,11 +377,28 @@ def retrieve(query: str, k: int = 3, kb_dir: str | None = None) -> List[Dict]:
     #      slot keeps the English fallback reachable for the topics the
     #      translation does not cover. detect_spanish() is the public
     #      heuristic hook; callers may also branch on it directly.
+    relevant = [row for row in scored if row["score"] >= _MIN_SCORE]
+
     if detect_spanish(query):
-        localized = _cap_doc_chunks(scored, k)
+        # Keep one genuinely overlapping localized block even when its score is
+        # below the global English-corpus floor, then fill with relevant
+        # English fallbacks. This preserves localized context without admitting
+        # zero-score citations.
+        best_es = next(
+            (row for row in scored if _is_spanish_doc(row["doc"]) and row["score"] > 0.0),
+            None,
+        )
+        localized = list(relevant)
+        if best_es is not None and best_es not in localized:
+            localized.append(best_es)
+            localized.sort(key=lambda r: (-r["score"], r["doc"]))
+        localized = _cap_doc_chunks(localized, k)
+        # Reserve one slot for the localized block when it exists.
+        if best_es is not None and best_es not in localized[:k]:
+            localized = [best_es, *[r for r in localized if r is not best_es]]
         return localized[:k]
 
-    return scored[:k]
+    return relevant[:k]
 
 
 def _cap_doc_chunks(scored: List[Dict], k: int, max_es_chunks: int = 1) -> List[Dict]:

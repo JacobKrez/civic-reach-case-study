@@ -65,18 +65,13 @@ def test_results_are_ranked_score_descending():
     not _at_least_three_md_files(),
     reason="knowledge_base must contain at least 3 markdown docs",
 )
-def test_off_topic_nonsense_query_returns_something():
-    """A nonsense / off-topic query must NOT raise; it returns SOMETHING."""
-    # Pure stopword-ish gibberish — should still return at least one chunk.
+def test_off_topic_nonsense_query_returns_no_ungrounded_sources():
+    """A nonsense query must not fabricate relevance or citations."""
     nonsense = "zxqzxq blarg flarp"
     results = retrieve(nonsense, k=3)
     assert isinstance(results, list)
-    assert len(results) > 0, "off-topic query must still return some chunks"
-
-    # And an empty-ish query must also be graceful (no exception).
-    empty_results = retrieve("", k=3)
-    assert isinstance(empty_results, list)
-    assert len(empty_results) > 0, "empty query must return fallback results"
+    assert results == []
+    assert retrieve("", k=3) == []
 
 
 @pytest.mark.skipif(
