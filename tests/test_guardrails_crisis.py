@@ -12,6 +12,10 @@ class RecordingLLM:
 
     def __init__(self) -> None:
         self.calls = []
+        # The system prompt passed on each main-LLM call (W20 hostility
+        # tests assert the de-escalation context is prepended for exactly
+        # one turn). Classifier calls are skipped, same as ``calls``.
+        self.systems = []
 
     def chat(self, messages, system=None, tools=None):
         # The classifier layer runs before the agent's main LLM call.
@@ -20,6 +24,7 @@ class RecordingLLM:
         if system == CLASSIFIER_SYSTEM_PROMPT:
             return {"content": "normal", "tool_calls": []}
         self.calls.append(messages)
+        self.systems.append(system)
         return {
             "content": "To continue, how many people are in your household?",
             "tool_calls": [],
@@ -144,3 +149,309 @@ def test_assessment_continues_gently_on_subsequent_turn():
     assert len(llm.calls) == 1
     messages = llm.calls[0]
     assert crisis_response() in [message["content"] for message in messages]
+
+
+# --------------------------------------------------------------------------
+# W20 — domestic-violence coverage, 911 line, hostility-vs-crisis priority.
+# --------------------------------------------------------------------------
+
+
+class TestW20DomesticViolenceDetection:
+    """DV disclosures must hit the same deterministic layer as suicidal ideation."""
+
+    @pytest.mark.parametrize(
+        "disclosure",
+        [
+            "my partner hits me, I am afraid to go home",
+            "My partner hurts me.",
+            "He hits me when he drinks.",
+            "She hits me and I don't know what to do.",
+            "my partner beats me",
+            "I'm afraid to go home tonight.",
+            "I'm scared to go home.",
+            "I am not safe at home.",
+            "I feel unsafe at home because of him.",
+            "I'm experiencing domestic violence.",
+            "my abusive partner controls everything",
+            "he threatens me every day",
+        ],
+    )
+    def test_english_dv_disclosure_detected(self, disclosure):
+        assert detect_crisis(disclosure) is True
+
+    @pytest.mark.parametrize(
+        "disclosure",
+        [
+            "mi pareja me pega",
+            "mi esposo me pega cuando bebe",
+            "tengo miedo de volver a casa",
+            "no estoy segura en casa",
+            "no me siento seguro en casa",
+            "sufro violencia doméstica",  # accented form
+            "sufro violencia domestica",  # unaccented form
+            "me maltrata",
+        ],
+    )
+    def test_spanish_dv_disclosure_detected_accent_insensitive(self, disclosure):
+        assert detect_crisis(disclosure) is True
+
+    def test_acceptance_probe_exact_message(self):
+        # The chunk's acceptance criterion message, verbatim.
+        assert detect_crisis("my partner hits me, I am afraid to go home")
+
+
+class TestW20DomesticViolenceResponse:
+    """The REAL National Domestic Violence Hotline must appear, hardcoded."""
+
+    def test_dv_resource_constant_is_the_real_number(self):
+        # 1-800-799-7233 (call) or text START to 88788 — thehotline.org.
+        assert CRISIS_RESOURCES["domestic_violence_hotline"] == "1-800-799-7233"
+
+    def test_dv_hotline_in_bilingual_response(self):
+        response = crisis_response()
+        assert "1-800-799-7233" in response
+        assert "88788" in response  # text START to 88788
+
+    def test_dv_hotline_in_every_language_block(self):
+        for lang in ("en", "es", "bilingual"):
+            assert "1-800-799-7233" in crisis_response(lang)
+
+    def test_dv_disclosure_through_agent_returns_dv_hotline(self):
+        llm = RecordingLLM()
+        agent = CivicReachAgent(llm_client=llm)
+        response = agent.turn("my partner hits me, I am afraid to go home")
+        assert agent.state.is_crisis is True
+        assert "1-800-799-7233" in response
+        assert "988" in response  # full resource set, never partial
+        assert llm.calls == []  # LLM never writes the crisis turn
+
+
+class TestW20Emergency911Line:
+    """911 must be the FIRST resource line, phrased for a text interface."""
+
+    def test_911_resource_constant(self):
+        assert CRISIS_RESOURCES["emergency_services"] == "911"
+
+    def test_911_present_in_response(self):
+        assert "911" in crisis_response()
+
+    def test_911_line_is_first_resource_line_in_english_block(self):
+        english = crisis_response("en")
+        lines = english.splitlines()
+        first_bullet = next(l for l in lines if l.startswith("- "))
+        assert "911" in first_bullet
+        assert first_bullet == "- If this is a life-threatening emergency, call 911 now."
+
+    def test_911_line_is_first_resource_line_in_spanish_block(self):
+        spanish = crisis_response("es")
+        lines = spanish.splitlines()
+        first_bullet = next(l for l in lines if l.startswith("- "))
+        assert "911" in first_bullet
+
+    def test_911_phrased_for_text_interface_not_hang_up(self):
+        # No phone leg exists; the wording must be "call 911 now", not
+        # "hang up and dial" style phone-call instructions.
+        response = crisis_response()
+        assert "hang up" not in response.casefold()
+        assert "call 911 now" in response
+
+    def test_911_appears_in_both_blocks_of_bilingual_rendering(self):
+        bilingual = crisis_response()
+        assert bilingual.count("911") >= 2
+
+
+class TestW20HostilityDetection:
+    """detect_hostility: agent-directed abuse, conservative by design."""
+
+    @pytest.mark.parametrize(
+        "message",
+        [
+            "fuck you",
+            "Fuck you, you're not helping.",
+            "screw you and this form",
+            "shut up",
+            "stfu",
+            "fuck off",
+            "go to hell",
+            "you're stupid",
+            "you are useless",
+            "you're a moron",
+            "stupid bot",
+            "this dumb bot can't do anything",
+            "useless ai",
+            "i hate you",
+            "this bot is worthless",
+        ],
+    )
+    def test_agent_directed_abuse_detected(self, message):
+        from src.guardrails.hostility import detect_hostility
+
+        assert detect_hostility(message) is True
+
+    @pytest.mark.parametrize(
+        "message",
+        [
+            # Profanity ABOUT the user's situation is NOT hostility toward
+            # the agent. Flagging it would punish the exact users this
+            # project serves.
+            "this fucking process is impossible",
+            "I have no fucking food",
+            "this shit is ridiculous, nobody helps",
+            "I'm so pissed off about my case",
+            # Ordinary intake messages.
+            "There are four people in my household.",
+            "My income is about $1,800 a month.",
+            "thank you, that helps",
+            # Spanish in-scope message — no hostility list fires.
+            "Hay tres personas en mi hogar",
+        ],
+    )
+    def test_situation_directed_profane_or_normal_not_flagged(self, message):
+        from src.guardrails.hostility import detect_hostility
+
+        assert detect_hostility(message) is False
+
+    def test_empty_and_blank_input_not_hostile(self):
+        from src.guardrails.hostility import detect_hostility
+
+        assert detect_hostility("") is False
+        assert detect_hostility("   \n\t ") is False
+
+
+class TestW20CrisisAlwaysWinsOverHostility:
+    """THE critical invariant: a message that is BOTH hostile AND
+    crisis-flagged must produce the hardcoded 911/988/DV/211 crisis
+    response, never a generic de-escalation reply and never the LLM."""
+
+    @pytest.mark.parametrize(
+        "message",
+        [
+            "fuck you, I want to die",
+            "this stupid bot can't help — I'm going to kill myself",
+            "I fucking hate you and there is nothing to eat",
+            "you're useless, my partner hits me and I'm afraid to go home",
+            "damn you, the pantry is empty and my kids are starving",
+        ],
+    )
+    def test_hostile_crisis_message_gets_full_crisis_response(self, message):
+        from src.guardrails.hostility import detect_hostility
+
+        # The message really is dual-flagged — the test is meaningless
+        # otherwise. Both detectors must fire.
+        assert detect_hostility(message) is True
+        assert detect_crisis(message) is True
+
+        llm = RecordingLLM()
+        agent = CivicReachAgent(llm_client=llm)
+        response = agent.turn(message)
+
+        assert agent.state.is_crisis is True
+        # The FULL hardcoded resource set — 911, 988, DV hotline, 211 —
+        # never a generic de-escalation reply.
+        assert "911" in response
+        assert "988" in response
+        assert "1-800-799-7233" in response
+        assert "211" in response
+        # The LLM was never called: the crisis turn is model-free.
+        assert llm.calls == []
+        # The de-escalation context was NOT applied on a crisis turn —
+        # crisis handling claimed the turn before hostility was evaluated.
+        assert agent._hostile_this_turn is False
+
+    def test_hostile_then_crisis_on_next_turn_still_gets_resources(self):
+        """Hostility on turn 1 must not suppress crisis handling on turn 2."""
+        llm = RecordingLLM()
+        agent = CivicReachAgent(llm_client=llm)
+
+        agent.turn("you're useless")
+        response = agent.turn("I want to die")
+
+        assert "988" in response
+        assert "1-800-799-7233" in response
+        assert agent.state.is_crisis is True
+
+
+class TestW20HostilityNonBlockingBehavior:
+    """Hostility sets a flag and one-turn context — never a refusal."""
+
+    def test_hostile_turn_still_reaches_llm_and_continues_intake(self):
+        from src.guardrails.hostility import HOSTILITY_CONTEXT_EN
+
+        llm = RecordingLLM()
+        agent = CivicReachAgent(llm_client=llm)
+
+        response = agent.turn("you're useless, but I still need food stamps")
+
+        # Non-blocking: the normal LLM path ran and answered.
+        assert response == "To continue, how many people are in your household?"
+        assert len(llm.calls) == 1
+        # The de-escalation instruction was prepended to THIS turn's
+        # system prompt.
+        assert llm.systems[-1].startswith(HOSTILITY_CONTEXT_EN)
+        # The flag resets after the turn — one-turn scope.
+        assert agent._hostile_this_turn is False
+        # The conversation was NOT refused/ended: no crisis/injection/
+        # scope flags flipped.
+        assert agent.state.is_crisis is False
+        assert agent.state.is_injection_attempt is False
+        assert agent.state.is_out_of_scope is False
+
+    def test_de_escalation_context_is_one_turn_only(self):
+        from src.guardrails.hostility import HOSTILITY_CONTEXT_EN
+
+        llm = RecordingLLM()
+        agent = CivicReachAgent(llm_client=llm)
+
+        agent.turn("fuck you")
+        assert HOSTILITY_CONTEXT_EN in llm.systems[-1]
+
+        agent.turn("sorry, I'm just frustrated. Four people live here.")
+        assert HOSTILITY_CONTEXT_EN not in llm.systems[-1]
+        assert agent._hostile_this_turn is False
+
+    def test_de_escalation_context_follows_spanish_mode(self):
+        from src.guardrails.hostility import HOSTILITY_CONTEXT_ES
+
+        llm = RecordingLLM()
+        agent = CivicReachAgent(llm_client=llm)
+        agent.state.language = "es"
+
+        agent.turn("fuck you")
+        assert llm.systems[-1].startswith(HOSTILITY_CONTEXT_ES)
+
+    def test_de_escalation_context_never_written_to_history(self):
+        """The instruction is system-prompt-only; it must not appear as a
+        user/assistant message the model could later quote or the user see."""
+        from src.guardrails.hostility import HOSTILITY_CONTEXT_EN
+
+        llm = RecordingLLM()
+        agent = CivicReachAgent(llm_client=llm)
+        agent.turn("you're worthless")
+
+        history_text = " ".join(m["content"] for m in agent._messages)
+        assert HOSTILITY_CONTEXT_EN not in history_text
+
+    def test_hostile_turn_writes_audit_note_not_visible_reply(self):
+        llm = RecordingLLM()
+        agent = CivicReachAgent(llm_client=llm)
+
+        response = agent.turn("you're worthless")
+
+        # The user-facing reply is the ordinary intake question — the
+        # audit note lives in history only, role 'system'.
+        assert response == "To continue, how many people are in your household?"
+        notes = [
+            m for m in agent._messages
+            if m["role"] == "system" and "hostile" in m["content"]
+        ]
+        assert len(notes) == 1
+
+    def test_hostility_does_not_suppress_subsequent_normal_turns(self):
+        """A hostile turn changes nothing about how later turns behave."""
+        llm = RecordingLLM()
+        agent = CivicReachAgent(llm_client=llm)
+
+        agent.turn("stupid bot")
+        response = agent.turn("There are three people in my household")
+        assert response == "To continue, how many people are in your household?"
+        assert agent.state.turn_count == 2

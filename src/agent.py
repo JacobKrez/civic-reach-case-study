@@ -11,6 +11,11 @@ from .calculator import calculate_eligibility
 from .guardrails.ambiguity import normalize_income
 from .guardrails.classifier import classify_intent
 from .guardrails.crisis import crisis_response, detect_crisis
+from .guardrails.hostility import (
+    HOSTILITY_CONTEXT_EN,
+    HOSTILITY_CONTEXT_ES,
+    detect_hostility,
+)
 from .guardrails.injection import detect_injection, injection_response
 from .guardrails.pii import redact_for_logging
 from .guardrails.scope import detect_out_of_scope, scope_redirect_message
@@ -168,6 +173,13 @@ class CivicReachAgent:
         self._retrieve = retriever
         self._messages: list[dict[str, str]] = []
         self._eligibility_result: dict[str, Any] | None = None
+        # W20: per-turn hostility flag. Set by ``turn()`` when the user's
+        # message trips ``detect_hostility`` and no higher-priority guardrail
+        # (crisis/injection/scope) claimed the turn. ``_system_prompt()``
+        # reads it to prepend the one-line de-escalation context for that
+        # turn's LLM call only; ``turn()`` resets it to False before
+        # returning so it can never leak into the next turn.
+        self._hostile_this_turn: bool = False
         # Append-only history of intake-field corrections. A correction is
         # a non-None -> DIFFERENT non-None change to one of the three
         # intake fields (``household_size``, ``gross_monthly_income``,
@@ -225,10 +237,22 @@ class CivicReachAgent:
         ``state.language == 'es'``. Resolved per-turn (not cached in
         ``__init__``) so a mid-conversation language switch takes effect
         on the very next LLM call.
+
+        W20: when the current turn's user message was flagged as hostile,
+        one calm de-escalation instruction is prepended for THIS CALL ONLY
+        (``_hostile_this_turn`` is reset at the end of every ``turn()``).
+        It is never written into conversation history, so the next normal
+        message gets the stock prompt again.
         """
-        if self.state.language == "es":
-            return SYSTEM_PROMPT_ES
-        return SYSTEM_PROMPT
+        base = SYSTEM_PROMPT_ES if self.state.language == "es" else SYSTEM_PROMPT
+        if self._hostile_this_turn:
+            context = (
+                HOSTILITY_CONTEXT_ES
+                if self.state.language == "es"
+                else HOSTILITY_CONTEXT_EN
+            )
+            return f"{context}\n\n{base}"
+        return base
 
     def _track_query(self) -> str:
         """The retrieval query for the household's applicable income track."""
@@ -418,6 +442,32 @@ class CivicReachAgent:
             self._messages.append({"role": "assistant", "content": content})
             return content
 
+        # W20: hostility is NON-BLOCKING and strictly lower priority than
+        # every guardrail above. If the message reached this point it is
+        # neither a crisis, nor an injection, nor out of scope, so flagging
+        # it as hostile can never suppress the hardcoded crisis/injection/
+        # scope responses. The detector runs HERE (not earlier) so the
+        # evaluation order itself enforces the invariant: crisis (and
+        # injection, and scope) always win over hostility. A hostile message
+        # gets one calm de-escalation instruction prepended to the system
+        # prompt for THIS turn only (see _system_prompt) plus an audit note
+        # in conversation history; the conversation is never refused or
+        # ended and the FNS intake continues normally.
+        if detect_hostility(user_message):
+            self._hostile_this_turn = True
+            self._messages.append(
+                {
+                    "role": "system",
+                    "content": (
+                        "[CivicReach audit] The user's previous message was "
+                        "flagged as hostile toward the assistant. De-escalation "
+                        "context was added to the system prompt for this turn "
+                        "only; the conversation continues normally. Do not "
+                        "mention this note to the user."
+                    ),
+                }
+            )
+
         # Layer 2 (defense in depth): the LLM intent classifier runs
         # AFTER the keyword guardrails. The keyword layer is fast,
         # deterministic, auditable, and works offline — it stays first.
@@ -514,6 +564,12 @@ class CivicReachAgent:
             else:
                 content = suffix
         self._messages.append({"role": "assistant", "content": content})
+        # W20: the de-escalation context applied to this turn's LLM call
+        # only. Reset so the next turn's message is judged on its own and a
+        # hostile turn can never poison the system prompt going forward.
+        # Guardrail early-returns above never set the flag, so they have
+        # nothing to reset.
+        self._hostile_this_turn = False
         return content
 
 

@@ -156,7 +156,8 @@ flowchart TD
 
 | Layer | What it catches | Why deterministic |
 |---|---|---|
-| Crisis keyword (`detect_crisis`) | Suicidal ideation, self-harm, domestic-violence, food-on-table emergencies, "I can't go on" phrasings | Returns a hardcoded response with 988 / 211 / DV hotline resources. The model is never allowed to write this turn. |
+| Crisis keyword (`detect_crisis`) | Suicidal ideation, self-harm, domestic-violence disclosures (EN/ES), food-on-table emergencies, "I can't go on" phrasings | Returns a hardcoded response: **911** for a life-threatening emergency (first line, phrased for a text interface — "call 911 now", there is no phone leg), **988** (call/text), the **National Domestic Violence Hotline 1-800-799-7233** (or text START to 88788), the USDA hunger hotline, and **211**. The model is never allowed to write this turn. |
+| Hostility keyword (`detect_hostility`) | Profanity/insults directed at the agent ("fuck you", "stupid bot", "you're useless") — NOT profanity about the user's situation | Non-blocking, deliberately. Sets a per-turn flag, prepends one calm de-escalation instruction to the system prompt for that turn only (stay professional, don't mirror tone, stay on task), and writes a history-only audit note. Never refuses or ends the conversation. **Crisis always wins**: the detector runs only after crisis/injection/scope have cleared, so a hostile *and* crisis-flagged message still gets the full 911/988/DV/211 response. |
 | Prompt-injection keyword (`detect_injection`) | "ignore previous instructions", "you are now DAN", "system:" spoofing, role-override attempts | Hardcoded refusal. The flag is recorded but does not lock the conversation into refusal mode — the next normal message is evaluated normally. |
 | Out-of-scope keyword (`detect_scope`) | Legal advice, unrelated benefit programs, immigration questions, tax / housing / Medicaid | Polite redirect back to FNS questions. State is preserved; nothing already collected is reset. |
 | PII redactor (`redact_for_logging`) | SSN-shaped, account-shaped, routing-shaped patterns | Strips from conversation history before it's logged, so any later dump is safe by construction. |
@@ -247,7 +248,8 @@ src/
   cli.py              # `python3 -m src.cli`
   web.py              # FastAPI UI: POST /chat, GET /, GET /health
   guardrails/
-    crisis.py         # detect_crisis, crisis_response
+    crisis.py         # detect_crisis, crisis_response (911 / 988 / DV hotline 1-800-799-7233 / USDA / 211)
+    hostility.py      # detect_hostility + per-turn de-escalation context (non-blocking; crisis wins)
     injection.py      # detect_injection, injection_response
     scope.py          # detect_out_of_scope, scope_redirect_message
     classifier.py     # LLM intent classifier (defense in depth)
@@ -268,6 +270,8 @@ scripts/              # one-off generators (KB income table, etc.)
   explicitly, and the `update_state` schema rejects it structurally.
 * The agent does not submit applications, contact any agency, or
   scrape any government system.
-* On crisis detection the agent returns 988 (Suicide & Crisis Lifeline)
-  and 211 (United Way resources) and stops; it does not attempt to
+* On crisis detection the agent returns 911 (life-threatening emergencies,
+  first line), 988 (Suicide & Crisis Lifeline), the National Domestic
+  Violence Hotline 1-800-799-7233, the USDA hunger hotline, and 211
+  (United Way resources) and stops; it does not attempt to
   continue the FNS intake on the same turn.

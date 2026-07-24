@@ -7,9 +7,13 @@ path. This guarantees that users see verified hotline numbers verbatim.
 from __future__ import annotations
 
 CRISIS_RESOURCES = {
+    'emergency_services': '911',
     'suicide_crisis_lifeline': '988',
     'usda_national_hunger_hotline': '1-866-3-HUNGRY (1-866-348-6479)',
     'two_one_one': '211',
+    # National Domestic Violence Hotline (thehotline.org): 24/7/365, free,
+    # confidential. 1-800-799-7233 (call) or text START to 88788.
+    'domestic_violence_hotline': '1-800-799-7233',
 }
 
 _CRISIS_KEYWORDS = (
@@ -30,6 +34,24 @@ _CRISIS_KEYWORDS = (
     "haven't had a meal",
     "have not had a real meal",
     "have not had a meal",
+    # Domestic-violence disclosures (W20). A reviewer disclosing partner
+    # violence must reach the SAME deterministic layer as a suicidal-ideation
+    # disclosure — the National Domestic Violence Hotline is in
+    # CRISIS_RESOURCES and appears in every crisis_response() rendering.
+    "partner hurts me",
+    "partner hits me",
+    "partner beats me",
+    "hits me",
+    "beats me",
+    "afraid to go home",
+    "scared to go home",
+    "not safe at home",
+    "unsafe at home",
+    "domestic violence",
+    "domestic abuse",
+    "abusive partner",
+    "hurts me when",
+    "threatens me",
 )
 
 # Spanish-language crisis phrases mirroring the English trigger categories
@@ -73,6 +95,25 @@ _CRISIS_KEYWORDS_ES = (
     "no hemos comido",
     "no he comido",
     "no han comido",
+    # Domestic-violence disclosures (W20, mirrors the English additions).
+    "mi pareja me pega",
+    "mi pareja me golpea",
+    "mi esposo me pega",
+    "mi esposa me pega",
+    "me golpea",
+    "me maltrata",
+    "maltratada",
+    "maltratado",
+    "miedo de volver a casa",
+    "miedo a volver a casa",
+    "miedo de ir a casa",
+    "no estoy segura en casa",
+    "no estoy seguro en casa",
+    "no me siento segura en casa",
+    "no me siento seguro en casa",
+    "violencia domestica",
+    "violencia en el hogar",
+    "abuso domestico",
 )
 
 # Accented vowels -> unaccented, so a keyword written once (unaccented)
@@ -101,8 +142,14 @@ def crisis_response(lang: str = "bilingual") -> str:
 
     The response is bilingual by design: the English block comes first and
     the Spanish block repeats the SAME verbatim hotline numbers. The numbers
-    are never translated, paraphrased, or omitted in either language — 988 /
-    211 / 1-866-3-HUNGRY are the lifeline and must survive verbatim.
+    are never translated, paraphrased, or omitted in either language — 911 /
+    988 / 211 / 1-866-3-HUNGRY / 1-800-799-7233 are the lifeline and must
+    survive verbatim.
+
+    W20: the 911 life-threatening-emergency line is the FIRST line of both
+    blocks. A true emergency (fire, violence in progress, medical emergency)
+    outranks every other resource, and the phrasing is written for a text
+    interface — there is no phone leg, so "call 911 now", not "hang up".
 
     ``lang`` selects the rendering:
       * ``'bilingual'`` (default, the pre-W19 behavior) — English block then
@@ -114,8 +161,14 @@ def crisis_response(lang: str = "bilingual") -> str:
     """
     english = (
         "I'm sorry you're facing this. Immediate help comes first:\n"
+        f"- If this is a life-threatening emergency, call "
+        f"{CRISIS_RESOURCES['emergency_services']} now.\n"
         f"- For suicidal thoughts or a mental-health crisis, call or text "
         f"{CRISIS_RESOURCES['suicide_crisis_lifeline']}.\n"
+        f"- If you are experiencing domestic violence or do not feel safe "
+        f"at home, call the National Domestic Violence Hotline at "
+        f"{CRISIS_RESOURCES['domestic_violence_hotline']} (or text START "
+        f"to 88788).\n"
         f"- For urgent food help, call the USDA National Hunger Hotline at "
         f"{CRISIS_RESOURCES['usda_national_hunger_hotline']}.\n"
         f"- For local food and emergency services, call "
@@ -125,9 +178,15 @@ def crisis_response(lang: str = "bilingual") -> str:
     spanish = (
         "Lamento que estés pasando por esto. La ayuda inmediata es lo "
         "primero:\n"
+        f"- Si es una emergencia que pone en peligro tu vida, llama al "
+        f"{CRISIS_RESOURCES['emergency_services']} ahora.\n"
         f"- Para pensamientos suicidas o una crisis de salud mental, llama "
         f"o envía un mensaje de texto al "
         f"{CRISIS_RESOURCES['suicide_crisis_lifeline']}.\n"
+        f"- Si sufres violencia doméstica o no te sientes seguro en casa, "
+        f"llama a la Línea Nacional contra la Violencia Doméstica al "
+        f"{CRISIS_RESOURCES['domestic_violence_hotline']} (o envía START "
+        f"al 88788).\n"
         f"- Para ayuda urgente con alimentos, llama a la Línea Nacional "
         f"contra el Hambre del USDA al "
         f"{CRISIS_RESOURCES['usda_national_hunger_hotline']}.\n"
