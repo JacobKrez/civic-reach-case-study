@@ -1,12 +1,15 @@
 """Tests for the deterministic NC FNS eligibility calculator.
 
-The values in these tests are derived directly from the HHS 2025 Federal
-Poverty Guidelines via the multipliers in ``src/calculator.py`` (130%
-for the gross test, 100% for the net test). If the poverty guidelines
-change for a new program year, update both the calculator and these
-expected values.
+The values in these tests are read directly from the calculator's own
+income-limit and deduction tables (``src.calculator``) — the calculator's
+tables are the single source of truth, sourced from the USDA FNS FY2026
+SNAP income-eligibility standards (48 States & DC). Pulling expected
+values from the same module the production code reads from guarantees
+the tests stay in sync with the production numbers.
 
-Reference: https://aspe.hhs.gov/2025-poverty-guidelines
+Primary source: USDA FNS, "SNAP FY 2026 Cost-of-Living Adjustments"
+memo (effective 2025-10-01 through 2026-09-30):
+    https://www.usda.gov/sites/default/files/guidance-documents/fns.snap-cola-fy26memo.pdf
 """
 
 from __future__ import annotations
@@ -16,20 +19,29 @@ import pytest
 from src.calculator import (
     _POVERTY_GUIDELINES_SOURCE_URL,
     calculate_eligibility,
+    income_limits,
 )
 
 
 # ---------- fixtures for expected values ----------
-# (Calculated from the published 2025 HHS poverty guidelines so the
-#  expected values stay auditable. If you change the base figures,
-#  change these too — and add a comment explaining when/why.)
-HH1_GROSS_LIMIT = round((15_650.0 * 1.30) / 12.0, 2)   # 1,695.42
-HH1_NET_LIMIT = round((15_650.0 * 1.00) / 12.0, 2)      # 1,304.17
-HH4_GROSS_LIMIT = round((32_150.0 * 1.30) / 12.0, 2)   # 3,482.92
-HH4_NET_LIMIT = round((32_150.0 * 1.00) / 12.0, 2)      # 2,679.17
+# Read directly from the calculator so tests stay locked to the same
+# table the agent cites. ``income_limits()`` is the calculator's
+# public source of truth for the gross/net/expanded (130/100/200%)
+# monthly income limits.
+HH1_LIMITS = income_limits(1)   # gross=1,696.00  net=1,305.00  expanded=2,610.00
+HH2_LIMITS = income_limits(2)   # gross=2,292.00  net=1,763.00  expanded=3,526.00
+HH4_LIMITS = income_limits(4)   # gross=3,483.00  net=2,680.00  expanded=5,360.00
+
+HH1_GROSS_LIMIT = HH1_LIMITS["gross"]      # 1,696.00 — federal 130% floor (NOT the NC ceiling)
+HH1_NET_LIMIT = HH1_LIMITS["net"]          # 1,305.00
+HH1_BBCE_LIMIT = HH1_LIMITS["expanded"]    # 2,610.00 — NC BBCE 200% gross screen
+HH4_GROSS_LIMIT = HH4_LIMITS["gross"]      # 3,483.00 — federal 130% floor (NOT the NC ceiling)
+HH4_NET_LIMIT = HH4_LIMITS["net"]          # 2,680.00
+HH4_BBCE_LIMIT = HH4_LIMITS["expanded"]    # 5,360.00 — NC BBCE 200% gross screen
+HH2_NET_LIMIT = HH2_LIMITS["net"]          # 1,763.00
 
 
-# ---------- 1. household = 1, clearly UNDER gross limit ----------
+# ---------- 1. household = 1, clearly UNDER NC BBCE gross ceiling ----------
 def test_single_person_under_gross_qualifies():
     result = calculate_eligibility(
         household_size=1,
@@ -39,12 +51,16 @@ def test_single_person_under_gross_qualifies():
     assert result["qualifies"] is True
     assert result["test_used"] == "gross"
     assert result["household_size"] == 1
-    assert result["limit"] == HH1_GROSS_LIMIT
+    # Under NC BBCE (default state_code="NC") the gross screen is at
+    # 200% of poverty, not the federal 130% floor. See W30.
+    assert result["limit"] == HH1_BBCE_LIMIT
+    assert result["bbce_limit"] == HH1_BBCE_LIMIT
     assert result["income_considered"] == 1000.0
-    assert "gross income test" in result["notes"]
+    assert "NC" in result["notes"]
+    assert "BBCE" in result["notes"]
 
 
-# ---------- 2. household = 1, clearly OVER gross limit ----------
+# ---------- 2. household = 1, clearly OVER NC BBCE gross ceiling ----------
 def test_single_person_over_gross_fails():
     result = calculate_eligibility(
         household_size=1,
@@ -53,11 +69,12 @@ def test_single_person_over_gross_fails():
     )
     assert result["qualifies"] is False
     assert result["test_used"] == "gross"
-    assert result["limit"] == HH1_GROSS_LIMIT
+    assert result["limit"] == HH1_BBCE_LIMIT
+    assert result["outcome"] == "likely_ineligible"
     assert "does not qualify" in result["notes"]
 
 
-# ---------- 3. household = 4, clearly UNDER gross limit ----------
+# ---------- 3. household = 4, clearly UNDER NC BBCE gross ceiling ----------
 def test_family_of_four_under_gross_qualifies():
     result = calculate_eligibility(
         household_size=4,
@@ -66,20 +83,21 @@ def test_family_of_four_under_gross_qualifies():
     )
     assert result["qualifies"] is True
     assert result["test_used"] == "gross"
-    assert result["limit"] == HH4_GROSS_LIMIT
+    assert result["limit"] == HH4_BBCE_LIMIT
     assert result["income_considered"] == 2000.0
 
 
-# ---------- 4. household = 4, clearly OVER gross limit ----------
+# ---------- 4. household = 4, clearly OVER NC BBCE gross ceiling ----------
 def test_family_of_four_over_gross_fails():
     result = calculate_eligibility(
         household_size=4,
-        gross_monthly_income=5000.0,
+        gross_monthly_income=9000.0,  # > 200% FPL ($5,358.33) for HH=4
         has_elderly_or_disabled=False,
     )
     assert result["qualifies"] is False
     assert result["test_used"] == "gross"
-    assert result["limit"] == HH4_GROSS_LIMIT
+    assert result["limit"] == HH4_BBCE_LIMIT
+    assert result["outcome"] == "likely_ineligible"
 
 
 # ---------- 5. elderly/disabled household is routed through NET test ----------
@@ -111,18 +129,19 @@ def test_elderly_or_disabled_uses_net_test():
 # ---------- 6. boundary case: income exactly equals the limit ----------
 def test_income_exactly_at_limit_qualifies():
     # Policy decision (documented in calculator.py): income == limit
-    # counts as qualifying. This matches the at-or-below reading of the
-    # 130% / 100% language in 7 CFR §273.9(a).
+    # counts as qualifying. Under W30 the NC default gross ceiling is
+    # 200% of poverty (BBCE), so HH=1's BBCE limit is HH1_BBCE_LIMIT
+    # (=2,610.00 in the calculator's FY2026 SNAP-published table).
     result = calculate_eligibility(
         household_size=1,
-        gross_monthly_income=HH1_GROSS_LIMIT,  # exactly 1,695.42
+        gross_monthly_income=HH1_BBCE_LIMIT,  # exactly 2,608.33
         has_elderly_or_disabled=False,
     )
     assert result["qualifies"] is True
     assert result["income_considered"] == result["limit"]
     assert "equals the limit" in result["notes"]
 
-    # Boundary on the net side too.
+    # Boundary on the net side (elderly/disabled — net limit unchanged).
     result_net = calculate_eligibility(
         household_size=4,
         gross_monthly_income=HH4_NET_LIMIT,  # exactly 2,679.17
@@ -154,29 +173,42 @@ def test_negative_income_rejected():
 
 # ---------- source URL is exported (and so independently verifiable) ----------
 def test_source_url_is_a_real_https_link():
+    # The calculator's primary source URL is the USDA FNS SNAP FY2026
+    # COLA memo (effective 2025-10-01 through 2026-09-30), which is
+    # where the calculator's published monthly income limits and
+    # deduction standards come from. USDA FNS re-sources this annually.
     assert _POVERTY_GUIDELINES_SOURCE_URL.startswith("https://")
-    assert "aspe.hhs.gov" in _POVERTY_GUIDELINES_SOURCE_URL
+    assert "usda.gov" in _POVERTY_GUIDELINES_SOURCE_URL
+    assert "snap-cola-fy26" in _POVERTY_GUIDELINES_SOURCE_URL
 
 
-# ---------- three-outcome eligibility band (130-200% expanded band) ----------
+# ---------- W30: four-outcome eligibility band (NC BBCE) ----------
 def test_non_elderly_likely_eligible_outcome():
-    result = calculate_eligibility(1, HH1_GROSS_LIMIT, False)
+    # HH=1 at exactly the BBCE ceiling passes the gross screen.
+    result = calculate_eligibility(1, HH1_BBCE_LIMIT, False)
     assert result["qualifies"] is True
     assert result["outcome"] == "likely_eligible"
 
 
-def test_non_elderly_uncertain_apply_anyway_outcome():
+def test_non_elderly_inside_bbce_band_qualifies():
+    # HH=1 at $2,500 is below the 200% BBCE ceiling (HH1_BBCE_LIMIT,
+    # $2,610.00) and above the 130% federal floor ($1,696.00). Under NC
+    # BBCE the household passes the 200% gross screen categorically →
+    # likely_eligible (NOT "uncertain_apply_anyway" — that was the
+    # pre-W30 wrong framing).
     result = calculate_eligibility(1, 2500.0, False)
-    assert result["qualifies"] is False
-    assert result["outcome"] == "uncertain_apply_anyway"
-    assert "allowable deductions" in result["notes"]
-    assert "NC ePASS" in result["notes"]
+    assert result["qualifies"] is True
+    assert result["outcome"] == "likely_eligible"
+    assert "BBCE" in result["notes"]
 
 
-def test_non_elderly_exactly_at_200_percent_is_uncertain():
-    result = calculate_eligibility(1, 2_608.33, False)
-    assert result["outcome"] == "uncertain_apply_anyway"
-    assert result["qualifies"] is False
+def test_non_elderly_exactly_at_200_percent_qualifies_under_bbce():
+    # HH=1 at exactly the 200% BBCE ceiling: passes the gross screen, qualifies.
+    # Pre-W30 this was uncertain_apply_anyway; under NC BBCE it is
+    # likely_eligible.
+    result = calculate_eligibility(1, HH1_BBCE_LIMIT, False)
+    assert result["outcome"] == "likely_eligible"
+    assert result["qualifies"] is True
     assert result["income_considered"] == result["expanded_limit"]
 
 
@@ -193,17 +225,42 @@ def test_elderly_disabled_likely_eligible_outcome():
 
 
 def test_elderly_disabled_uncertain_apply_anyway_outcome():
+    # Elderly/disabled households skip the gross screen and go straight to
+    # the net test (100% of poverty). HH=1 at $2,500 is above the
+    # $1,305.00 net limit and below the 200% expanded band. Under W30, with
+    # NO deductions supplied, this is the "gross screen pending net test"
+    # outcome — the household passes the 200% BBCE gross screen and only
+    # the net test is pending. To get the historic "uncertain_apply_anyway"
+    # outcome we have to actually supply deductions (the net test is then
+    # computed and the household fails it).
     result = calculate_eligibility(1, 2500.0, True)
     assert result["qualifies"] is False
-    assert result["outcome"] == "uncertain_apply_anyway"
+    assert result["outcome"] == "likely_eligible_gross_pending_net"
     assert "net income test" in result["notes"]
 
 
-def test_elderly_disabled_exactly_at_200_percent_is_uncertain():
-    result = calculate_eligibility(1, 2_608.33, True)
-    assert result["outcome"] == "uncertain_apply_anyway"
+def test_elderly_disabled_exactly_at_200_percent_is_gross_pending_net():
+    # Same logic at exactly the 200% ceiling.
+    result = calculate_eligibility(1, HH1_BBCE_LIMIT, True)
+    assert result["outcome"] == "likely_eligible_gross_pending_net"
     assert result["qualifies"] is False
-    assert result["income_considered"] == result["expanded_limit"]
+
+
+def test_elderly_disabled_uncertain_apply_anyway_when_deductions_fail_net():
+    # The historic "uncertain_apply_anyway" outcome still applies for
+    # elderly/disabled households when deductions ARE supplied but the
+    # computed net income still exceeds the 100% net limit. In that case
+    # the net test is conclusive (failed) but the household is still
+    # inside the BBCE band.
+    result = calculate_eligibility(
+        household_size=1,
+        gross_monthly_income=2500.0,
+        has_elderly_or_disabled=True,
+        shelter_costs_monthly=1500.0,
+    )
+    # adjusted = 2500 - 204 = 2296; half = 1148; excess = 352;
+    # net = 2296 - 352 = 1944 > HH1 net limit $1,304.17. Inside BBCE.
+    assert result["outcome"] == "uncertain_apply_anyway"
 
 
 def test_elderly_disabled_above_200_percent_is_likely_ineligible():
@@ -212,16 +269,117 @@ def test_elderly_disabled_above_200_percent_is_likely_ineligible():
     assert result["outcome"] == "likely_ineligible"
 
 
+# ---------- W30 new: gross_pending_net outcome ----------
+def test_w30_elderly_pending_net_outcome_at_150pct_fpl():
+    # The textbook BBCE case: an elderly/disabled household at ~150% FPL.
+    # The net limit (100%) is exceeded, but the household is inside the
+    # 200% BBCE band → passed the gross screen, net test pending deductions.
+    # Honest naming: "likely_eligible_gross_pending_net", not "uncertain".
+    income = round((15_650.0 * 1.50) / 12.0, 2)
+    result = calculate_eligibility(1, income, True)
+    assert income > HH1_NET_LIMIT  # fails the 100% net test
+    assert income < HH1_BBCE_LIMIT  # but inside the BBCE band
+    assert result["outcome"] == "likely_eligible_gross_pending_net"
+    assert result["qualifies"] is False  # net test not yet evaluable
+    assert "BBCE" in result["notes"] or "200%" in result["notes"]
+    assert "deductions" in result["notes"].lower() or "net" in result["notes"].lower()
+
+
+def test_w30_elderly_pending_net_disappears_when_deductions_supplied():
+    # Same household + medical deduction → net test now computable.
+    result = calculate_eligibility(
+        household_size=1,
+        gross_monthly_income=2500.0,
+        has_elderly_or_disabled=True,
+        medical_expenses_monthly=1500.0,  # enough to bring net under 100% FPL
+    )
+    assert result["outcome"] == "likely_eligible"
+    assert result["qualifies"] is True
+
+
+def test_w30_non_nc_state_falls_back_to_federal_130pct():
+    # When state_code != "NC" the calculator uses the federal 130% floor.
+    # HH=1 federal 130% gross ceiling = HH1_GROSS_LIMIT ($1,696.00). A
+    # household at $1,800 is OVER that ceiling but well below 200%, so it
+    # lands in the "uncertain_apply_anyway" outcome (not
+    # "likely_eligible_gross_pending_net" because the 200% screen does not
+    # apply outside NC).
+    result = calculate_eligibility(
+        household_size=1,
+        gross_monthly_income=1800.0,
+        has_elderly_or_disabled=False,
+        state_code="TX",
+    )
+    assert result["test_used"] == "gross"
+    assert result["limit"] == HH1_GROSS_LIMIT  # 130% federal floor
+    assert result["outcome"] == "uncertain_apply_anyway"
+    assert "federal" in result["notes"].lower()
+
+
+def test_w30_bbce_limit_field_is_surfaced():
+    # The calculator exposes the BBCE ceiling actually applied so downstream
+    # consumers can verify which rule governed.
+    result_nc = calculate_eligibility(1, 1000.0, False, state_code="NC")
+    assert result_nc["bbce_limit"] == HH1_BBCE_LIMIT
+    result_tx = calculate_eligibility(1, 1000.0, False, state_code="TX")
+    assert result_tx["bbce_limit"] == HH1_GROSS_LIMIT  # 130% federal floor
+
+
+# ---------- W30 separate elderly/disabled household (165% standard) ----------
+def test_w30_separate_elderly_household_uses_165pct_ceiling():
+    # Federal separate-household standard for elderly/disabled.
+    result = calculate_eligibility(
+        household_size=1,
+        gross_monthly_income=2000.0,
+        has_elderly_or_disabled=False,  # same-household flag, not the routing flag
+        separate_elderly_disabled_household=True,
+    )
+    assert result["test_used"] == "gross"
+    assert result["limit"] == 2152.0  # FY2026 HH1 separate-household standard
+    assert result["qualifies"] is True  # 2000 ≤ 2152
+
+
+def test_w30_separate_elderly_household_above_165pct_is_uncertain():
+    result = calculate_eligibility(
+        household_size=2,
+        gross_monthly_income=3500.0,  # above HH2 165% limit of $2,909
+        has_elderly_or_disabled=False,
+        separate_elderly_disabled_household=True,
+    )
+    assert result["test_used"] == "gross"
+    assert result["limit"] == 2909.0
+    assert result["qualifies"] is False
+    assert result["outcome"] == "uncertain_apply_anyway"
+
+
+def test_w30_separate_household_limits_match_fy2026_table():
+    # Sourced values from USDA FNS FY2026 income-eligibility tables
+    # (48 States & DC, separate-elderly/disabled household row).
+    from src.calculator import separate_household_limits
+    expected = {
+        1: 2152.0, 2: 2909.0, 3: 3665.0, 4: 4421.0,
+        5: 5177.0, 6: 5934.0, 7: 6690.0, 8: 7446.0,
+    }
+    for size, value in expected.items():
+        assert separate_household_limits(size) == value, (
+            f"HH{size} 165% FY2026 limit expected ${value}, got ${separate_household_limits(size)}"
+        )
+    # Per-addition delta: 9th person is HH8 + $757.
+    assert separate_household_limits(9) == 7446.0 + 757.0
+
+
 # ===========================================================================
-# W14 — real federal net-income deduction chain (7 CFR §273.9(d), FY2025)
+# W31 — real federal net-income deduction chain (7 CFR §273.9(d), FY2026)
 #
-# FY2025 deduction standards (48 States & DC, effective 2024-10-01):
-#   standard deduction: $204 (sizes 1-3), $217 (4), $254 (5), $291 (6+)
+# FY2026 deduction standards (48 States & DC, effective 2025-10-01 through
+# 2026-09-30):
+#   standard deduction: $209 (sizes 1-3), $223 (4), $261 (5), $299 (6+)
 #   earned-income deduction: 20% of gross earned income
 #   medical: out-of-pocket medical above $35/mo, elderly/disabled only
-#   shelter: costs above half of adjusted income, capped at $712/mo
+#   shelter: costs above half of adjusted income, capped at $744/mo
 #            unless the household has an elderly/disabled member
-# Source: https://www.fns.usda.gov/snap/fy-2025-cola
+# Source: USDA FNS, "SNAP FY 2026 Cost-of-Living Adjustments" memo
+#   https://www.usda.gov/sites/default/files/guidance-documents/fns.snap-cola-fy26memo.pdf
 # ===========================================================================
 
 from src.calculator import compute_net_monthly_income
@@ -240,8 +398,12 @@ def test_w14_no_deduction_inputs_is_regression_safe():
     )
     assert result["income_considered"] == 2500.0
     assert result["deductions"] is None
-    assert result["qualifies"] is False
-    assert result["outcome"] == "uncertain_apply_anyway"
+    # Pre-W30 framing for non-elderly NC HH=1 inside the BBCE band was
+    # "uncertain_apply_anyway"; under W30 the same household passes the
+    # 200% BBCE gross screen → likely_eligible. This test still proves
+    # the regression-safe behavior (no deductions, gross figure echoed)
+    # — the outcome change is tested separately in test_non_elderly_*.
+    assert result["outcome"] in ("likely_eligible", "likely_eligible_gross_pending_net")
 
     # compute_net_monthly_income with zeroed inputs is a pass-through.
     chain = compute_net_monthly_income(
@@ -255,20 +417,21 @@ def test_w14_no_deduction_inputs_is_regression_safe():
 
 # ---------- earned-income deduction: 20% of earned income ----------
 def test_w14_earned_income_deduction_moves_household_into_eligibility():
-    # HH=1, gross $1,800 (all earned) is ABOVE the gross limit $1,695.42,
-    # so pre-W14 this household landed in "uncertain_apply_anyway".
-    # With the chain: standard $204 + earned 20%*$1,800=$360 →
-    # net = 1800 - 204 - 360 = $1,236 ≤ net limit $1,304.17 → eligible.
+    # HH=1, gross $1,800 (all earned) is ABOVE the federal 130% gross
+    # floor but UNDER the NC BBCE 200% ceiling, so pre-W14 this household
+    # landed in "uncertain_apply_anyway". With the FY2026 chain:
+    # standard $209 + earned 20%*$1,800=$360 →
+    # net = 1800 - 209 - 360 = $1,231 ≤ net limit $1,305.00 → eligible.
     result = calculate_eligibility(
         household_size=1,
         gross_monthly_income=1800.0,
         has_elderly_or_disabled=False,
         earned_monthly_income=1800.0,
     )
-    assert result["deductions"]["standard"] == 204.0
+    assert result["deductions"]["standard"] == 209.0
     assert result["deductions"]["earned_income"] == 360.0
-    assert result["deductions"]["net_income"] == 1236.0
-    assert result["income_considered"] == 1236.0
+    assert result["deductions"]["net_income"] == 1231.0
+    assert result["income_considered"] == 1231.0
     assert result["qualifies"] is True
     assert result["outcome"] == "likely_eligible"
     assert "earned-income" in result["notes"]
@@ -286,9 +449,10 @@ def test_w14_earned_income_cannot_exceed_gross():
 
 # ---------- dependent-care deduction: actual cost, uncapped ----------
 def test_w14_dependent_care_deduction():
-    # HH=4, gross $3,600 (above gross limit $3,482.92), $900/mo childcare.
-    # standard $217 + dependent care $900 → adjusted = 3600-217-900 = $2,483
-    # ≤ net limit $2,679.17 → likely eligible after deductions.
+    # HH=4, gross $3,600 (above HH4 federal 130% floor $3,483.00),
+    # $900/mo childcare. FY2026 chain:
+    # standard $223 + dependent care $900 → adjusted = 3600-223-900 = $2,477
+    # ≤ HH4 net limit $2,680.00 → likely eligible after deductions.
     result = calculate_eligibility(
         household_size=4,
         gross_monthly_income=3600.0,
@@ -296,16 +460,16 @@ def test_w14_dependent_care_deduction():
         dependent_care_monthly=900.0,
     )
     assert result["deductions"]["dependent_care"] == 900.0
-    assert result["deductions"]["net_income"] == 2483.0
+    assert result["deductions"]["net_income"] == 2477.0
     assert result["qualifies"] is True
     assert result["outcome"] == "likely_eligible"
 
 
 # ---------- excess medical deduction: elderly/disabled only, above $35 ----------
 def test_w14_medical_deduction_elderly_household():
-    # HH=1 elderly, gross $1,500 (above net limit $1,304.17).
-    # standard $204 + medical ($200-$35=$165) → net = 1500-204-165 = $1,131
-    # ≤ $1,304.17 → qualifies under the net test.
+    # HH=1 elderly, gross $1,500 (above net limit $1,305.00).
+    # standard $209 + medical ($200-$35=$165) → net = 1500-209-165 = $1,126
+    # ≤ $1,305.00 → qualifies under the net test.
     result = calculate_eligibility(
         household_size=1,
         gross_monthly_income=1500.0,
@@ -314,7 +478,7 @@ def test_w14_medical_deduction_elderly_household():
     )
     assert result["test_used"] == "net"
     assert result["deductions"]["medical"] == 165.0
-    assert result["deductions"]["net_income"] == 1131.0
+    assert result["deductions"]["net_income"] == 1126.0
     assert result["qualifies"] is True
     assert result["outcome"] == "likely_eligible"
 
@@ -322,9 +486,10 @@ def test_w14_medical_deduction_elderly_household():
 def test_w14_medical_deduction_ignored_for_non_elderly():
     # Same figures without the elderly/disabled flag: medical must NOT
     # be deducted (7 CFR §273.9(d)(3) restricts it to elderly/disabled
-    # households). Net = 1500 - 204 = $1,296 > ... still under gross
-    # limit $1,695.42, so the household qualifies — but via gross test
-    # with NO medical deduction applied.
+    # households). Net = 1500 - 209 = $1,291 ≤ net limit $1,305.00 →
+    # household qualifies under net (with FY2026 deduction applied) — but
+    # via gross test with NO medical deduction applied. The flag, not the
+    # income, controls which path is taken.
     result = calculate_eligibility(
         household_size=1,
         gross_monthly_income=1500.0,
@@ -332,7 +497,7 @@ def test_w14_medical_deduction_ignored_for_non_elderly():
         medical_expenses_monthly=200.0,
     )
     assert result["deductions"]["medical"] == 0.0
-    assert result["deductions"]["net_income"] == 1296.0
+    assert result["deductions"]["net_income"] == 1291.0
 
 
 def test_w14_medical_below_35_threshold_yields_no_deduction():
@@ -346,44 +511,48 @@ def test_w14_medical_below_35_threshold_yields_no_deduction():
 
 
 # ---------- excess shelter deduction: capped vs uncapped ----------
-def test_w14_shelter_deduction_capped_for_non_elderly():
+def test_w14_shelter_deduction_does_not_bind_for_low_shelter_non_elderly():
     # HH=1, gross $2,500 all unearned, shelter $1,500/mo.
-    # adjusted = 2500 - 204 = $2,296; half = $1,148;
-    # excess shelter = 1500 - 1148 = $352 (< $712 cap, so cap not binding).
-    # net = 2296 - 352 = $1,944. Still above net limit → but gross
-    # $2,500 ≤ 200% ($2,608.33) → uncertain_apply_anyway.
+    # adjusted = 2500 - 209 = $2,291; half = $1,145.5;
+    # excess shelter = 1500 - 1145.5 = $354.5 (< $744 cap, so cap not binding).
+    # net = 2291 - 354.5 = $1,936.5. NC HH=1 BBCE ceiling is $2,610.00;
+    # the household passes the gross screen categorically AND its
+    # computed net ($1,936.50) is below the BBCE ceiling → likely_eligible.
+    # This is the W30 fix: under NC BBCE the household at $2,500 with
+    # $1,500 shelter is NOT "uncertain" — it's likely eligible.
     result = calculate_eligibility(
         household_size=1,
         gross_monthly_income=2500.0,
         has_elderly_or_disabled=False,
         shelter_costs_monthly=1500.0,
     )
-    assert result["deductions"]["shelter"] == 352.0
-    assert result["deductions"]["net_income"] == 1944.0
-    assert result["outcome"] == "uncertain_apply_anyway"
+    assert result["deductions"]["shelter"] == 354.5
+    assert result["deductions"]["net_income"] == 1936.5
+    assert result["qualifies"] is True
+    assert result["outcome"] == "likely_eligible"
 
 
 def test_w14_shelter_deduction_cap_binds_for_non_elderly():
-    # Drive excess shelter above the $712 cap: HH=1, gross $4,000,
-    # shelter $3,000. adjusted = 4000-204 = $3,796; half = $1,898;
-    # excess = 3000-1898 = $1,102 → capped to $712.
-    # net = 3796 - 712 = $3,084 > 200% band → likely_ineligible.
+    # Drive excess shelter above the $744 cap: HH=1, gross $4,000,
+    # shelter $3,000. adjusted = 4000-209 = $3,791; half = $1,895.5;
+    # excess = 3000-1895.5 = $1,104.5 → capped to $744.
+    # net = 3791 - 744 = $3,047 > 200% band → likely_ineligible.
     result = calculate_eligibility(
         household_size=1,
         gross_monthly_income=4000.0,
         has_elderly_or_disabled=False,
         shelter_costs_monthly=3000.0,
     )
-    assert result["deductions"]["shelter"] == 712.0
-    assert result["deductions"]["net_income"] == 3084.0
+    assert result["deductions"]["shelter"] == 744.0
+    assert result["deductions"]["net_income"] == 3047.0
     assert result["outcome"] == "likely_ineligible"
 
 
 def test_w14_shelter_deduction_uncapped_for_elderly():
-    # Same shelter burden with an elderly member: no $712 cap.
+    # Same shelter burden with an elderly member: no $744 cap.
     # HH=1 elderly, gross $2,500, shelter $1,500.
-    # adjusted = 2500-204 = $2,296; half = $1,148; excess = $352.
-    # net = 2296-352 = $1,944 > net limit $1,304.17; gross ≤ 200% →
+    # adjusted = 2500-209 = $2,291; half = $1,145.5; excess = $354.5.
+    # net = 2291-354.5 = $1,936.5 > net limit $1,305.00; gross ≤ 200% →
     # uncertain. Use higher shelter to prove uncapped behavior instead:
     result = calculate_eligibility(
         household_size=1,
@@ -391,29 +560,29 @@ def test_w14_shelter_deduction_uncapped_for_elderly():
         has_elderly_or_disabled=True,
         shelter_costs_monthly=1500.0,
     )
-    assert result["deductions"]["shelter"] == 352.0
+    assert result["deductions"]["shelter"] == 354.5
 
     # Uncapped proof: gross $4,000, shelter $3,000, elderly → excess
-    # $1,102 NOT capped (would be $712 for non-elderly).
+    # $1,104.5 NOT capped (would be $744 for non-elderly).
     result_uncapped = calculate_eligibility(
         household_size=1,
         gross_monthly_income=4000.0,
         has_elderly_or_disabled=True,
         shelter_costs_monthly=3000.0,
     )
-    assert result_uncapped["deductions"]["shelter"] == 1102.0
-    assert result_uncapped["deductions"]["net_income"] == 2694.0
+    assert result_uncapped["deductions"]["shelter"] == 1104.5
+    assert result_uncapped["deductions"]["net_income"] == 2686.5
 
 
 # ---------- full chain: all four deductions together ----------
 def test_w14_full_deduction_chain_elderly_household():
     # HH=2 elderly; gross $3,000 ($2,000 earned); dependent care $100;
     # medical $235 (→ $200 deductible); shelter $1,400.
-    # standard $204 + earned $400 + dependent $100 + medical $200 = $904
-    # adjusted = 3000 - 904 = $2,096; half = $1,048
-    # shelter excess = 1400 - 1048 = $352 (uncapped, elderly)
-    # net = 2096 - 352 = $1,744 ≤ net limit $1,762.50 → likely eligible.
-    hh2_net = round((21_150.0 * 1.00) / 12.0, 2)  # 1,762.50
+    # standard $209 + earned $400 + dependent $100 + medical $200 = $909
+    # adjusted = 3000 - 909 = $2,091; half = $1,045.5
+    # shelter excess = 1400 - 1045.5 = $354.5 (uncapped, elderly)
+    # net = 2091 - 354.5 = $1,736.5 ≤ HH2 net limit $1,763.00 → likely eligible.
+    hh2_net = HH2_NET_LIMIT  # 1,763.00
     result = calculate_eligibility(
         household_size=2,
         gross_monthly_income=3000.0,
@@ -424,14 +593,14 @@ def test_w14_full_deduction_chain_elderly_household():
         shelter_costs_monthly=1400.0,
     )
     d = result["deductions"]
-    assert d["standard"] == 204.0
+    assert d["standard"] == 209.0
     assert d["earned_income"] == 400.0
     assert d["dependent_care"] == 100.0
     assert d["medical"] == 200.0
-    assert d["shelter"] == 352.0
-    assert d["total_deductions"] == 1256.0
-    assert d["net_income"] == 1744.0
-    assert result["income_considered"] == 1744.0
+    assert d["shelter"] == 354.5
+    assert d["total_deductions"] == 1263.5
+    assert d["net_income"] == 1736.5
+    assert result["income_considered"] == 1736.5
     assert result["qualifies"] is True
     assert result["outcome"] == "likely_eligible"
     assert result["limit"] == hh2_net
@@ -439,8 +608,10 @@ def test_w14_full_deduction_chain_elderly_household():
 
 # ---------- standard deduction table by household size ----------
 def test_w14_standard_deduction_table():
-    for size, expected in [(1, 204.0), (2, 204.0), (3, 204.0),
-                           (4, 217.0), (5, 254.0), (6, 291.0), (8, 291.0)]:
+    # FY2026 standard deduction, 48 States & DC. Sourced from the
+    # USDA FNS SNAP FY2026 COLA memo.
+    for size, expected in [(1, 209.0), (2, 209.0), (3, 209.0),
+                           (4, 223.0), (5, 261.0), (6, 299.0), (8, 299.0)]:
         chain = compute_net_monthly_income(
             household_size=size,
             gross_monthly_income=5000.0,

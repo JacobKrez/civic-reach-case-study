@@ -5,30 +5,52 @@ The agent's job is to extract the three intake fields from a conversation
 and hand them to ``calculate_eligibility``; from there the decision is a
 deterministic table lookup plus arithmetic.
 
-## NC FNS two-track rule (sourced)
+## NC FNS three-track rule (sourced)
 
-NC SNAP follows the federal SNAP income-eligibility rules (7 CFR §273.9).
-A household's income test depends on whether any member is elderly (60+)
-or disabled:
+NC SNAP follows the federal SNAP income-eligibility rules (7 CFR §273.9)
+with one state-level expansion: **NC operates Broad-Based Categorical
+Eligibility (BBCE) at 200% of the federal poverty guideline (NCDHHS)**.
+Under BBCE, most NC households are categorically eligible on the gross
+screen when their gross income is at or below 200% FPL, and the asset
+test is waived. Approximately 13% of NC SNAP households qualify via BBCE
+(NCDHHS, 2025). See "North Carolina BBCE — 200% gross screen" below.
+
+A household's income test therefore depends on TWO flags: whether any
+member is elderly (60+) or disabled, and whether the household is
+classified as a separate household (an elderly or disabled person living
+with others who purchase and prepare food separately — see
+``knowledge_base/03_deductions_and_household.md``):
 
 * Households WITHOUT an elderly/disabled member are screened against the
-  **gross** monthly income limit — 130% of the federal poverty guideline
-  for the household size.
-* Households WITH an elderly/disabled member are NOT subject to the gross
-  test. They are screened against the **net** monthly income limit — 100%
-  of the federal poverty guideline for the household size, after the
-  federal SNAP deduction chain (see "Net-income deduction chain" below).
+  **gross** monthly income limit. Under NC BBCE that limit is **200% of
+  the federal poverty guideline** (raised from the federal 130% floor).
+* Households WITH an elderly/disabled member living in the same
+  household are NOT subject to the gross test. They are screened against
+  the **net** monthly income limit — **100% of the federal poverty
+  guideline** for the household size, after the federal SNAP deduction
+  chain (see "Net-income deduction chain" below).
+* Households where the elderly/disabled member is a SEPARATE household
+  (e.g. an elderly parent living with adult children who buy and cook
+  separately) are screened against the **separate-household gross**
+  monthly income limit — **165% of the federal poverty guideline** for
+  the household size. This is the federal SNAP rule for separate
+  elderly/disabled households, which NC follows. See "FY2026 165%
+  standard for separate households" below.
 
-## Net-income deduction chain (W14)
+The default ``state_code="NC"`` activates NC BBCE. Other states would
+default to the federal 130% gross floor; only NC is implemented today
+because this agent is NC-only.
 
-The net test now computes the household's actual net monthly income per
-7 CFR §273.9(d), using the FY2025 SNAP deduction standards published by
-USDA FNS for the 48 contiguous states (effective 2024-10-01 through
-2025-09-30; NC is a contiguous state):
+## Net-income deduction chain (W31)
+
+The net test computes the household's actual net monthly income per
+7 CFR §273.9(d), using the FY2026 SNAP deduction standards published by
+USDA FNS for the 48 contiguous states and DC (effective 2025-10-01 through
+2026-09-30; NC is a contiguous state):
 
 * **Standard deduction** — a flat monthly amount by household size
-  (FY2025, 48 states & DC): $204 for sizes 1–3, $217 for size 4,
-  $254 for size 5, $291 for sizes 6+.
+  (FY2026, 48 states & DC): $209 for sizes 1–3, $223 for size 4,
+  $261 for size 5, $299 for sizes 6+.
 * **Earned-income deduction** — 20% of gross earned income (wages or
   self-employment), when an earned-income figure is supplied.
 * **Dependent-care deduction** — actual out-of-pocket dependent-care
@@ -37,16 +59,14 @@ USDA FNS for the 48 contiguous states (effective 2024-10-01 through
   $35/month, only for households with an elderly or disabled member.
 * **Excess shelter deduction** — shelter costs (rent/mortgage, taxes,
   insurance, utilities) above half of the household's adjusted income
-  after the deductions above, capped at $712/month for households
+  after the deductions above, capped at $744/month for households
   WITHOUT an elderly/disabled member; uncapped for households WITH one.
 
-Deduction source (FY2025 COLA memo, "SNAP FY 2025 Cost-of-Living
-Adjustments", effective 2024-10-01 through 2025-09-30):
-    https://www.fns.usda.gov/snap/fy-2025-cola
-Figures verified against the USDA memo table "SNAP DEDUCTIONS October 1,
-2024, to September 30, 2025" (48 States & DC column): standard deduction
-$204 / $217 / $254 / $291 for sizes 1–2 / 3 / 4 / 5 / 6+; maximum excess
-shelter deduction $712.
+Deduction source (USDA FNS, "SNAP FY 2026 Cost-of-Living Adjustments",
+effective 2025-10-01 through 2026-09-30):
+    https://www.usda.gov/sites/default/files/guidance-documents/fns.snap-cola-fy26memo.pdf
+The memo's 48 States & DC table gives standard deductions $209 / $223 /
+$261 / $299 and maximum excess shelter deduction $744.
 
 These deduction inputs are OPTIONAL. A household that supplies none of
 them is computed exactly as before this change (gross income compared
@@ -60,34 +80,78 @@ the uncertain band.
 
 ## Source for the underlying poverty figures
 
-The base figures used here are the **2025 Federal Poverty Guidelines**
-published by the U.S. Department of Health and Human Services (HHS). USDA
-FNS constructs the SNAP gross-income-eligibility table by multiplying
-these guidelines by 1.30 (130%) and the net-income table by 1.00 (100%),
-then expressing the result as a monthly figure. See:
+The base figures below are the USDA FNS **FY2026 SNAP income-eligibility
+standards** for the 48 contiguous states and DC. The USDA memo publishes
+the monthly 100% and 130% standards as whole-dollar values, effective
+October 1, 2025 through September 30, 2026. See:
 
-    https://aspe.hhs.gov/2025-poverty-guidelines
+    https://www.usda.gov/sites/default/files/guidance-documents/fns.snap-cola-fy26memo.pdf
 
-(USDA FNS also publishes a derived SNAP-specific table at
-https://www.fns.usda.gov/snap/income-eligibility-and-benefit-calculations
-— both resolve to the same numbers because FNS is required by 7 CFR
-§273.9(a) to use the current HHS guidelines.)
+The NC BBCE expanded band is represented as twice the published net
+standard, rounded to cents. Keeping all three bands in this one table
+ensures the calculator and generated grounding corpus use the same values.
 
-The figures below are the 2025 HHS annual guidelines. Monthly figures in
-``GROSS_LIMITS_2025`` and ``NET_LIMITS_2025`` are computed at module load
-time as ``round(annual * multiplier / 12, 2)`` so that the relationship
-between the base data and the multipliers is auditable in this file.
+## North Carolina BBCE — 200% gross screen (sourced)
+
+NC DHHS operates SNAP under Broad-Based Categorical Eligibility (BBCE),
+which raises the gross-income limit from the federal 130% floor to
+**200% of the federal poverty guideline** and waives the asset test
+for most households. About 13% of NC SNAP households qualify via BBCE
+(NCDHHS, 2025 BBCE policy summary).
+
+Primary NC source:
+    https://www.ncdhhs.gov/divisions/social-services/program-design-and-policy
+    (NC SNAP policy and program design — BBCE at 200% FPL, no asset test
+    for most households)
+
+Federal cross-reference:
+    https://www.fns.usda.gov/snap/eligibility-income-and-deductions
+    (general federal SNAP eligibility; the federal floor is 130% gross
+    and 100% net — NC lifts the gross ceiling to 200% via BBCE.)
+
+This is why the calculator's NC ``gross`` limit is **200%** of poverty
+and not the federal 130% floor: under NC BBCE, a household whose gross
+income is at or below 200% FPL passes the gross screen categorically,
+and actual eligibility then turns on the net test (for elderly/disabled
+households) or on the federal 130%/200% reference bands for the
+non-elderly/disabled path.
+
+## FY2026 165% standard for separate households (sourced)
+
+When an elderly (60+) or disabled person lives with others but
+purchases and prepares food separately, they may be classified as a
+**separate SNAP household**. Federal SNAP rules (7 CFR §273.9(a))
+and NC FNS both apply a **165% gross-income standard** to such
+separate households, replacing the 200% BBCE ceiling and the 130%
+federal floor. This standard was set by USDA FNS and is re-sourced
+annually alongside the poverty guidelines. FY2026 monthly figures
+(48 States & DC, NC uses this column):
+
+    HH1 $2,152   HH5 $5,177
+    HH2 $2,909   HH6 $5,934
+    HH3 $3,665   HH7 $6,690
+    HH4 $4,421   HH8 $7,446
+    each additional person: +$757/month
+
+Source: USDA FNS SNAP FY2026 income-eligibility tables (48 States &
+DC column, separate-elderly/disabled household row). The calculator
+keeps the 165% standard as a documented reference point; the
+calculator itself does not currently auto-route a household to the
+165% track (the agent's intake form is responsible for surfacing
+the separate-household question — see kb/03 "Who Can Be Separate?").
+The figures are exported as ``_SEPARATE_HOUSEHOLD_LIMITS_2026`` so
+tests and consumers can cross-reference them without re-deriving.
 
 ## IMPORTANT — update policy
 
-These figures must be re-sourced annually when HHS publishes new poverty
-guidelines (typically late January / early February). When updating:
-1. Refresh ``_ANNUAL_POVERTY_GUIDELINES_2025`` with the new HHS figures.
+These figures must be re-sourced annually when USDA FNS publishes the new
+SNAP COLA memo. When updating:
+1. Refresh the FY income-limit and deduction constants from the memo.
 2. Re-verify the source URL above still resolves.
-3. Update the comments and any tests that hardcode expected values.
+3. Regenerate the KB table and update tests that hardcode expected values.
 
-If the table falls behind the current program year, the calculator will
-be slightly more permissive than the actual program — that is a known
+If the table falls behind the current program year, the calculator will be
+slightly more permissive than the actual program — that is a known
 trade-off of the deterministic design.
 """
 
@@ -95,55 +159,57 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
-# Source for the underlying figures: HHS 2025 Federal Poverty Guidelines.
-# https://aspe.hhs.gov/2025-poverty-guidelines
-# (USDA FNS uses these figures to derive the SNAP gross/net income
-# limits per 7 CFR §273.9; the SNAP-specific page
-# https://www.fns.usda.gov/snap/income-eligibility-and-benefit-calculations
-# resolves to the same numbers.)
-_POVERTY_GUIDELINES_SOURCE_URL = "https://aspe.hhs.gov/2025-poverty-guidelines"
+# Source for the FY2026 SNAP income standards and deductions:
+# USDA FNS, "SNAP FY 2026 Cost-of-Living Adjustments" memo,
+# effective 2025-10-01 through 2026-09-30.
+_POVERTY_GUIDELINES_SOURCE_URL = "https://www.usda.gov/sites/default/files/guidance-documents/fns.snap-cola-fy26memo.pdf"
 
-# Annual federal poverty guidelines (HHS, 2025), by household size 1..8.
-# For each additional person beyond 8, add $5,500.
-_ANNUAL_POVERTY_GUIDELINES_2025: Dict[int, float] = {
-    1: 15_650.0,
-    2: 21_150.0,
-    3: 26_650.0,
-    4: 32_150.0,
-    5: 37_650.0,
-    6: 43_150.0,
-    7: 48_650.0,
-    8: 54_150.0,
+# USDA publishes these FY2026 monthly standards directly (48 States & DC).
+# The expanded NC BBCE column is twice the published net standard.
+_GROSS_LIMITS_2026: Dict[int, float] = {
+    1: 1696.0, 2: 2292.0, 3: 2888.0, 4: 3483.0,
+    5: 4079.0, 6: 4675.0, 7: 5271.0, 8: 5867.0,
 }
-_ADDITIONAL_PERSON_ANNUAL: float = 5_500.0
+_NET_LIMITS_2026: Dict[int, float] = {
+    1: 1305.0, 2: 1763.0, 3: 2221.0, 4: 2680.0,
+    5: 3138.0, 6: 3596.0, 7: 4055.0, 8: 4513.0,
+}
+_GROSS_ADDITIONAL_2026: float = 596.0
+_NET_ADDITIONAL_2026: float = 459.0
 _MAX_HOUSEHOLD_SIZE: int = 20  # hard cap for table size; SNAP has no upper bound but this is plenty.
 
 
-def _monthly(annual: float, multiplier: float) -> float:
-    """Convert an annual guideline to a monthly limit at the given multiplier."""
-    return round((annual * multiplier) / 12.0, 2)
-
-
 def _build_limits() -> Dict[int, Dict[str, float]]:
-    """Build both the gross (130%) and net (100%) monthly limit tables.
+    """Build the gross/net/expanded monthly limit tables.
 
     Returns a nested dict ``{household_size: {"gross": ..., "net": ..., "expanded": ...}}``
-    so the calculator can pick the right track and the expanded 200% band in
-    one lookup.
+    so the calculator can pick the right track in one lookup. The three
+    bands are:
+
+    * ``gross``  — 130% of poverty (the federal default; used by NC BBCE
+      as the *floor* of the categorical pass band, not the ceiling).
+    * ``net``    — 100% of poverty (the net-income test, used for
+      elderly/disabled households).
+    * ``expanded`` — 200% of poverty (the NC BBCE gross screen ceiling;
+      households at or below this pass the gross screen categorically
+      under NC rules).
+
+    The 165% separate-household standard for elderly/disabled separate
+    households is built separately in ``_build_separate_household_limits``
+    and exported as ``_SEPARATE_HOUSEHOLD_LIMITS_2026``.
     """
     limits: Dict[int, Dict[str, float]] = {}
     for size in range(1, _MAX_HOUSEHOLD_SIZE + 1):
         if size <= 8:
-            annual = _ANNUAL_POVERTY_GUIDELINES_2025[size]
+            gross = _GROSS_LIMITS_2026[size]
+            net = _NET_LIMITS_2026[size]
         else:
-            annual = (
-                _ANNUAL_POVERTY_GUIDELINES_2025[8]
-                + (size - 8) * _ADDITIONAL_PERSON_ANNUAL
-            )
+            gross = _GROSS_LIMITS_2026[8] + (size - 8) * _GROSS_ADDITIONAL_2026
+            net = _NET_LIMITS_2026[8] + (size - 8) * _NET_ADDITIONAL_2026
         limits[size] = {
-            "gross": _monthly(annual, 1.30),  # 130% of poverty — gross test
-            "net": _monthly(annual, 1.00),    # 100% of poverty — net test
-            "expanded": _monthly(annual, 2.00),  # 200% of poverty — apply-anyway band
+            "gross": gross,
+            "net": net,
+            "expanded": round(net * 2.0, 2),  # 200% of poverty — NC BBCE ceiling
         }
     return limits
 
@@ -152,27 +218,94 @@ _LIMITS: Dict[int, Dict[str, float]] = _build_limits()
 
 
 # ---------------------------------------------------------------------------
-# W14 — FY2025 federal SNAP deduction standards (48 States & DC).
+# W30 — FY2026 165% standard for SEPARATE elderly/disabled households
+# (48 States & DC, USDA FNS SNAP FY2026 income-eligibility table).
 #
-# Source: USDA FNS, "SNAP FY 2025 Cost-of-Living Adjustments" memo,
-# effective 2024-10-01 through 2025-09-30. The underlying table is titled
-# "SUPPLEMENTAL NUTRITION ASSISTANCE PROGRAM DEDUCTIONS, OCTOBER 1, 2024,
-# TO SEPTEMBER 30, 2025". NC uses the 48-States-and-DC column.
+# When an elderly (60+) or disabled person lives with others but buys and
+# prepares food separately, federal SNAP rules (and NC FNS) apply a 165%
+# gross-income standard. The figures below are the FY2026 monthly limits
+# published by USDA FNS (48 States & DC column). The calculator does not
+# currently auto-route a household to this track — the agent's intake form
+# surfaces the separate-household question — but the table is exported so
+# tests, docs, and downstream consumers can cross-reference it without
+# re-deriving. See the "FY2026 165% standard for separate households"
+# section in the module docstring for the primary source.
+# ---------------------------------------------------------------------------
+_SEPARATE_HOUSEHOLD_LIMITS_2026: Dict[int, float] = {
+    1: 2152.0,
+    2: 2909.0,
+    3: 3665.0,
+    4: 4421.0,
+    5: 5177.0,
+    6: 5934.0,
+    7: 6690.0,
+    8: 7446.0,
+}
+_SEPARATE_HOUSEHOLD_ADDITIONAL_PERSON: float = 757.0
+
+
+def _build_separate_household_limits() -> Dict[int, float]:
+    """Extend the 165% separate-household table out to ``_MAX_HOUSEHOLD_SIZE``.
+
+    For household sizes 1-8 we use the published FY2026 figures verbatim
+    (USD-rounded). For each additional person beyond 8, we add
+    ``_SEPARATE_HOUSEHOLD_ADDITIONAL_PERSON`` ($757/mo for FY2026, the
+    annual guideline's per-addition delta of $9,084 / 12 = $757/month).
+    """
+    limits: Dict[int, float] = dict(_SEPARATE_HOUSEHOLD_LIMITS_2026)
+    for size in range(9, _MAX_HOUSEHOLD_SIZE + 1):
+        limits[size] = round(
+            _SEPARATE_HOUSEHOLD_LIMITS_2026[8]
+            + (size - 8) * _SEPARATE_HOUSEHOLD_ADDITIONAL_PERSON,
+            2,
+        )
+    return limits
+
+
+_SEPARATE_HOUSEHOLD_LIMITS: Dict[int, float] = _build_separate_household_limits()
+
+
+def separate_household_limits(household_size: int) -> float:
+    """Public accessor for the FY2026 165% separate-household limit.
+
+    Returns the monthly gross-income limit (USD) for a separate
+    elderly/disabled household of the given size. NC follows the federal
+    48-States-and-DC column.
+
+    The figures are sourced from the FY2026 USDA FNS SNAP income-eligibility
+    tables (separate-elderly/disabled household row) and re-sourced annually
+    alongside the poverty guidelines.
+    """
+    if household_size < 1 or household_size > _MAX_HOUSEHOLD_SIZE:
+        raise ValueError(
+            f"household_size must be between 1 and {_MAX_HOUSEHOLD_SIZE}; "
+            f"got {household_size}"
+        )
+    return _SEPARATE_HOUSEHOLD_LIMITS[household_size]
+
+
+# ---------------------------------------------------------------------------
+# W31 — FY2026 federal SNAP deduction standards (48 States & DC).
+#
+# Source: USDA FNS, "SNAP FY 2026 Cost-of-Living Adjustments" memo,
+# effective 2025-10-01 through 2026-09-30. The underlying table is titled
+# "SUPPLEMENTAL NUTRITION ASSISTANCE PROGRAM DEDUCTIONS, OCTOBER 1, 2025,
+# TO SEPTEMBER 30, 2026". NC uses the 48-States-and-DC column.
 #
 # These constants are re-sourced annually alongside the poverty guidelines
 # (see the "IMPORTANT — update policy" section in the module docstring).
 # ---------------------------------------------------------------------------
 
-# Standard deduction by household size (48 States & DC, FY2025).
-# Sizes 1-2: $204; 3: $204; 4: $217; 5: $254; 6+: $291.
-_STANDARD_DEDUCTION_2025: Dict[int, float] = {
-    1: 204.0,
-    2: 204.0,
-    3: 204.0,
-    4: 217.0,
-    5: 254.0,
+# Standard deduction by household size (48 States & DC, FY2026).
+# Sizes 1-2: $209; 3: $209; 4: $223; 5: $261; 6+: $299.
+_STANDARD_DEDUCTION_2026: Dict[int, float] = {
+    1: 209.0,
+    2: 209.0,
+    3: 209.0,
+    4: 223.0,
+    5: 261.0,
 }
-_STANDARD_DEDUCTION_6_PLUS: float = 291.0
+_STANDARD_DEDUCTION_6_PLUS: float = 299.0
 
 # Fraction of gross earned income deducted (20%).
 _EARNED_INCOME_DEDUCTION_RATE: float = 0.20
@@ -182,16 +315,21 @@ _EARNED_INCOME_DEDUCTION_RATE: float = 0.20
 _MEDICAL_EXPENSE_THRESHOLD: float = 35.0
 
 # Maximum excess-shelter deduction for households WITHOUT an
-# elderly/disabled member (48 States & DC, FY2025). Households WITH an
+# elderly/disabled member (48 States & DC, FY2026). Households WITH an
 # elderly/disabled member are uncapped.
-_MAX_SHELTER_DEDUCTION_2025: float = 712.0
+_MAX_SHELTER_DEDUCTION_2026: float = 744.0
+
+# Maximum homeless shelter deduction (48 States & DC, FY2026). This value is
+# documented in the KB for operational reference; the current calculator
+# intake has no homeless-shelter field and therefore does not apply it.
+_MAX_HOMELESS_SHELTER_DEDUCTION_2026: float = 198.99
 
 
 def _standard_deduction(household_size: int) -> float:
-    """Flat standard deduction for the household size (FY2025 table)."""
+    """Flat standard deduction for the household size (FY2026 table)."""
     if household_size >= 6:
         return _STANDARD_DEDUCTION_6_PLUS
-    return _STANDARD_DEDUCTION_2025[household_size]
+    return _STANDARD_DEDUCTION_2026[household_size]
 
 
 def compute_net_monthly_income(
@@ -205,7 +343,7 @@ def compute_net_monthly_income(
 ) -> Dict[str, float]:
     """Compute SNAP net monthly income via the federal deduction chain.
 
-    Implements 7 CFR §273.9(d) using the FY2025 deduction standards for
+    Implements 7 CFR §273.9(d) using the FY2026 deduction standards for
     the 48 States & DC. All deduction inputs are monthly dollar amounts
     and default to 0.0, so a caller that supplies none of them gets the
     pre-W14 behavior (gross income unchanged by the chain — the standard
@@ -227,7 +365,7 @@ def compute_net_monthly_income(
     shelter_costs_monthly:
         Total shelter costs (rent/mortgage, taxes, insurance, utilities).
         The deductible portion is the excess over half of adjusted income
-        after the deductions above; capped at $712 unless the household
+        after the deductions above; capped at $744 unless the household
         has an elderly/disabled member (then uncapped).
 
     Returns
@@ -275,7 +413,7 @@ def compute_net_monthly_income(
             "shelter": 0.0,
         }
 
-    # Federal deduction chain, 7 CFR §273.9(d), FY2025 amounts.
+    # Federal deduction chain, 7 CFR §273.9(d), FY2026 amounts.
     standard = _standard_deduction(household_size)
     earned = round(_EARNED_INCOME_DEDUCTION_RATE * earned_monthly_income, 2)
     dependent_care = dependent_care_monthly
@@ -290,7 +428,7 @@ def compute_net_monthly_income(
 
     shelter_excess = max(0.0, shelter_costs_monthly - (adjusted / 2.0))
     if not has_elderly_or_disabled:
-        shelter_excess = min(shelter_excess, _MAX_SHELTER_DEDUCTION_2025)
+        shelter_excess = min(shelter_excess, _MAX_SHELTER_DEDUCTION_2026)
 
     net = adjusted - shelter_excess
     net = max(0.0, net)
@@ -347,6 +485,8 @@ def calculate_eligibility(
     dependent_care_monthly: float = 0.0,
     medical_expenses_monthly: float = 0.0,
     shelter_costs_monthly: float = 0.0,
+    state_code: str = "NC",
+    separate_elderly_disabled_household: bool = False,
 ) -> Dict[str, Any]:
     """Run the deterministic NC FNS gross/net income test.
 
@@ -369,6 +509,21 @@ def calculate_eligibility(
         byte-identical output to the pre-W14 screener — gross income is
         compared against the applicable limit and the widened 130–200%
         "apply anyway" band is used.
+    state_code:
+        Two-letter US state code. Defaults to ``"NC"`` (the only state
+        this agent currently implements). When ``"NC"``, the gross-screen
+        ceiling is **200%** of poverty via BBCE; for any other value the
+        federal 130% gross ceiling is used. The 165% separate-household
+        standard is documented in ``separate_household_limits()`` and is
+        surfaced only via the ``separate_elderly_disabled_household``
+        flag below.
+    separate_elderly_disabled_household:
+        True when the elderly/disabled member is a SEPARATE household
+        (lives with others but purchases and prepares food separately).
+        Routes the household to the federal 165% separate-household
+        gross-income standard (FY2026 figures) instead of the regular
+        100% net test. The agent's intake form is responsible for
+        surfacing this question — see ``knowledge_base/03_deductions_and_household.md``.
 
     Returns
     -------
@@ -387,11 +542,37 @@ def calculate_eligibility(
     * ``household_size`` (int) — echoed back so callers don't have to
       thread the input through separately.
     * ``expanded_limit`` (float) — the 200% of poverty guideline monthly
-      limit used to identify households that should apply anyway.
-    * ``outcome`` (str) — ``"likely_eligible"`` when the applicable test
-      passes, ``"uncertain_apply_anyway"`` when it fails but gross income
-      is at or below 200% of poverty, or ``"likely_ineligible"`` when
-      gross income is above 200% of poverty.
+      limit (NC BBCE gross ceiling) used to identify households that pass
+      the gross screen categorically under NC rules.
+    * ``bbce_limit`` (float) — the state-specific gross-screen ceiling
+      actually applied (200% under NC BBCE; the 130% federal floor when
+      ``state_code != "NC"``; the 165% separate-household standard when
+      ``separate_elderly_disabled_household`` is set). Surfaced so
+      downstream consumers can verify which ceiling governed.
+    * ``outcome`` (str) — one of:
+
+      - ``"likely_eligible"`` — household passes the applicable income
+        test (gross ≤ state-specific ceiling for non-elderly/disabled;
+        net ≤ 100% for elderly/disabled).
+      - ``"likely_eligible_gross_pending_net"`` (W30) — household passes
+        the NC BBCE gross screen (gross income ≤ 200% of poverty) but
+        the federal net-income deduction chain was not supplied, so the
+        net test cannot be evaluated. The household should be told it
+        likely qualifies on the gross screen and that the net test is
+        pending deductions. This outcome exists because under NC BBCE a
+        household at, say, 150% of poverty is NOT "uncertain" — it
+        passes the gross screen categorically, and the only thing left
+        to determine is whether its computed net income falls at or
+        below the 100% net limit (which requires deduction data we
+        don't have).
+      - ``"uncertain_apply_anyway"`` — household fails the applicable
+        test but is still in the BBCE band (gross income > state ceiling
+        but ≤ 200% FPL). Apply anyway; the case worker can evaluate
+        deductions and the 100% net test.
+      - ``"likely_ineligible"`` — gross income is above 200% of poverty,
+        which is the hard outer ceiling for both NC BBCE and the federal
+        SNAP gross-income screen.
+
     * ``deductions`` (dict or None) — the deduction-chain breakdown from
       ``compute_net_monthly_income`` when deduction inputs were supplied,
       else ``None``. Lets the agent explain WHICH deductions moved the
@@ -432,8 +613,30 @@ def calculate_eligibility(
     )
     deductions: Dict[str, float] | None = None
 
-    test_used = "net" if has_elderly_or_disabled else "gross"
-    limit = _limit_for(household_size, test_used)
+    # Track selection (W30 three-track design):
+    #   - NC non-elderly/disabled → gross test against 200% FPL (BBCE)
+    #   - NC elderly/disabled same household → net test against 100% FPL
+    #   - Separate elderly/disabled household → gross test against 165%
+    #     FPL (FY2026 separate-household standard, federal rule NC follows)
+    #   - Non-NC states → gross test against the 130% federal floor
+    #     (only NC is implemented today; the flag is here so the
+    #     calculator cannot silently drift from NC behavior if reused).
+    nc_bbce = state_code.upper() == "NC"
+    if separate_elderly_disabled_household:
+        test_used = "gross"
+        limit = separate_household_limits(household_size)
+        bbce_limit = limit
+    elif has_elderly_or_disabled:
+        test_used = "net"
+        limit = _limit_for(household_size, "net")
+        bbce_limit = _limit_for(household_size, "expanded" if nc_bbce else "gross")
+    else:
+        test_used = "gross"
+        # Under NC BBCE the gross screen is at 200% FPL (categorical
+        # eligibility), not the federal 130% floor. The 130% federal floor
+        # is still reported in income_limits() as the reference number.
+        bbce_limit = _limit_for(household_size, "expanded" if nc_bbce else "gross")
+        limit = bbce_limit
     expanded_limit = _limit_for(household_size, "expanded")
 
     if deductions_used:
@@ -452,14 +655,15 @@ def calculate_eligibility(
 
     qualifies = income_considered <= limit
 
-    # Narrowing the 130–200% band (W14): when the real net-income chain
+    # Narrowing the BBCE band (W14 + W30): when the real net-income chain
     # is computed and the household's NET income is at or below the 100%
     # net limit, the household is treated as likely eligible even if its
-    # gross income is above the gross limit — the net test is the one the
-    # deduction chain actually informs, and NC's broad-based categorical
-    # eligibility waives the gross test for households that pass on net.
-    # This only fires when deduction inputs were supplied; with no
-    # deduction data the widened "apply anyway" band stands unchanged.
+    # gross income is above the gross screen — the net test is the one
+    # the deduction chain actually informs, and NC's broad-based
+    # categorical eligibility waives the gross test for households that
+    # pass on net. This only fires when deduction inputs were supplied;
+    # without deduction data the new "gross screen pending net" outcome
+    # applies.
     net_limit = _limit_for(household_size, "net")
     if (
         deductions_used
@@ -473,7 +677,39 @@ def calculate_eligibility(
     elif qualifies:
         outcome = "likely_eligible"
     elif gross_monthly_income <= expanded_limit:
-        outcome = "uncertain_apply_anyway"
+        # Inside the BBCE band but the applicable test (200%/100%/165%
+        # depending on track) was not passed. Without deductions we can't
+        # say the household is unlikely eligible — they may yet pass the
+        # net test if/when deductions are evaluated. Under NC BBCE the
+        # proper framing is "passed the gross screen, net test pending"
+        # (W30 new outcome) rather than "uncertain, apply anyway".
+        if (
+            nc_bbce
+            and not deductions_used
+            and not separate_elderly_disabled_household
+        ):
+            # NC BBCE household (any track that defaults to NC) that is
+            # inside the 200% expanded band but failed the applicable test
+            # without deductions supplied. This fires for:
+            #   - non-elderly NC households between the gross test limit
+            #     (in practice a no-op now that the gross screen IS 200%,
+            #     but kept for future state-rule changes)
+            #   - elderly/disabled NC households whose net test failed
+            #     because no deductions were supplied — they passed the
+            #     200% BBCE gross screen and only the net test is pending.
+            # Honest framing: "passed gross screen; net test pending
+            # deductions." This outcome is only meaningful for NC — under
+            # federal rules (or other states that don't lift the 130%
+            # gross floor to 200%) the household IS still "uncertain,
+            # apply anyway" because they may or may not have deductions
+            # and there's no categorical pass at the gross screen.
+            outcome = "likely_eligible_gross_pending_net"
+        else:
+            # Non-NC household, separate-household standard at 165%, or
+            # deductions were supplied. The applicable test (or its net
+            # counterpart) was actually evaluated and failed; tell the
+            # household to apply anyway so a case worker can re-evaluate.
+            outcome = "uncertain_apply_anyway"
     else:
         outcome = "likely_ineligible"
 
@@ -483,11 +719,29 @@ def calculate_eligibility(
             "net income test (100% of the federal poverty guideline) applies "
             "instead of the gross test."
         )
-    else:
+    elif separate_elderly_disabled_household:
         rule_note = (
-            "Household has no elderly (60+) or disabled member, so the gross "
-            "income test (130% of the federal poverty guideline) applies."
+            "Household is a separate elderly/disabled household, so the "
+            "165% separate-household gross-income standard (federal rule "
+            "followed by NC FNS) applies instead of the standard "
+            "200%/130% NC BBCE gross screen."
         )
+    else:
+        if nc_bbce:
+            rule_note = (
+                "Household has no elderly (60+) or disabled member and "
+                "is screened under North Carolina's Broad-Based Categorical "
+                "Eligibility (BBCE). Under NC BBCE the gross income screen "
+                "is 200% of the federal poverty guideline (NCDHHS); the "
+                "federal 130% floor applies in other states."
+            )
+        else:
+            rule_note = (
+                f"Household has no elderly (60+) or disabled member, so the "
+                f"federal gross income test (130% of the federal poverty "
+                f"guideline) applies (state_code={state_code!r} does not "
+                f"have a state-specific BBCE rule implemented)."
+            )
 
     if deductions_used and deductions is not None:
         deduction_note = (
@@ -529,6 +783,14 @@ def calculate_eligibility(
             "at or below 200% of the poverty guideline. Apply anyway or use "
             "the NC ePASS portal for a full determination."
         )
+    elif outcome == "likely_eligible_gross_pending_net":
+        outcome_note = (
+            " The household passes North Carolina's BBCE gross-income "
+            "screen (200% of the poverty guideline) but the federal net "
+            "income test was not evaluated because no deduction amounts "
+            "were supplied. Provide earned income, dependent care, "
+            "medical expenses, or shelter costs to complete the net test."
+        )
     elif outcome == "likely_eligible":
         outcome_note = " The household passes the initial applicable income test."
     else:
@@ -551,6 +813,7 @@ def calculate_eligibility(
         "test_used": test_used,
         "limit": limit,
         "expanded_limit": expanded_limit,
+        "bbce_limit": bbce_limit,
         "income_considered": income_considered,
         "household_size": household_size,
         "outcome": outcome,
@@ -564,5 +827,7 @@ __all__ = [
     "compute_net_monthly_income",
     "income_limits",
     "max_household_size",
+    "separate_household_limits",
     "_POVERTY_GUIDELINES_SOURCE_URL",
+    "_SEPARATE_HOUSEHOLD_LIMITS_2026",
 ]

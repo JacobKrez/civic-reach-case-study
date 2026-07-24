@@ -10,9 +10,11 @@ with. If it fails, run: python3 scripts/generate_kb_table.py
 import re
 from pathlib import Path
 
-from src.calculator import income_limits
+from src.calculator import calculate_eligibility, income_limits
 
-KB_PATH = Path(__file__).resolve().parents[1] / "knowledge_base" / "02_income_limits.md"
+KB_DIR = Path(__file__).resolve().parents[1] / "knowledge_base"
+KB_PATH = KB_DIR / "02_income_limits.md"
+DEDUCTIONS_KB_PATH = KB_DIR / "03_deductions_and_household.md"
 
 _ROW_RE = re.compile(
     r"^\|\s*(\d+)\s*\|\s*\$([\d,]+\.\d{2})\s*\|\s*\$([\d,]+\.\d{2})\s*\|\s*\$([\d,]+\.\d{2})\s*\|$"
@@ -69,3 +71,24 @@ def test_generator_is_idempotent():
     )
     after = KB_PATH.read_text(encoding="utf-8")
     assert before == after, "generator output changed the committed file — commit the regenerated table"
+
+
+def test_worked_example_matches_calculator():
+    """The FY2026 $1,800-wages example must cite the calculator's result."""
+    result = calculate_eligibility(
+        household_size=1,
+        gross_monthly_income=1800.0,
+        has_elderly_or_disabled=False,
+        earned_monthly_income=1800.0,
+    )
+    assert result["deductions"] is not None
+    assert result["deductions"]["net_income"] == 1231.0
+    assert income_limits(1)["net"] == 1305.0
+
+    doc = DEDUCTIONS_KB_PATH.read_text(encoding="utf-8")
+    assert "net monthly income of **$1,231**" in doc
+    assert "FY2026 **$1,305 net limit**" in doc
+    assert "209" in doc
+    assert "744" in doc
+    assert "198.99" in doc
+    assert "child support" not in doc.lower()

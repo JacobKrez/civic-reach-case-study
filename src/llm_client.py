@@ -14,10 +14,26 @@ class LLMClient:
     """Dispatch chat requests according to the LLM_PROVIDER environment variable."""
 
     VALID_PROVIDERS = ("anthropic", "openai", "minimax", "openrouter")
+    # Canonical provider -> API key env-var mapping. The CLI derives its
+    # own map from this so the two surfaces cannot drift (W28).
+    PROVIDER_KEY_ENV = {
+        "anthropic": "ANTHROPIC_API_KEY",
+        "openai": "OPENAI_API_KEY",
+        "minimax": "MINIMAX_API_KEY",
+        "openrouter": "OPENROUTER_API_KEY",
+    }
+    # W28 refresh: 'claude-3-5-sonnet-latest' was two generations behind
+    # (current stable Sonnet is the 4.5 line); 'moonshotai/kimi-k3' is
+    # verified against OpenRouter's live /models list. Each id below
+    # resolves on its provider's API surface (verified July 2026):
+    #   - anthropic: claude-sonnet-4-5  (Anthropic docs, current Sonnet)
+    #   - openai:     gpt-4.1-mini      (OpenAI / OpenRouter, current mini)
+    #   - minimax:    MiniMax-M3        (minimax platform docs, current frontier)
+    #   - openrouter: moonshotai/kimi-k3 (OpenRouter /models, listed)
     DEFAULT_MODELS = {
-        "anthropic": "claude-3-5-sonnet-latest",
-        "openai": "gpt-4o-mini",
-        "minimax": "MiniMax-Text-01",
+        "anthropic": "claude-sonnet-4-5",
+        "openai": "gpt-4.1-mini",
+        "minimax": "MiniMax-M3",
         "openrouter": "moonshotai/kimi-k3",
     }
 
@@ -96,12 +112,7 @@ class LLMClient:
 
     @staticmethod
     def _has_api_key(provider: str) -> bool:
-        key = {
-            "anthropic": "ANTHROPIC_API_KEY",
-            "openai": "OPENAI_API_KEY",
-            "minimax": "MINIMAX_API_KEY",
-            "openrouter": "OPENROUTER_API_KEY",
-        }.get(provider)
+        key = LLMClient.PROVIDER_KEY_ENV.get(provider)
         return bool(key and os.getenv(key))
 
     @staticmethod

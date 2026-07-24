@@ -9,7 +9,7 @@ accepts four optional deduction inputs:
   - shelter_costs_monthly
 
 When any of them is non-zero, the calculator runs the real federal net-income
-deduction chain (7 CFR §273.9(d), FY2025 standards) and the agent's verdict
+deduction chain (7 CFR §273.9(d), FY2026 standards) and the agent's verdict
 is the result of that chain — not a comparison of gross income against the
 130% limit.
 
@@ -29,7 +29,7 @@ The flagship case comes straight from
 ``knowledge_base/03_deductions_and_household.md``::
 
     household = 1, gross = $1,800/mo, all earned, no elderly/disabled
-    -> net income = 1,236.00, likely eligible under the net test.
+    -> net income = 1,231.00, likely eligible under the applicable test.
 
 Before the fix, the agent reported 1,800.00 / qualifies=False because the
 deduction never reached the calculator.
@@ -37,19 +37,17 @@ deduction never reached the calculator.
 
 from __future__ import annotations
 
-import os
-
-# The agent's ``turn`` invokes the guardrail classifier before the main
-# LLM call unless this env var is set. The scripted LLM stub below returns
-# ``"normal"`` for the classifier prompt, but we disable the classifier
-# entirely so the test does not depend on the prompt routing details.
-os.environ.setdefault("GUARDRAIL_CLASSIFIER", "off")
-
 import pytest
 
 from src.agent import CivicReachAgent
 from src.calculator import calculate_eligibility
 from src.guardrails.classifier import CLASSIFIER_SYSTEM_PROMPT
+
+
+@pytest.fixture(autouse=True)
+def disable_classifier(monkeypatch):
+    """Keep scripted extraction tests independent of classifier routing."""
+    monkeypatch.setenv("GUARDRAIL_CLASSIFIER", "off")
 
 
 class ScriptedLLM:
@@ -132,7 +130,7 @@ def test_flagship_case_deductions_flip_verdict():
     """The documented flagship example: household of 1, $1,800 gross all
     earned. Without W26 the agent reported 1800.0 / qualifies=False; with
     the fix, the calculator runs the deduction chain and reports
-    1236.0 / qualifies=True."""
+    1231.0 / qualifies=True."""
     agent_result = _run_agent_with_deductions(
         household_size=1,
         gross_monthly_income=1800.0,
@@ -145,7 +143,7 @@ def test_flagship_case_deductions_flip_verdict():
         has_elderly_or_disabled=False,
         earned_monthly_income=1800.0,
     )
-    assert agent_result["income_considered"] == direct["income_considered"] == 1236.0
+    assert agent_result["income_considered"] == direct["income_considered"] == 1231.0
     assert agent_result["qualifies"] is direct["qualifies"] is True
     assert agent_result["test_used"] == "gross"  # no elderly/disabled -> gross test
     assert agent_result["deductions"] is not None
@@ -281,10 +279,11 @@ def test_deduction_disclosed_after_verdict_invalidates_cache():
     agent = CivicReachAgent(llm_client=ScriptedLLM(responses))
     for _ in range(3):
         agent.turn("placeholder")
-    # Sanity: the verdict was locked with no deductions: 1800.0 / False.
+    # Sanity: the verdict was locked with no deductions: 1800.0 / True under
+    # the current NC BBCE gross screen.
     assert agent.eligibility_result is not None
     assert agent.eligibility_result["income_considered"] == 1800.0
-    assert agent.eligibility_result["qualifies"] is False
+    assert agent.eligibility_result["qualifies"] is True
 
     # Now the user volunteers that all $1,800 is earned income. We
     # drive the same code path the agent's extract phase would use,
@@ -313,5 +312,5 @@ def test_deduction_disclosed_after_verdict_invalidates_cache():
         household_size=1, gross_monthly_income=1800.0,
         has_elderly_or_disabled=False, earned_monthly_income=1800.0,
     )
-    assert agent_result["income_considered"] == direct["income_considered"] == 1236.0
+    assert agent_result["income_considered"] == direct["income_considered"] == 1231.0
     assert agent_result["qualifies"] is True

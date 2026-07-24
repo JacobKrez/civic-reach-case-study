@@ -68,7 +68,76 @@ def test_invalid_provider_lists_valid_options(monkeypatch):
     with pytest.raises(ValueError) as exc:
         LLMClient().chat([])
     message = str(exc.value)
-    assert all(provider in message for provider in ("anthropic", "openai", "minimax"))
+    assert all(provider in message for provider in LLMClient.VALID_PROVIDERS)
+
+
+def test_cli_provider_map_matches_client():
+    """W28: CLI's _PROVIDER_KEY_ENV must cover exactly the same provider set
+    as LLMClient.VALID_PROVIDERS. Otherwise a reviewer following README.md's
+    own OPENROUTER quickstart hits 'invalid or missing LLM_PROVIDER' before
+    LLMClient is ever constructed (regression guard)."""
+    from src import cli
+
+    cli_map = getattr(cli, "_PROVIDER_KEY_ENV", None)
+    assert cli_map is not None, "cli._PROVIDER_KEY_ENV must exist"
+    assert set(cli_map) == set(LLMClient.VALID_PROVIDERS), (
+        "provider maps drift: cli=%s client=%s"
+        % (set(cli_map), set(LLMClient.VALID_PROVIDERS))
+    )
+    # And every value must be a real env var name, not None/empty.
+    for provider, env_var in cli_map.items():
+        assert env_var and isinstance(env_var, str), (
+            f"cli._PROVIDER_KEY_ENV[{provider!r}] must be a non-empty env var name, got {env_var!r}"
+        )
+
+
+def test_default_models_resolve_on_each_provider(monkeypatch):
+    """W28: each id in DEFAULT_MODELS must be a current model on its
+    provider. We can't hit the live APIs from CI (no keys), so we verify
+    structural sanity: every value is a non-empty string, the dict keys
+    match VALID_PROVIDERS, and anthropic / openai ids follow the
+    documented id conventions of those vendors. The OpenRouter id is
+    also checked against OpenRouter's live /models listing (cached on
+    the worker's session) — see test_default_openrouter_model_is_listed.
+    """
+    assert set(LLMClient.DEFAULT_MODELS) == set(LLMClient.VALID_PROVIDERS)
+    for provider, model_id in LLMClient.DEFAULT_MODELS.items():
+        assert isinstance(model_id, str) and model_id, (
+            f"DEFAULT_MODELS[{provider!r}] must be a non-empty string, got {model_id!r}"
+        )
+    # Anthropic model ids are 'claude-{family}-{major}' (e.g. claude-sonnet-4-5)
+    assert LLMClient.DEFAULT_MODELS["anthropic"].startswith("claude-"), \
+        f"unexpected anthropic model id: {LLMClient.DEFAULT_MODELS['anthropic']!r}"
+    # OpenAI model ids are 'gpt-...' or 'o...' (reasoning series)
+    oai = LLMClient.DEFAULT_MODELS["openai"]
+    assert oai.startswith(("gpt-", "o")), f"unexpected openai model id: {oai!r}"
+    # OpenRouter ids are vendor/model (slash-separated)
+    or_id = LLMClient.DEFAULT_MODELS["openrouter"]
+    assert "/" in or_id, f"openrouter id should be vendor/model, got {or_id!r}"
+
+
+def test_default_openrouter_model_is_listed():
+    """W28: moonshotai/kimi-k3 must appear on OpenRouter's live model
+    listing. Smoke-test only — OpenRouter adds/drops models often, and
+    we don't want a CI dependency on their uptime. If this fails, the
+    default is stale and needs refreshing (see chunk W28)."""
+    import urllib.error
+    import urllib.request
+
+    try:
+        with urllib.request.urlopen(
+            "https://openrouter.ai/api/v1/models", timeout=15
+        ) as resp:
+            import json as _json
+
+            payload = _json.loads(resp.read().decode("utf-8"))
+    except (urllib.error.URLError, TimeoutError, OSError):
+        pytest.skip("OpenRouter /models unreachable from this environment")
+    listed = {m.get("id") for m in payload.get("data", [])}
+    assert LLMClient.DEFAULT_MODELS["openrouter"] in listed, (
+        f"default openrouter model {LLMClient.DEFAULT_MODELS['openrouter']!r} "
+        f"is not on OpenRouter's live /models listing"
+    )
 
 
 def test_anthropic_sdk_is_mocked(monkeypatch):

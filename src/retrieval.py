@@ -121,18 +121,33 @@ def _split_chunks(text: str) -> List[str]:
 
     Strategy:
       - Split on blank lines (Markdown paragraphs / table blocks).
-      - Drop the leading `Source: <url>` line from each document's first
+      - Drop the leading source-metadata block from each document's first
         chunk — it doesn't help retrieval but it does inflate chunk length.
+        The block may contain multiple `Source:` lines and wrapped URLs.
       - Drop empty chunks.
       - If a "paragraph" is a Markdown table line (starts with '|'), keep
         it together with the surrounding paragraph (tables are often the
         only place income-limit numbers live, so we don't want to break
         them up).
     """
-    # Strip the leading "Source:" line if present.
+    # Strip the leading source-metadata block if present. Some KB documents
+    # have multiple source lines, and some wrap a source URL over several
+    # lines; removing only the first line leaves a bare URL as retrievable
+    # content. The metadata block is terminated by the first blank line.
     lines = text.splitlines()
-    if lines and lines[0].lstrip().lower().startswith("source:"):
-        lines = lines[1:]
+    if lines and lines[0].strip().lower().startswith((
+        "source:",
+        "federal source:",
+        "north carolina bbce source:",
+        "deduction amounts:",
+        "fuente:",
+    )):
+        for index, line in enumerate(lines):
+            if not line.strip():
+                lines = lines[index + 1 :]
+                break
+        else:
+            lines = []
     body = "\n".join(lines)
 
     # Split into blocks on blank lines.

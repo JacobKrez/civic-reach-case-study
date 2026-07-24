@@ -1,27 +1,41 @@
-Source: https://www.fns.usda.gov/snap/eligibility-income-and-deductions
+Federal source: https://www.fns.usda.gov/snap/eligibility-income-and-deductions
+North Carolina BBCE source: https://www.ncdhhs.gov/divisions/social-services/program-design-and-policy
+FY2026 SNAP income-eligibility standards (USDA FNS COLA memo, effective
+2025-10-01 through 2026-09-30):
+https://www.usda.gov/sites/default/files/guidance-documents/fns.snap-cola-fy26memo.pdf
 
 # FNS / SNAP Income Limits (Gross, Net, and Expanded Bands)
 
 ## Which test applies to a household
 - Households **without** an elderly (age 60+) or disabled member are screened
-  against the **gross** monthly income limit — **130% of the federal poverty
-  guideline** for their household size.
+  against the **gross** monthly income limit — **200% of the federal poverty
+  guideline** for their household size in North Carolina (the NC BBCE ceiling;
+  the federal floor outside NC is 130%). See "Important note for North
+  Carolina" below.
 - Households that **include** an elderly or disabled member are **not subject
   to the gross income test**. They are screened against the **net** monthly
   income limit — **100% of the federal poverty guideline** for the household
   size (after allowable deductions).
-- Under NC's expanded eligibility, a household subject to the gross test whose
-  gross income is **above 130% but at or below 200% of poverty** may still
-  qualify after deductions and should apply rather than self-deny. This is the
-  "apply anyway" band the agent surfaces as an *uncertain* outcome.
+- A household subject to the gross test whose gross income is **above the
+  130% federal floor but at or below 200% of poverty** may still qualify
+  after deductions and should apply rather than self-deny. Under NC BBCE the
+  200% figure is the gross screen ceiling, so the household passes the gross
+  screen categorically and only the net test (if any) is pending; outside NC
+  the same household sits in the "uncertain, apply anyway" band because the
+  200% categorical pass does not apply.
+- Households where an elderly/disabled person is a **separate household** (lives
+  with others but buys and prepares food separately) are screened against a
+  different gross-income standard — see kb/03 ("Separate Elderly/Disabled
+  Households — FY2026 165% standard").
 
-## Monthly income limits — FY 2025 federal poverty guidelines
+## Monthly income limits — FY 2026 SNAP income-eligibility standards
 
-The base figures are the U.S. Department of Health and Human Services (HHS)
-2025 federal poverty guidelines. USDA FNS derives the SNAP income tables by
-multiplying those guidelines by 130% (gross), 100% (net), and — for the
-expanded band — 200%, expressed monthly. North Carolina follows the federal
-chart without state-level adjustment.
+The base figures are the USDA FNS FY2026 SNAP income-eligibility standards
+for the 48 contiguous states and DC (effective 2025-10-01 through
+2026-09-30). The 130% gross and 100% net columns are the figures USDA FNS
+publishes directly for SNAP; the expanded 200% column is the NC BBCE
+ceiling (NCDHHS) — twice the published 100% net figure, expressed monthly.
+USDA FNS re-sources these annually in the SNAP COLA memo.
 
 <!-- BEGIN GENERATED TABLE — do not edit by hand.
      Regenerate with: python3 scripts/generate_kb_table.py
@@ -30,27 +44,44 @@ chart without state-level adjustment.
 
 | Household Size | Gross (130%) | Net (100%) | Expanded (200%) |
 |---:|---:|---:|---:|
-| 1 | $1,695.42 | $1,304.17 | $2,608.33 |
-| 2 | $2,291.25 | $1,762.50 | $3,525.00 |
-| 3 | $2,887.08 | $2,220.83 | $4,441.67 |
-| 4 | $3,482.92 | $2,679.17 | $5,358.33 |
-| 5 | $4,078.75 | $3,137.50 | $6,275.00 |
-| 6 | $4,674.58 | $3,595.83 | $7,191.67 |
-| 7 | $5,270.42 | $4,054.17 | $8,108.33 |
-| 8 | $5,866.25 | $4,512.50 | $9,025.00 |
-| each additional | +$595.83 | +$458.33 | +$916.67 |
+| 1 | $1,696.00 | $1,305.00 | $2,610.00 |
+| 2 | $2,292.00 | $1,763.00 | $3,526.00 |
+| 3 | $2,888.00 | $2,221.00 | $4,442.00 |
+| 4 | $3,483.00 | $2,680.00 | $5,360.00 |
+| 5 | $4,079.00 | $3,138.00 | $6,276.00 |
+| 6 | $4,675.00 | $3,596.00 | $7,192.00 |
+| 7 | $5,271.00 | $4,055.00 | $8,110.00 |
+| 8 | $5,867.00 | $4,513.00 | $9,026.00 |
+| each additional | +$596.00 | +$459.00 | +$918.00 |
 
 <!-- END GENERATED TABLE -->
 
 ## Verification
 Income limits change every federal fiscal year. Before giving a final
 eligibility answer, the agent should:
-1. Note which year's guidelines are in effect.
+1. Note which year's guidelines are in effect (FY2026, effective
+   2025-10-01 through 2026-09-30).
 2. Direct the user to confirm current figures on the USDA FNS eligibility
    page: https://www.fns.usda.gov/snap/eligibility-income-and-deductions
+3. For NC BBCE specifically, confirm the 200% gross screen and the no-asset-
+   test rule on the NC DHHS program-design page:
+   https://www.ncdhhs.gov/divisions/social-services/program-design-and-policy
 
 ## Important note for North Carolina
-NC FNS uses the federal gross and net income limits without state-level
-adjustments to the percentages. The household size counts everyone who lives
-together and purchases and prepares food together, with a few exceptions
-covered in the household composition document.
+
+North Carolina operates SNAP under **Broad-Based Categorical Eligibility
+(BBCE)** (NCDHHS). Under BBCE:
+
+- The **gross-income screen is 200% of the federal poverty guideline**, not
+  the 130% federal floor. A household whose gross income is at or below 200%
+  FPL passes the gross screen categorically; the asset test is also waived for
+  most households.
+- Households WITH an elderly or disabled member living in the same household
+  are still screened against the 100% net test (BBCE does not change the net
+  test — it only raises the gross screen ceiling and waives the asset test).
+- Approximately 13% of NC SNAP households qualify via BBCE (NCDHHS, 2025
+  BBCE policy summary). See the dedicated source above.
+
+The household size counts everyone who lives together and purchases and
+prepares food together, with a few exceptions covered in the household
+composition document.

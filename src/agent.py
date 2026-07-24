@@ -600,25 +600,25 @@ class CivicReachAgent:
         assert household_size is not None
         assert gross_income is not None
         assert elderly_or_disabled is not None
-        # W26: thread the four optional deduction fields through so the
-        # calculator's net-income deduction chain actually runs when
-        # state has them. Without these, the calculator falls back to the
-        # pre-W14 behavior (gross income vs. limit) even when the user
-        # has volunteered deductions — the documented flagship example
-        # (household of 1, $1,800 gross all earned) produced 1800.0 /
-        # qualifies=False in the agent while the direct calculator call
-        # produced 1236.0 / qualifies=True. Each field defaults to 0.0 on
-        # the state model, so passing them unconditionally is safe when
-        # the user has not disclosed any deduction.
-        self._eligibility_result = calculate_eligibility(
-            household_size=household_size,
-            gross_monthly_income=gross_income,
-            has_elderly_or_disabled=elderly_or_disabled,
-            earned_monthly_income=self.state.earned_monthly_income,
-            dependent_care_monthly=self.state.dependent_care_monthly,
-            medical_expenses_monthly=self.state.medical_expenses_monthly,
-            shelter_costs_monthly=self.state.shelter_costs_monthly,
-        )
+        # W26: thread volunteered deduction fields through so the
+        # calculator's net-income chain runs when state has them. Omit
+        # zero-valued optional kwargs to preserve the original three-argument
+        # call shape for callers that supplied no deductions; the calculator
+        # defaults those fields to zero and its no-input path is unchanged.
+        calculator_kwargs: dict[str, Any] = {
+            "household_size": household_size,
+            "gross_monthly_income": gross_income,
+            "has_elderly_or_disabled": elderly_or_disabled,
+        }
+        optional_deductions = {
+            "earned_monthly_income": self.state.earned_monthly_income,
+            "dependent_care_monthly": self.state.dependent_care_monthly,
+            "medical_expenses_monthly": self.state.medical_expenses_monthly,
+            "shelter_costs_monthly": self.state.shelter_costs_monthly,
+        }
+        if any(value > 0 for value in optional_deductions.values()):
+            calculator_kwargs.update(optional_deductions)
+        self._eligibility_result = calculate_eligibility(**calculator_kwargs)
 
     def turn(self, user_message: str) -> str:
         """Process one user turn, prioritizing deterministic guardrails.

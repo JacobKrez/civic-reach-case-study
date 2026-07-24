@@ -14,7 +14,7 @@ import os
 
 import pytest
 
-from src.retrieval import retrieve
+from src.retrieval import _split_chunks, retrieve
 
 
 KB_DIR = os.path.normpath(
@@ -109,3 +109,17 @@ def test_k_zero_or_negative_returns_empty():
     """Edge case: k<=0 should return an empty list, not raise."""
     assert retrieve("anything", k=0) == []
     assert retrieve("anything", k=-1) == []
+
+
+def test_split_chunks_removes_all_leading_source_metadata():
+    """Repeated and wrapped source headers must not become KB chunks."""
+    chunks = _split_chunks(
+        "Source: https://example.test/eligibility\n"
+        "Source: https://example.test/fy2026.pdf (FY2026,\n"
+        "effective 2025-10-01 through 2026-09-30)\n\n"
+        "# Actual rule\n\n"
+        "The standard deduction is $209."
+    )
+    joined = "\n".join(chunks)
+    assert "example.test" not in joined
+    assert "# Actual rule" in joined

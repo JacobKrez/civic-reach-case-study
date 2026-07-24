@@ -16,6 +16,8 @@ Design constraints:
 
 from __future__ import annotations
 
+import re
+
 # Off-topic patterns. Each entry is a literal phrase (case-insensitive
 # substring match) that, when present in the user's message, signals the
 # request is outside the NC FNS initial screen scope.
@@ -76,14 +78,27 @@ _OUT_OF_SCOPE_PHRASES_ES: tuple[str, ...] = (
 _SPANISH_ACCENTS = str.maketrans("áéíóúüñ", "aeiouun")
 
 
+def _compile_bounded_phrases(
+    phrases: tuple[str, ...],
+) -> tuple[re.Pattern[str], ...]:
+    """Compile literal phrases with word boundaries on both sides."""
+    return tuple(
+        re.compile(rf"\b{re.escape(phrase)}\b", re.IGNORECASE)
+        for phrase in phrases
+    )
+
+
+_OUT_OF_SCOPE_PATTERNS = _compile_bounded_phrases(_OUT_OF_SCOPE_PHRASES)
+_OUT_OF_SCOPE_PATTERNS_ES = _compile_bounded_phrases(_OUT_OF_SCOPE_PHRASES_ES)
+
+
 def detect_out_of_scope(text: str) -> bool:
     """Return ``True`` if *text* is clearly outside NC FNS eligibility scope.
 
-    The match is case-insensitive substring matching against a curated list
-    of off-topic phrases, in English and Spanish. We deliberately avoid
-    regex word boundaries so "lawsuit" still matches "lawsuits" and "sue"
-    still matches "I'll sue them", but a bare mention of "consider" or
-    "benefits" is never a trigger.
+    The match is case-insensitive, word-bounded matching against a curated
+    list of off-topic phrases, in English and Spanish. Word boundaries keep
+    a phrase such as ``sue`` from firing inside ``issue`` or ``pursue`` while
+    still matching ``I'll sue them``.
 
     The function is intentionally conservative: false positives (declaring
     an in-scope message out-of-scope) are far worse than false negatives,
@@ -99,11 +114,11 @@ def detect_out_of_scope(text: str) -> bool:
     # Accent-insensitive variant for the Spanish list.
     accentless = normalized.translate(_SPANISH_ACCENTS)
 
-    for phrase in _OUT_OF_SCOPE_PHRASES:
-        if phrase in normalized:
+    for pattern in _OUT_OF_SCOPE_PATTERNS:
+        if pattern.search(normalized):
             return True
-    for phrase in _OUT_OF_SCOPE_PHRASES_ES:
-        if phrase in normalized or phrase in accentless:
+    for pattern in _OUT_OF_SCOPE_PATTERNS_ES:
+        if pattern.search(normalized) or pattern.search(accentless):
             return True
     return False
 
@@ -193,8 +208,12 @@ _NOT_A_PERSON_PHRASES: tuple[str, ...] = (
     "are you a chatbot",
     "are you a bot",
     "is this a bot",
+    # Natural question-tail phrasing ("You are a bot, right?") asks about
+    # the assistant's nature; it is not an imperative persona override.
+    "you are a bot",
     "are you an ai",
     "is this an ai",
+    "you are an ai",
     "are you ai",
     "is this ai",
     "are you a computer",
@@ -281,6 +300,8 @@ _NOT_A_PERSON_PHRASES_ES: tuple[str, ...] = (
     "esto es servicios de emergencia",
     "eres servicios de emergencia",
 )
+_NOT_A_PERSON_PATTERNS = _compile_bounded_phrases(_NOT_A_PERSON_PHRASES)
+_NOT_A_PERSON_PATTERNS_ES = _compile_bounded_phrases(_NOT_A_PERSON_PHRASES_ES)
 
 
 def detect_not_a_person_request(text: str) -> bool:
@@ -289,11 +310,9 @@ def detect_not_a_person_request(text: str) -> bool:
     Triggered by the user asking whether this is a live person, a live
     agent, a chatbot, an AI, a hotline, a 911/988 dispatcher, an EBT
     card-services line, or whether someone is going to be called /
-    dispatched on their behalf. The match is the same conservative,
-    case-insensitive substring match used by ``detect_out_of_scope``:
-    substring (no regex word boundaries) so "is this a bot" matches
-    "is this a bot?" but a normal intake sentence containing the word
-    "person" is never a false positive.
+    dispatched on their behalf. The match is case-insensitive and
+    word-bounded so ``is this a bot`` matches ``is this a bot?`` without
+    treating an unrelated word fragment as a request.
 
     Accent-insensitive matching is applied for the Spanish list so
     "es una persona real" matches with or without accents. The empty /
@@ -310,11 +329,11 @@ def detect_not_a_person_request(text: str) -> bool:
     # Accent-insensitive variant for the Spanish list.
     accentless = normalized.translate(_SPANISH_ACCENTS)
 
-    for phrase in _NOT_A_PERSON_PHRASES:
-        if phrase in normalized:
+    for pattern in _NOT_A_PERSON_PATTERNS:
+        if pattern.search(normalized):
             return True
-    for phrase in _NOT_A_PERSON_PHRASES_ES:
-        if phrase in normalized or phrase in accentless:
+    for pattern in _NOT_A_PERSON_PATTERNS_ES:
+        if pattern.search(normalized) or pattern.search(accentless):
             return True
     return False
 

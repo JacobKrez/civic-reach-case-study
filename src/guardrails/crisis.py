@@ -6,6 +6,8 @@ path. This guarantees that users see verified hotline numbers verbatim.
 
 from __future__ import annotations
 
+import re
+
 CRISIS_RESOURCES = {
     'emergency_services': '911',
     'suicide_crisis_lifeline': '988',
@@ -21,7 +23,9 @@ _CRISIS_KEYWORDS = (
     "starving",
     "can't feed my kids",
     "nothing to eat",
-    "emergency",
+    "food emergency",
+    "medical emergency",
+    "emergency room",
     "suicide",
     "want to die",
     "hurt myself",
@@ -41,8 +45,6 @@ _CRISIS_KEYWORDS = (
     "partner hurts me",
     "partner hits me",
     "partner beats me",
-    "hits me",
-    "beats me",
     "afraid to go home",
     "scared to go home",
     "not safe at home",
@@ -75,13 +77,17 @@ _CRISIS_KEYWORDS_ES = (
     "no puedo alimentar a mis hijos",
     "no puedo alimentarlos",
     "nada que comer",
-    "emergencia",
+    "emergencia alimentaria",
+    "emergencia medica",
+    "sala de emergencias",
     # Suicidal ideation / self-harm
     "suicidio",
     "suicidarme",
     "quiero morir",
+    "quiero morirme",
     "me quiero morir",
     "hacerme dano",
+    "voy a hacerme dano",
     "lastimarme",
     "matarme",
     "me voy a matar",
@@ -122,19 +128,52 @@ _CRISIS_KEYWORDS_ES = (
 _SPANISH_ACCENTS = str.maketrans("áéíóúüñ", "aeiouun")
 
 
+def _compile_bounded_phrases(
+    phrases: tuple[str, ...],
+) -> tuple[re.Pattern[str], ...]:
+    """Compile literal crisis phrases with word boundaries."""
+    return tuple(
+        re.compile(rf"\b{re.escape(phrase)}\b", re.IGNORECASE)
+        for phrase in phrases
+    )
+
+
+_CRISIS_PATTERNS = _compile_bounded_phrases(_CRISIS_KEYWORDS)
+_CRISIS_PATTERNS_ES = _compile_bounded_phrases(_CRISIS_KEYWORDS_ES)
+
+# Keep the short English DV verbs out of the general keyword list: phrases
+# such as "rent hits me" are not necessarily a safety disclosure. Require a
+# person subject for the standalone ``hits me`` / ``beats me`` forms, while
+# the explicit partner / home-safety phrases above remain direct matches.
+_DV_PERSON_SUBJECT_PATTERN = re.compile(
+    r"\b(?:he|she|they|someone|my partner|my spouse|my husband|my wife)\s+"
+    r"(?:hits|beats)\s+me\b",
+    re.IGNORECASE,
+)
+
+
 def detect_crisis(text: str) -> bool:
     """Return whether *text* contains a configured food or safety crisis phrase.
 
     English and Spanish lists are merged so a disclosure in either language
     is caught by the same deterministic layer. Spanish matching is
-    accent-insensitive (see _SPANISH_ACCENTS).
+    accent-insensitive (see _SPANISH_ACCENTS). Domestic-violence verbs such
+    as ``hits me`` and ``beats me`` are only accepted when preceded by a
+    recognized person subject, preventing ordinary phrases such as "rent
+    hits me" from escalating.
     """
-    normalized = text.casefold().replace("’", "'")
+    if not isinstance(text, str) or not text.strip():
+        return False
+    normalized = text.casefold().replace("’", "'").replace("‘", "'")
     accentless = normalized.translate(_SPANISH_ACCENTS)
-    return any(
-        keyword in normalized or keyword in accentless
-        for keyword in (*_CRISIS_KEYWORDS, *_CRISIS_KEYWORDS_ES)
-    )
+    if any(pattern.search(normalized) for pattern in _CRISIS_PATTERNS):
+        return True
+    if any(
+        pattern.search(normalized) or pattern.search(accentless)
+        for pattern in _CRISIS_PATTERNS_ES
+    ):
+        return True
+    return bool(_DV_PERSON_SUBJECT_PATTERN.search(normalized))
 
 
 def crisis_response(lang: str = "bilingual") -> str:

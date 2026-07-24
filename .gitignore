@@ -8,3 +8,7 @@ redteam/report_latest.json
 LOOP_PLAN.md
 ROADMAP.md
 *.txt
+
+# Review artifacts — keep local, never publish
+PRODUCTION_READINESS_REVIEW.md
+_review/

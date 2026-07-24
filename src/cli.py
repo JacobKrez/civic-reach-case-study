@@ -42,11 +42,12 @@ _BANNER = (
 )
 
 
-_PROVIDER_KEY_ENV = {
-    "anthropic": "ANTHROPIC_API_KEY",
-    "openai": "OPENAI_API_KEY",
-    "minimax": "MINIMAX_API_KEY",
-}
+# W28: derive from LLMClient.PROVIDER_KEY_ENV rather than duplicating it,
+# so adding a provider in one place (LLMClient) updates the CLI's
+# pre-construction validation automatically. Keep the alias because
+# tests assert set(_PROVIDER_KEY_ENV) == set(VALID_PROVIDERS) — see
+# tests/test_llm_client.py::test_cli_provider_map_matches_client.
+_PROVIDER_KEY_ENV = LLMClient.PROVIDER_KEY_ENV
 
 
 def _missing_key_error(provider: str) -> str | None:
