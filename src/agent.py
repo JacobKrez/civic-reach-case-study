@@ -82,10 +82,12 @@ state that has already been collected.
 
 W21 — DISCLOSURE INTEGRITY: CivicReach is an automated AI assistant
 (not a live person, not an NC DSS caseworker, not 911, not 988's live
-counselors, and not the EBT card-services line). The very first
-assistant message of every conversation is a code-templated disclosure
-produced by ``first_turn_disclosure(lang)`` in this module. Do NOT
-replace, soften, paraphrase, omit, or contradict that disclosure. Do
+counselors, and not the EBT card-services line). The first two
+assistant messages of every conversation are code-templated and
+produced by ``first_turn_disclosure(lang)`` (the safety disclosure) and
+``first_turn_greeting(lang)`` (a short friendly opener plus the first
+intake question) in this module. Do NOT replace, soften, paraphrase,
+omit, or contradict either one. Do
 NOT claim to be a real person, a caseworker, a hotline operator, or
 someone who can dispatch help, call the user, or take any real-world
 action. If the user asks whether you are a real person or whether you
@@ -164,10 +166,12 @@ reinicies ningún estado que ya se haya recolectado.
 W21 — INTEGRIDAD DEL AVISO: CivicReach es un asistente automatizado de
 inteligencia artificial (no es una persona real, no es un trabajador
 social del DSS de Carolina del Norte, no es 911, no es los consejeros
-en vivo del 988, y no es la línea de servicios de la tarjeta EBT). El
-primer mensaje del asistente en cada conversación es un aviso generado
-por código mediante ``first_turn_disclosure(lang)`` en este módulo. NO
-reemplaces, suavices, parafrasees, omitas ni contradigas ese aviso. NO
+en vivo del 988, y no es la línea de servicios de la tarjeta EBT). Los
+primeros dos mensajes del asistente en cada conversación son generados
+por código: ``first_turn_disclosure(lang)`` (el aviso de seguridad) y
+``first_turn_greeting(lang)`` (una bienvenida breve más la primera
+pregunta) en este módulo. NO reemplaces, suavices, parafrasees, omitas
+ni contradigas ninguno de los dos. NO
 afirmes ser una persona real, un trabajador social, un operador de una
 línea directa, ni alguien que pueda despachar ayuda, llamar al usuario
 o tomar cualquier acción en el mundo real. Si el usuario pregunta si
@@ -249,26 +253,42 @@ _ALLOWED_UPDATES = set(UPDATE_STATE_TOOL["input_schema"]["properties"])
 # system prompt below tells the model to NEVER replace, soften, or
 # contradict that disclosure; the disclosure exists precisely to make
 # confusion impossible before it happens.
+# Split into two messages (the safety card, then a short friendly
+# opener) rather than one long combined block: user feedback from a
+# live test was that a single wall of disclaimers-then-question read as
+# unfriendly and slow to get to the point. Both pieces are still
+# hard-coded / code-templated; splitting is presentation only, nothing
+# in the underlying safety content changed.
 FIRST_TURN_DISCLOSURE_EN = (
-    "Hi — I'm CivicReach, an automated AI assistant (not a live person "
-    "and not a DSS caseworker). I can do an initial NC FNS / SNAP "
-    "eligibility SCREEN — I can't see you, I can't call anyone, I "
-    "can't dispatch help, and I can't take any real-world action on "
-    "your behalf. If this is a life-threatening emergency, call 911. "
-    "If you're in a mental-health crisis, call or text 988. To get "
-    "started, how many people are in your household?"
+    "CivicReach is an automated AI assistant — not a live person and "
+    "not a DSS caseworker. It performs an initial NC FNS / SNAP "
+    "eligibility SCREEN only: it can't see you, can't call anyone, "
+    "can't dispatch help, and can't take any real-world action on your "
+    "behalf. If this is a life-threatening emergency, call 911. If "
+    "you're in a mental-health crisis, call or text 988."
 )
 
 FIRST_TURN_DISCLOSURE_ES = (
-    "Hola — soy CivicReach, un asistente automatizado de inteligencia "
-    "artificial (no soy una persona real ni un trabajador social del "
-    "DSS). Solo puedo hacer una evaluación inicial de elegibilidad "
-    "para FNS / SNAP de Carolina del Norte — no puedo verte, no puedo "
-    "llamar a nadie, no puedo despachar ayuda y no puedo tomar ninguna "
-    "acción en el mundo real. Si es una emergencia que pone en peligro "
-    "tu vida, llama al 911. Si estás en una crisis de salud mental, "
-    "llama o envía un mensaje de texto al 988. Para empezar, ¿cuántas "
-    "personas hay en tu hogar?"
+    "CivicReach es un asistente automatizado de inteligencia artificial "
+    "— no es una persona real ni un trabajador social del DSS. Solo "
+    "realiza una evaluación inicial de elegibilidad para FNS / SNAP de "
+    "Carolina del Norte: no puede verte, no puede llamar a nadie, no "
+    "puede despachar ayuda y no puede tomar ninguna acción en el mundo "
+    "real. Si es una emergencia que pone en peligro tu vida, llama al "
+    "911. Si estás en una crisis de salud mental, llama o envía un "
+    "mensaje de texto al 988."
+)
+
+FIRST_TURN_GREETING_EN = (
+    "Hi! I'm here to help you check your eligibility for NC FNS / SNAP "
+    "food assistance. Let's get started — how many people are in your "
+    "household?"
+)
+
+FIRST_TURN_GREETING_ES = (
+    "¡Hola! Estoy aquí para ayudarte a evaluar tu elegibilidad para FNS "
+    "/ SNAP de Carolina del Norte. Empecemos — ¿cuántas personas hay en "
+    "tu hogar?"
 )
 
 
@@ -290,6 +310,17 @@ def first_turn_disclosure(lang: str = "en") -> str:
     if lang == "es":
         return FIRST_TURN_DISCLOSURE_ES
     return FIRST_TURN_DISCLOSURE_EN
+
+
+def first_turn_greeting(lang: str = "en") -> str:
+    """Return the second first-turn message: a short, friendly opener
+    plus the first intake question. Hard-coded, same rule as
+    ``first_turn_disclosure`` — shown as the SECOND assistant bubble,
+    right after the safety disclosure, never combined into one message.
+    """
+    if lang == "es":
+        return FIRST_TURN_GREETING_ES
+    return FIRST_TURN_GREETING_EN
 
 
 class CivicReachAgent:
@@ -691,15 +722,24 @@ class CivicReachAgent:
             return content
 
         # Captured BEFORE the LLM call: the single field this turn's
-        # question was actually about, if the intake isn't complete yet.
-        # Used below as a narrow, deterministic backstop -- see
-        # _fallback_parse_terse_reply.
+        # question was actually about, if the intake isn't complete yet,
+        # and whether income already had a value from an EARLIER turn.
+        # Both are used below as narrow, deterministic backstops -- see
+        # _fallback_parse_terse_reply. Capturing income's pre-turn state
+        # matters: checking ``self.state.gross_monthly_income`` AFTER the
+        # LLM call would also be true for a plain first-time fill THIS
+        # turn, which is not a correction and must not be re-parsed.
         asked_field = self.state.missing_fields()[:1]
+        income_set_before_this_turn = self.state.gross_monthly_income is not None
 
         response = self.llm_client.chat(
             [*self._messages, {"role": "user", "content": self._context(user_message)}],
             system=self._system_prompt(),
             tools=self.tools,
+        )
+        model_updated_income_this_turn = any(
+            call.get("name") == "update_state" and "gross_monthly_income" in (call.get("input") or {})
+            for call in (response.get("tool_calls") or [])
         )
         new_corrections: list[dict[str, Any]] = []
         try:
@@ -729,6 +769,37 @@ class CivicReachAgent:
                 try:
                     new_corrections.extend(
                         self._apply_tool_calls([{"name": "update_state", "input": {field: parsed}}])
+                    )
+                    fallback_applied = True
+                except ValueError:
+                    pass
+
+        # Out-of-order income correction: a user who is being asked about
+        # a DIFFERENT field (typically has_elderly_or_disabled_member,
+        # the last question) sometimes replies with a correction to
+        # income instead ("50k" right after answering "50"). Observed
+        # live: the model recognizes this eventually, but often not
+        # until a LATER turn -- a visible one-turn lag ("seems behind").
+        # Fires only when income had a value BEFORE this turn (a real
+        # correction, not a first fill), the model's OWN tool call this
+        # turn didn't already handle it (never double-process a value
+        # the model just set correctly), and the currently-asked field
+        # is something else. Conservative by construction:
+        # normalize_income() only matches money-shaped text, so it can't
+        # misfire on an actual yes/no answer to the field really asked.
+        if (
+            not fallback_applied
+            and income_set_before_this_turn
+            and not model_updated_income_this_turn
+            and (not asked_field or asked_field[0] != "gross_monthly_income")
+        ):
+            parsed_income = normalize_income(user_message)
+            if parsed_income is not None and parsed_income != self.state.gross_monthly_income:
+                try:
+                    new_corrections.extend(
+                        self._apply_tool_calls(
+                            [{"name": "update_state", "input": {"gross_monthly_income": parsed_income}}]
+                        )
                     )
                     fallback_applied = True
                 except ValueError:
@@ -829,5 +900,8 @@ __all__ = [
     "UPDATE_STATE_TOOL",
     "FIRST_TURN_DISCLOSURE_EN",
     "FIRST_TURN_DISCLOSURE_ES",
+    "FIRST_TURN_GREETING_EN",
+    "FIRST_TURN_GREETING_ES",
     "first_turn_disclosure",
+    "first_turn_greeting",
 ]

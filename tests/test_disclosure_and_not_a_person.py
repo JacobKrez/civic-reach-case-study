@@ -429,6 +429,23 @@ def test_web_index_page_first_bubble_is_first_turn_disclosure_en():
     )
 
 
+def test_web_index_page_has_two_separate_first_bubbles():
+    """Feedback from a live test: one long combined disclosure+question
+    block read as unfriendly and slow to get to the point. The page must
+    render the safety disclosure and the friendly greeting as TWO
+    distinct bubbles, not concatenated into one."""
+    from src.agent import first_turn_greeting
+    from src.web import PAGE
+
+    assert first_turn_greeting("en") in PAGE
+    # Two separate bubble divs, not one combined block: the disclosure
+    # bubble's closing tag must appear before the greeting text starts.
+    disclosure_idx = PAGE.index(FIRST_TURN_DISCLOSURE_EN)
+    greeting_idx = PAGE.index(first_turn_greeting("en"))
+    closing_div_between = PAGE.index("</div>", disclosure_idx)
+    assert disclosure_idx < closing_div_between < greeting_idx
+
+
 # ---------------------------------------------------------------------------
 # 7. The CLI banner surfaces the disclosure at startup.
 # ---------------------------------------------------------------------------
@@ -445,8 +462,46 @@ def test_cli_banner_is_the_disclosure():
     assert "exit" in _BANNER.lower() or "Ctrl-C" in _BANNER
 
 
+def test_cli_banner_includes_greeting_after_disclosure():
+    """The banner surfaces both first-turn pieces, disclosure first."""
+    from src.agent import first_turn_greeting
+    from src.cli import _BANNER
+
+    assert first_turn_greeting("en") in _BANNER
+    assert _BANNER.index(FIRST_TURN_DISCLOSURE_EN) < _BANNER.index(first_turn_greeting("en"))
+
+
 # ---------------------------------------------------------------------------
-# 8. The system prompt carries a disclosure-integrity reminder.
+# 8. first_turn_greeting() — content contract.
+# ---------------------------------------------------------------------------
+
+
+def test_first_turn_greeting_is_short_friendly_and_asks_household_size():
+    from src.agent import (
+        FIRST_TURN_GREETING_EN,
+        FIRST_TURN_GREETING_ES,
+        first_turn_greeting,
+    )
+
+    en = first_turn_greeting("en")
+    assert en == FIRST_TURN_GREETING_EN
+    assert "household" in en.lower()
+    assert len(en) < len(FIRST_TURN_DISCLOSURE_EN)
+
+    es = first_turn_greeting("es")
+    assert es == FIRST_TURN_GREETING_ES
+    assert "hogar" in es.lower()
+
+
+def test_first_turn_greeting_unknown_lang_falls_back_to_english():
+    from src.agent import FIRST_TURN_GREETING_EN, first_turn_greeting
+
+    assert first_turn_greeting("fr") == FIRST_TURN_GREETING_EN
+    assert first_turn_greeting("") == FIRST_TURN_GREETING_EN
+
+
+# ---------------------------------------------------------------------------
+# 9. The system prompt carries a disclosure-integrity reminder.
 # ---------------------------------------------------------------------------
 
 

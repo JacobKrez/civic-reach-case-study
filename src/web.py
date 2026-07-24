@@ -15,7 +15,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from .agent import CivicReachAgent, first_turn_disclosure
+from .agent import CivicReachAgent, first_turn_disclosure, first_turn_greeting
 
 app = FastAPI(title="CivicReach", version="1.0.0")
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
@@ -87,10 +87,15 @@ def handoff(request: HandoffRequest) -> dict[str, Any]:
     return package
 
 
+def _escape(text: str) -> str:
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+# Two separate bubbles, not one combined message: the safety disclosure
+# first, then a short friendly opener with the first intake question.
 _FIRST_BUBBLE_HTML = (
-    '<div class="bubble assistant">'
-    + first_turn_disclosure("en").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-    + "</div>"
+    '<div class="bubble assistant">' + _escape(first_turn_disclosure("en")) + "</div>"
+    '<div class="bubble assistant">' + _escape(first_turn_greeting("en")) + "</div>"
 )
 
 
