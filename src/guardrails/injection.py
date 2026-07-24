@@ -30,6 +30,18 @@ _INJECTION_PATTERNS: tuple[re.Pattern[str], ...] = (
     # Fake system/control tags used to spoof a higher-privilege message.
     re.compile(r"<\s*/?\s*(?:override|system|admin)\s*>", re.IGNORECASE),
     re.compile(r"\bSYSTEM\s*:\s*<", re.IGNORECASE),
+    # Spanish-language instruction-override attempts. The deterministic
+    # detector is the only thing standing between an override and the model,
+    # and an override attempt is no less an override for being in Spanish
+    # (W7 fixture injection_07: "¡Olvídalo todo! Ahora eres..."). Keep these
+    # narrowly scoped to role-change / forget-instructions framings so
+    # legitimate Spanish eligibility answers are not false-flagged.
+    re.compile(r"\bolvida\w*\s+(?:todo|todo\s+lo\s+anterior|las\s+instrucciones)\b", re.IGNORECASE),
+    re.compile(r"\bahora\s+eres\b", re.IGNORECASE),
+    re.compile(r"\bignora\s+(?:todas\s+)?(?:las\s+)?instrucciones\b", re.IGNORECASE),
+    re.compile(r"\btu\s+nuevo\s+(?:rol|objetivo|tarea)\b", re.IGNORECASE),
+    re.compile(r"\bact[uú]a\s+como\b", re.IGNORECASE),
+    re.compile(r"\bde\s+ahora\s+en\s+adelante\b", re.IGNORECASE),
     # Long base64-looking payloads are never a legitimate SNAP-eligibility
     # answer; encoded injection attempts are still injection attempts.
     re.compile(r"^[A-Za-z0-9+/]{40,}={0,2}$"),
