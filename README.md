@@ -56,6 +56,21 @@ correction across turns):
 python3 -m redteam.run_redteam
 ```
 
+## CI
+
+GitHub Actions (`.github/workflows/ci.yml`) runs on every push and pull
+request:
+
+1. Installs the pinned `requirements.txt` on Python 3.11.
+2. Runs the full `pytest -q` suite.
+3. Runs `python3 redteam/run_redteam.py --dry-run` and fails the build if
+   the harness exits non-zero or emits a Python traceback.
+
+The red-team step is **dry-run only** in CI: it validates fixtures, agent
+wiring, and per-category check logic without calling a live LLM. A real
+red-team pass costs money and needs a provider key that CI does not have —
+run that manually before a demo, not on every PR.
+
 ## Architecture
 
 The conversation loop is a layered, *narratable* state machine. Every
@@ -208,9 +223,11 @@ What we would build next, in priority order, given more time:
 4. **Telemetry with PII redaction.** First-class event log of every
    turn with the redactor applied at write-time, so we can see failure
    modes in production without ever persisting raw user input.
-5. **Eval harness in CI.** A `pytest`-driven harness that runs the
-   red-team suite plus a fixed transcript corpus on every PR, with a
-   pass / fail threshold on outcome-band stability. Catches regressions
+5. **Eval harness in CI.** Partially shipped: GitHub Actions runs the
+   full pytest suite plus a red-team `--dry-run` on every push/PR (see
+   the CI section above). Remaining: a scheduled live (non-dry-run)
+   red-team pass with a pass/fail threshold on outcome-band stability,
+   using a provider key stored in repo secrets. Catches regressions
    before they reach a live demo.
 
 ## Repository layout

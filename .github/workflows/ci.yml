@@ -1,0 +1,51 @@
+# CivicReach CI — runs on every push and pull request.
+#
+# What this workflow guards:
+#   1. The full pytest suite (deterministic guardrails, calculator, agent,
+#      retrieval, web) must pass with no provider API keys present.
+#   2. The red-team harness plumbing must run clean end-to-end in --dry-run
+#      mode. Dry-run validates fixtures, wiring, and per-category check logic
+#      WITHOUT calling a live LLM — a real run costs money and needs a
+#      provider key that CI does not have. Any Python traceback in dry-run
+#      output fails the build even if the process exits 0.
+#
+# Deliberately NOT here: a live (non-dry-run) red-team pass. That belongs to
+# a scheduled/manual workflow with secrets configured, not per-PR gating.
+
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install pinned dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run pytest suite
+        run: pytest -q
+
+      - name: Red-team harness dry-run (no LLM calls)
+        run: |
+          python3 redteam/run_redteam.py --dry-run > redteam_dryrun.log 2>&1
+          status=$?
+          tail -20 redteam_dryrun.log
+          if [ $status -ne 0 ]; then
+            echo "::error::red-team dry-run exited with status $status"
+            exit $status
+          fi
+          if grep -q "Traceback" redteam_dryrun.log; then
+            echo "::error::red-team dry-run produced a Python traceback"
+            exit 1
+          fi
