@@ -114,6 +114,27 @@ class AssessmentState(BaseModel):
         description="Number of user turns taken in this conversation so far.",
     )
 
+    # --- language mode (W19) ---
+    # Sticky per-conversation language of the USER'S messages, set by the
+    # agent loop via retrieval.detect_spanish() (W15's heuristic). Once
+    # "es", later turns stay in Spanish even if a later message is terse
+    # or English-leaning (e.g. "no", "$1800") — a bilingual user must never
+    # see the conversation silently flip back to English mid-intake.
+    # ``"en"`` is the default so pre-W19 conversations are unaffected.
+    # NOT part of missing_fields()/is_ready_to_calculate(): language is
+    # presentation, not eligibility data. Deliberately NOT in the
+    # update_state tool schema either — the model never sets it; only the
+    # deterministic detector does.
+    language: str = Field(
+        default="en",
+        description=(
+            "Conversation language mode: 'en' (default) or 'es'. Sticky "
+            "once set to 'es'; drives the Spanish system prompt and the "
+            "Spanish renderings of the deterministic guardrail/suffix "
+            "responses (W19)."
+        ),
+    )
+
     # --- intake helpers ---
     def missing_fields(self) -> List[str]:
         """Return the names of intake fields that are still ``None``.

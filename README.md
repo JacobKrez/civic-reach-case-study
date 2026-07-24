@@ -192,9 +192,13 @@ layers cannot be disabled — they are the floor.
   every constant to update. If the table falls behind, the calculator is
   slightly more permissive than the actual program — a known trade-off
   of the deterministic design.
-* **Crisis keyword list is English-only.** Spanish-language crisis
-  phrasings are not yet in the keyword set. Production would need
-  bilingual lists plus a Spanish system prompt.
+* **Spanish coverage is heuristic, PoC-grade.** Language detection is a
+  keyword/character heuristic (W15), and the Spanish knowledge-base
+  translation covers only the program-overview doc — Spanish answers on
+  income limits, deductions, and how-to-apply are still grounded in the
+  English corpus. The Spanish system prompt and Spanish guardrail
+  renderings landed in W19; production would add full KB translations
+  and a reviewed language identifier.
 * **PII redactor is regex-only.** It catches SSN-shaped and
   account-shaped patterns; it does not catch free-form names, addresses,
   or phone numbers. Conversation history is therefore not fully
@@ -217,9 +221,10 @@ What we would build next, in priority order, given more time:
    deployment would use to alert a case worker's queue, not a real
    integration; the recipient is read from env only and is never a real
    agency address.
-3. **Spanish localization.** Spanish system prompt, Spanish crisis /
-   injection / scope keyword lists, Spanish knowledge-base chunks. The
-   most-requested gap for any NC benefits tool.
+3. **Deeper Spanish localization.** The Spanish system prompt and Spanish
+   guardrail renderings landed in W19; remaining gaps are full KB
+   translations beyond the overview doc and a production-grade language
+   identifier. The most-requested gap for any NC benefits tool.
 4. **Telemetry with PII redaction.** First-class event log of every
    turn with the redactor applied at write-time, so we can see failure
    modes in production without ever persisting raw user input.

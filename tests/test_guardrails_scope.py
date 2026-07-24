@@ -51,6 +51,18 @@ class RecordingLLM:
         "Sing me a song",
         # Found by the redteam suite (real MiniMax run) — broadened coverage.
         "Write me a function in Python that returns the nth Fibonacci number using memoization.",
+        # W15 — Spanish-language off-topic asks mirroring the categories above
+        # (legal advice, weather, recipes, code-writing, jokes/songs).
+        "¿Debería demandar a mi arrendador?",
+        "Necesito un abogado",
+        "¿Puedo obtener asesoría legal sobre este contrato?",
+        "Quiero hablar con un abogado",
+        "¿Puedo presentar una demanda?",
+        "¿Cómo está el clima hoy?",
+        "Dame una receta para pollo",
+        "¿Cómo cocino arroz?",
+        "Cuéntame un chiste",
+        "Escríbeme código para un sitio web",
     ],
 )
 def test_detect_out_of_scope_clearly_off_topic(message):
@@ -76,6 +88,15 @@ def test_detect_out_of_scope_clearly_off_topic(message):
         "I make $2,000 a month. Can I get help?",
         "What's the difference between SNAP and WIC?",
         "I had to sue my landlord last year, but that's separate. Now I need help with food.",
+        # W15 — Spanish IN-scope messages must NOT be flagged out-of-scope.
+        "Somos tres en mi hogar.",
+        "Nuestro ingreso mensual bruto es de $1,800.",
+        "Recibimos beneficios de SNAP.",
+        "Necesito ayuda con los cupones de alimentos.",
+        "¿Cuál es el límite de ingresos para FNS?",
+        "Mi abuela tiene 67 años y vive con nosotros.",
+        "¿Dónde solicito los beneficios?",
+        "Quiero saber si califico para asistencia alimentaria.",
     ],
 )
 def test_detect_out_of_scope_does_not_over_trigger_on_in_scope_messages(message):
@@ -117,6 +138,23 @@ def test_out_of_scope_returns_fixed_redirect_text():
     # attempt to answer the off-topic ask.
     assert response == scope_redirect_message()
     # And the LLM should NOT have been called at all.
+    assert llm.calls == []
+
+
+def test_spanish_out_of_scope_returns_fixed_redirect_without_llm():
+    """W15: a Spanish off-topic ask redirects deterministically, no LLM call.
+
+    W19: the redirect renders in Spanish because the Spanish message has
+    just switched the conversation to Spanish mode — nothing may silently
+    revert to English.
+    """
+    llm = RecordingLLM()
+    agent = CivicReachAgent(llm_client=llm)
+
+    response = agent.turn("Necesito un abogado, ¿puedes ayudarme?")
+
+    assert response == scope_redirect_message("es")
+    assert agent.state.is_out_of_scope is True
     assert llm.calls == []
 
 

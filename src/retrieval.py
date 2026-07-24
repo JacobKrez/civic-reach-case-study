@@ -46,6 +46,69 @@ _STOPWORDS = {
 # of tokens (so "$5,500" and "130%" are preserved as searchable terms).
 _TOKEN_RE = re.compile(r"[A-Za-z0-9%$]+")
 
+# ---------------------------------------------------------------------------
+# Spanish-language detection + localized retrieval preference (W15)
+# ---------------------------------------------------------------------------
+# A simple heuristic is deliberate for this PoC: the goal is to prefer the
+# Spanish KB translation when the user writes in Spanish, not to be a
+# general-purpose language identifier. The signal combines:
+#   1. Spanish-specific characters (¿ ¡ ñ á é í ó ú ü) — a strong signal
+#      because none of them appear in ordinary English prose.
+#   2. High-frequency Spanish function words as whole tokens (el la los de
+#      que en y es mi tu su por para con una un ...). These are matched on
+#      word boundaries so English words ("my", "in") never collide.
+# A message needs EITHER one Spanish-specific character OR >= 2 Spanish
+# function words to be classified as Spanish. This keeps short English
+# messages like "I need help" (zero Spanish markers) on the English path
+# while catching accented Spanish ("¿Cuál es el límite?") and unaccented
+# Spanish ("cuantos anos tiene tu abuela") alike.
+
+_SPANISH_CHAR_RE = re.compile(r"[¿¡ñáéíóúü]", re.IGNORECASE)
+
+_SPANISH_WORDS: frozenset[str] = frozenset({
+    "el", "la", "los", "las", "de", "que", "en", "y", "es", "por", "para",
+    "con", "una", "un", "mi", "tu", "su", "mis", "tus", "sus", "del", "al",
+    "como", "cuando", "donde", "cuanto", "cuantos", "cuanta", "cuantas",
+    "cual", "cuales", "quien", "quienes", "tiene", "tienen", "tengo",
+    "somos", "estoy", "estamos", "hay", "personas", "hogar", "ingresos",
+    "anos", "mes", "ayuda", "alimentos", "cupones",
+})
+
+# Whole-word token pattern for the heuristic (letters only, including
+# accented ones, lowercased by caller).
+_SPANISH_WORD_RE = re.compile(r"[a-záéíóúüñ]+")
+
+
+def detect_spanish(text: str) -> bool:
+    """Return ``True`` when *text* is likely written in Spanish.
+
+    Heuristic, PoC-grade: one Spanish-specific character OR >= 2 Spanish
+    function words (whole-token). Never raises; non-string / empty input
+    returns ``False``.
+    """
+    if not isinstance(text, str) or not text.strip():
+        return False
+    if _SPANISH_CHAR_RE.search(text):
+        return True
+    tokens = _SPANISH_WORD_RE.findall(text.lower())
+    spanish_hits = sum(1 for t in tokens if t in _SPANISH_WORDS)
+    return spanish_hits >= 2
+
+
+# Score multiplier applied to chunks from a ``*.es.md`` document when the
+# query is detected as Spanish. A multiplier (not a hard filter) keeps the
+# English source docs eligible as a fallback: the Spanish KB is a 1:1
+# translation of only the overview doc, so a Spanish query about income
+# limits must still be able to surface the English income-limits doc. The
+# boost is large enough that a translated chunk wins whenever it is
+# topically relevant, without ever excluding the fuller English corpus.
+_ES_DOC_BOOST = 1.5
+
+
+def _is_spanish_doc(fname: str) -> bool:
+    """Return ``True`` for localized Spanish KB docs (``*.es.md``)."""
+    return fname.endswith(".es.md")
+
 
 def _tokenize(text: str) -> List[str]:
     """Lowercase, split into tokens, drop stopwords and very short tokens."""
@@ -220,6 +283,7 @@ def retrieve(query: str, k: int = 3, kb_dir: str | None = None) -> List[Dict]:
     idf = corpus[0]["idf"]
     q_vec = _tfidf_vector(query_tokens, idf)
 
+    # Sort by score desc, then by doc name to keep results stable.
     scored: List[Dict] = []
     for rec in corpus:
         d_vec = rec["vector"]
@@ -231,10 +295,44 @@ def retrieve(query: str, k: int = 3, kb_dir: str | None = None) -> List[Dict]:
                 "score": score,
             }
         )
-
-    # Sort by score desc, then by doc name to keep results stable.
     scored.sort(key=lambda r: (-r["score"], r["doc"]))
+
+    # Spanish localization (W15). When the query reads as Spanish, surface
+    # the translated *.es.md overview as ONE grounding chunk while reserving
+    # the remaining top-k slots for the fuller corpus. Two forces shape this:
+    #   1. TF-IDF already ranks the translation first for a Spanish question
+    #      (its Spanish chunk tokens match the query), so the translation is
+    #      genuinely "considered" — we keep the best-scoring .es.md chunk.
+    #   2. But the translation covers ONLY the program-overview doc, so an
+    #      unbounded number of its stopword-heavy chunks would crowd the
+    #      English income-limits / deductions / apply docs out of the top-k
+    #      for a Spanish income question. Capping the translation to a single
+    #      slot keeps the English fallback reachable for the topics the
+    #      translation does not cover. detect_spanish() is the public
+    #      heuristic hook; callers may also branch on it directly.
+    if detect_spanish(query):
+        localized = _cap_doc_chunks(scored, k)
+        return localized[:k]
+
     return scored[:k]
 
 
-__all__ = ["retrieve"]
+def _cap_doc_chunks(scored: List[Dict], k: int, max_es_chunks: int = 1) -> List[Dict]:
+    """Return *scored* with at most *max_es_chunks* chunks from *.es.md docs.
+
+    Ordering is preserved (the list stays score-sorted); only the NUMBER of
+    Spanish-translation chunks is capped so the rest of the corpus fills the
+    remaining top-k slots. English (*.md) chunks are never capped.
+    """
+    out: List[Dict] = []
+    es_seen = 0
+    for r in scored:
+        if _is_spanish_doc(r["doc"]):
+            if es_seen >= max_es_chunks:
+                continue
+            es_seen += 1
+        out.append(r)
+    return out
+
+
+__all__ = ["retrieve", "detect_spanish"]

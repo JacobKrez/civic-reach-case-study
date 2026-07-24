@@ -54,6 +54,14 @@ _INJECTION_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"\btu\s+nuevo\s+(?:rol|objetivo|tarea)\b", re.IGNORECASE),
     re.compile(r"\bact[uú]a\s+como\b", re.IGNORECASE),
     re.compile(r"\bde\s+ahora\s+en\s+adelante\b", re.IGNORECASE),
+    # Spanish framings of the remaining English categories above (W15): bare
+    # "forget everything" (anchored so a first-person "yo olvido todo" is not
+    # flagged, mirroring W13's English anchor), "new system:" persona
+    # redefinition, "you are a <role>", and system-prompt extraction.
+    re.compile(r"(?:^|[.!?;¡]\s*)olv[ií]dalo\s+todo\b", re.IGNORECASE),
+    re.compile(r"\bnuevo\s+sistema\s*[:=]", re.IGNORECASE),
+    re.compile(r"\beres\s+(?:ahora\s+)?un\b", re.IGNORECASE),
+    re.compile(r"\b(?:imprime|muestra|revela|vuelca)\s+(?:el\s+)?(?:texto\s+completo\s+de\s+)?(?:tu\s+)?(?:prompt\s+del\s+sistema|instrucciones\s+internas)\b", re.IGNORECASE),
     # Long base64-looking payloads are never a legitimate SNAP-eligibility
     # answer; encoded injection attempts are still injection attempts.
     re.compile(r"^[A-Za-z0-9+/]{40,}={0,2}$"),
@@ -73,8 +81,23 @@ def detect_injection(text: str) -> bool:
     return any(pattern.search(text) for pattern in _INJECTION_PATTERNS)
 
 
-def injection_response() -> str:
-    """Return the fixed refusal used for a detected injection attempt."""
+def injection_response(lang: str = "en") -> str:
+    """Return the fixed refusal used for a detected injection attempt.
+
+    ``lang='es'`` renders the same refusal in Spanish so a Spanish-mode
+    conversation (W19) never silently reverts to English on a guardrail
+    hit. The refusal content is identical; only the language changes.
+    """
+    if lang == "es":
+        return (
+            "Soy CivicReach, un asistente para una evaluación inicial de "
+            "elegibilidad para los Servicios de Alimentos y Nutrición de "
+            "Carolina del Norte (FNS / SNAP). No puedo seguir solicitudes "
+            "para anular mis instrucciones ni cambiar mi función. Puedo "
+            "ayudarte con el tamaño de tu hogar, tus ingresos mensuales "
+            "brutos y si alguna persona del hogar tiene 60 años o más o "
+            "tiene una discapacidad."
+        )
     return (
         "I'm CivicReach, an assistant for an initial North Carolina Food and "
         "Nutrition Services (FNS / SNAP) eligibility screen. I can't follow "

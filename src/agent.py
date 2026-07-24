@@ -16,7 +16,7 @@ from .guardrails.pii import redact_for_logging
 from .guardrails.scope import detect_out_of_scope, scope_redirect_message
 from .handoff import _HANDOFF_BANNER, handoff_summary, send_handoff_email
 from .llm_client import LLMClient
-from .retrieval import retrieve
+from .retrieval import detect_spanish, retrieve
 from .state import AssessmentState
 
 SYSTEM_PROMPT = """You are CivicReach, an empathetic North Carolina Food and
@@ -62,6 +62,70 @@ not attempt to answer the off-topic ask. Do not abandon or reset any
 state that has already been collected.
 """
 
+# Spanish full-conversation system prompt (W19). A 1:1 rendering of the
+# English SYSTEM_PROMPT above: same scope, same one-question-at-a-time
+# discipline, same tool contract (update_state records STRUCTURED values;
+# tool input keys and numbers stay language-independent), same PII
+# prohibition. Used for the entire intake once state.language == "es" so
+# the model asks the questions and delivers the final eligibility
+# explanation in Spanish. Keep rule vocabulary (income limits, deduction
+# names) aligned with knowledge_base/01_program_overview.es.md so the
+# model's phrasing matches the retrieved Spanish rule text.
+SYSTEM_PROMPT_ES = """Eres CivicReach, un asistente empático de elegibilidad para los
+Servicios de Alimentos y Nutrición (FNS) de Carolina del Norte. Tu alcance
+está estrictamente limitado a una evaluación inicial de elegibilidad para
+NC FNS / SNAP; no das asesoría legal ni ayudas con temas no relacionados.
+
+Recolecta únicamente los tres campos que necesita la calculadora:
+  1. household_size  (entero — número de personas en el hogar)
+  2. gross_monthly_income  (número — ingresos mensuales brutos del hogar)
+  3. has_elderly_or_disabled_member  (booleano — si alguna persona del
+     hogar tiene 60 años o más o tiene una discapacidad)
+
+La calculadora también acepta cuatro deducciones OPCIONALES. NO hagas
+preguntas adicionales para recolectarlas — regístralas ÚNICAMENTE cuando
+el usuario ofrezca la información por su cuenta en la conversación:
+  - earned_monthly_income (la porción de ingresos por trabajo salarial o
+    trabajo por cuenta propia)
+  - dependent_care_monthly (costos de cuidado de niños o dependientes)
+  - medical_expenses_monthly (gastos médicos de bolsillo; relevante cuando
+    el hogar incluye una persona mayor o con discapacidad)
+  - shelter_costs_monthly (renta/hipoteca, impuestos, seguro, servicios)
+Registrar las deducciones que el usuario ofrece voluntariamente mejora la
+precisión de la evaluación de ingreso neto. Nunca presiones al usuario
+para obtener estos datos.
+
+NUNCA pidas al usuario ninguna otra información de identificación personal.
+En particular, NO solicites: un número de Seguro Social, una fecha de
+nacimiento completa, una dirección de domicilio, un número de teléfono, un
+número de cuenta bancaria, un número de licencia de conducir, un estatus
+migratorio, ni ningún otro identificador más allá de los campos anteriores.
+Si el usuario ofrece esa información por su cuenta, acéptala con cortesía
+pero no la almacenes ni la repitas textualmente.
+
+Haz exactamente UNA pregunta a la vez, para el primer campo listado en
+missing_fields. Nunca vuelvas a preguntar por un campo que ya esté
+presente en el estado. Registra los datos que proporciona el usuario
+únicamente llamando a update_state; no pongas cálculos aritméticos ni
+valores inferidos en esa llamada de herramienta. Nunca hagas la
+aritmética de elegibilidad tú mismo. Cuando se te proporcione el resultado
+determinista de elegibilidad, explícalo usando ese resultado y el texto de
+las reglas recuperado, aclarando claramente que se trata de una evaluación
+inicial y no de una determinación final de la agencia.
+
+Si el usuario pide algo fuera del alcance de la elegibilidad de NC FNS,
+responde con una redirección breve y cortés de vuelta a las preguntas de
+FNS y no intentes responder la solicitud fuera de tema. No abandones ni
+reinicies ningún estado que ya se haya recolectado.
+
+IMPORTANTE: Conduce TODA la conversación en español — todas tus preguntas,
+aclaraciones y la explicación final de elegibilidad deben estar en español.
+El único contenido en inglés permitido en tus respuestas son las líneas
+deterministas generadas por código (p. ej. los sufijos "(Sources: ...)" y
+"(Updated ...)", que se agregan automáticamente y no debes reproducirlas
+ni traducirlas tú mismo).
+"""
+
 UPDATE_STATE_TOOL = {
     "name": "update_state",
     "description": "Record explicitly supplied assessment fields.",
@@ -97,7 +161,9 @@ class CivicReachAgent:
     ) -> None:
         self.llm_client = llm_client or LLMClient()
         self.state = state or AssessmentState()
-        self.system_prompt = SYSTEM_PROMPT
+        # The system prompt is per-turn (see _system_prompt()): it follows
+        # self.state.language so a mid-conversation language switch starts
+        # on the very next LLM call.
         self.tools = [UPDATE_STATE_TOOL]
         self._retrieve = retriever
         self._messages: list[dict[str, str]] = []
@@ -151,6 +217,18 @@ class CivicReachAgent:
             "email_attempted": email_sent,
             "email_sent": email_sent,
         }
+
+    def _system_prompt(self) -> str:
+        """Return the system prompt matching the conversation language.
+
+        English by default; the full Spanish prompt (W19) once
+        ``state.language == 'es'``. Resolved per-turn (not cached in
+        ``__init__``) so a mid-conversation language switch takes effect
+        on the very next LLM call.
+        """
+        if self.state.language == "es":
+            return SYSTEM_PROMPT_ES
+        return SYSTEM_PROMPT
 
     def _track_query(self) -> str:
         """The retrieval query for the household's applicable income track."""
@@ -304,21 +382,39 @@ class CivicReachAgent:
         safe_user_message = redact_for_logging(user_message)
         self._messages.append({"role": "user", "content": safe_user_message})
 
+        # W19: sticky per-conversation language detection. Once the user
+        # writes a message the W15 heuristic classifies as Spanish, the
+        # conversation switches to Spanish mode (state.language == "es")
+        # and STAYS there: later terse messages ("no", "$1,800") carry no
+        # Spanish signal and must never flip the conversation back to
+        # English mid-intake. The flag is deterministic (never set by the
+        # model) and presentation-only: it changes the system prompt and
+        # the guardrail/suffix renderings, never the calculator inputs.
+        if self.state.language != "es" and detect_spanish(user_message):
+            self.state.language = "es"
+        lang = self.state.language
+
         if detect_crisis(user_message):
             self.state.is_crisis = True
-            content = crisis_response()
+            # The default bilingual block stays the safe choice when the
+            # language is still unknown; once a mode is set, the crisis
+            # response renders in that language only so a Spanish
+            # conversation never silently reverts to English mid-crisis.
+            content = crisis_response(
+                "bilingual" if not detect_spanish(user_message) else lang
+            )
             self._messages.append({"role": "assistant", "content": content})
             return content
 
         if detect_injection(user_message):
             self.state.is_injection_attempt = True
-            content = injection_response()
+            content = injection_response(lang)
             self._messages.append({"role": "assistant", "content": content})
             return content
 
         if detect_out_of_scope(user_message):
             self.state.is_out_of_scope = True
-            content = scope_redirect_message()
+            content = scope_redirect_message(lang)
             self._messages.append({"role": "assistant", "content": content})
             return content
 
@@ -335,23 +431,25 @@ class CivicReachAgent:
         intent = classify_intent(user_message, self.llm_client)
         if intent == "crisis":
             self.state.is_crisis = True
-            content = crisis_response()
+            content = crisis_response(
+                "bilingual" if not detect_spanish(user_message) else lang
+            )
             self._messages.append({"role": "assistant", "content": content})
             return content
         if intent == "injection":
             self.state.is_injection_attempt = True
-            content = injection_response()
+            content = injection_response(lang)
             self._messages.append({"role": "assistant", "content": content})
             return content
         if intent == "off_topic":
             self.state.is_out_of_scope = True
-            content = scope_redirect_message()
+            content = scope_redirect_message(lang)
             self._messages.append({"role": "assistant", "content": content})
             return content
 
         response = self.llm_client.chat(
             [*self._messages, {"role": "user", "content": self._context(user_message)}],
-            system=self.system_prompt,
+            system=self._system_prompt(),
             tools=self.tools,
         )
         new_corrections: list[dict[str, Any]] = []
@@ -397,11 +495,20 @@ class CivicReachAgent:
         # hallucinated. Corrections are committed to ``self._corrections``
         # only after the apply call succeeded (a failed apply drops the
         # suffix so a phantom correction never reaches the user).
+        # W19: the suffix renders in Spanish in a Spanish-mode
+        # conversation so nothing silently reverts to English. Field names
+        # stay as the machine names (they name the state fields, which are
+        # language-independent); only the surrounding phrasing translates.
         self._corrections.extend(new_corrections)
         for entry in new_corrections:
-            suffix = (
-                f"(Updated {entry['field']}: {entry['old']} -> {entry['new']}.)"
-            )
+            if self.state.language == "es":
+                suffix = (
+                    f"(Actualizado {entry['field']}: {entry['old']} -> {entry['new']}.)"
+                )
+            else:
+                suffix = (
+                    f"(Updated {entry['field']}: {entry['old']} -> {entry['new']}.)"
+                )
             if content:
                 content = f"{content} {suffix}"
             else:
@@ -410,4 +517,4 @@ class CivicReachAgent:
         return content
 
 
-__all__ = ["CivicReachAgent", "SYSTEM_PROMPT", "UPDATE_STATE_TOOL"]
+__all__ = ["CivicReachAgent", "SYSTEM_PROMPT", "SYSTEM_PROMPT_ES", "UPDATE_STATE_TOOL"]
