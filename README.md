@@ -32,6 +32,7 @@ cp .env.example .env
 #   ANTHROPIC_API_KEY (LLM_PROVIDER=anthropic, default)
 #   OPENAI_API_KEY    (LLM_PROVIDER=openai)
 #   MINIMAX_API_KEY   (LLM_PROVIDER=minimax)
+#   OPENROUTER_API_KEY (LLM_PROVIDER=openrouter; routes to any model on OpenRouter)
 # Optional: set LLM_FALLBACK_PROVIDER for resilience on the live demo.
 
 # 4a. Talk to the agent in the terminal
@@ -213,7 +214,7 @@ src/
   agent.py            # conversation loop, tool handling, correction tracking
   calculator.py       # deterministic eligibility arithmetic (HHS 2025)
   retrieval.py        # RAG over knowledge_base/
-  llm_client.py       # provider-agnostic client (anthropic / openai / minimax)
+  llm_client.py       # provider-agnostic client (anthropic / openai / minimax / openrouter)
   state.py            # typed Pydantic AssessmentState
   cli.py              # `python3 -m src.cli`
   web.py              # FastAPI UI: POST /chat, GET /, GET /health

@@ -206,15 +206,18 @@ def test_both_providers_failing_raises_original_exception(monkeypatch):
 @pytest.mark.parametrize("primary,fallback", [
     ("anthropic", "openai"),
     ("anthropic", "minimax"),
+    ("anthropic", "openrouter"),
     ("openai", "anthropic"),
     ("openai", "minimax"),
     ("minimax", "anthropic"),
     ("minimax", "openai"),
+    ("minimax", "openrouter"),
+    ("openrouter", "minimax"),
 ])
 def test_fallback_rotates_any_pair(monkeypatch, primary, fallback):
     monkeypatch.setenv("LLM_PROVIDER", primary)
     monkeypatch.setenv("LLM_FALLBACK_PROVIDER", fallback)
-    for name in ("anthropic", "openai", "minimax"):
+    for name in ("anthropic", "openai", "minimax", "openrouter"):
         monkeypatch.setenv(f"{name.upper()}_API_KEY", "sk-test")
 
     client = LLMClient()

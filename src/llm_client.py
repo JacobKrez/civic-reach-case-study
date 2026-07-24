@@ -13,11 +13,12 @@ from dotenv import load_dotenv
 class LLMClient:
     """Dispatch chat requests according to the LLM_PROVIDER environment variable."""
 
-    VALID_PROVIDERS = ("anthropic", "openai", "minimax")
+    VALID_PROVIDERS = ("anthropic", "openai", "minimax", "openrouter")
     DEFAULT_MODELS = {
         "anthropic": "claude-3-5-sonnet-latest",
         "openai": "gpt-4o-mini",
         "minimax": "MiniMax-Text-01",
+        "openrouter": "moonshotai/kimi-k3",
     }
 
     # Keys .env is allowed to fill in even when already present in the
@@ -33,6 +34,7 @@ class LLMClient:
         "LLM_PROVIDER", "LLM_MODEL",
         "ANTHROPIC_API_KEY", "OPENAI_API_KEY",
         "MINIMAX_API_KEY", "MINIMAX_BASE_URL",
+        "OPENROUTER_API_KEY", "OPENROUTER_BASE_URL",
     )
 
     def __init__(self) -> None:
@@ -98,6 +100,7 @@ class LLMClient:
             "anthropic": "ANTHROPIC_API_KEY",
             "openai": "OPENAI_API_KEY",
             "minimax": "MINIMAX_API_KEY",
+            "openrouter": "OPENROUTER_API_KEY",
         }.get(provider)
         return bool(key and os.getenv(key))
 
@@ -221,6 +224,41 @@ class LLMClient:
             f"{base_url}/chat/completions",
             headers={
                 "Authorization": f"Bearer {os.getenv('MINIMAX_API_KEY', '')}",
+                "Content-Type": "application/json",
+            },
+            json=payload,
+            timeout=120,
+        )
+        response.raise_for_status()
+        message = response.json()["choices"][0]["message"]
+        tool_calls = []
+        for call in message.get("tool_calls") or []:
+            function = call.get("function", {})
+            arguments = function.get("arguments", "{}")
+            try:
+                parsed = json.loads(arguments) if isinstance(arguments, str) else arguments
+            except json.JSONDecodeError:
+                parsed = {"raw": arguments}
+            tool_calls.append({"name": function.get("name", ""), "input": parsed or {}})
+        return {"content": message.get("content") or "", "tool_calls": tool_calls}
+
+    def _chat_openrouter(
+        self, messages: list[dict], system: str | None, tools: list | None
+    ) -> dict:
+        outgoing = list(messages)
+        if system is not None:
+            outgoing = [{"role": "system", "content": system}, *outgoing]
+        payload: dict[str, Any] = {
+            "model": self._model("openrouter"),
+            "messages": outgoing,
+        }
+        if tools is not None:
+            payload["tools"] = self._to_openai_tools(tools)
+        base_url = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1").rstrip("/")
+        response = requests.post(
+            f"{base_url}/chat/completions",
+            headers={
+                "Authorization": f"Bearer {os.getenv('OPENROUTER_API_KEY', '')}",
                 "Content-Type": "application/json",
             },
             json=payload,

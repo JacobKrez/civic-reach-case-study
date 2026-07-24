@@ -49,6 +49,20 @@ def test_dispatches_minimax_and_normalizes(monkeypatch):
     }
 
 
+def test_dispatches_openrouter_and_normalizes(monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER", "openrouter")
+    client = LLMClient()
+    method = Mock(return_value={"content": "openrouter", "tool_calls": []})
+    monkeypatch.setattr(client, "_chat_openrouter", method)
+    result = client.chat([{"role": "user", "content": "hi"}])
+    method.assert_called_once()
+    assert result == {
+        "content": "openrouter",
+        "tool_calls": [],
+        "provider_used": "openrouter",
+    }
+
+
 def test_invalid_provider_lists_valid_options(monkeypatch):
     monkeypatch.setenv("LLM_PROVIDER", "other")
     with pytest.raises(ValueError) as exc:
@@ -124,6 +138,37 @@ def test_minimax_requests_is_mocked(monkeypatch):
     post = Mock(return_value=response)
     monkeypatch.setattr("src.llm_client.requests.post", post)
     result = LLMClient()._chat_minimax([], None, None)
+    assert result == {
+        "content": "hello",
+        "tool_calls": [{"name": "search", "input": {"q": "x"}}],
+    }
+    response.raise_for_status.assert_called_once()
+    post.assert_called_once()
+
+
+def test_openrouter_requests_is_mocked(monkeypatch):
+    monkeypatch.setenv("LLM_MODEL", "openrouter-test")
+    response = Mock()
+    response.json.return_value = {
+        "choices": [
+            {
+                "message": {
+                    "content": "hello",
+                    "tool_calls": [
+                        {
+                            "function": {
+                                "name": "search",
+                                "arguments": json.dumps({"q": "x"}),
+                            }
+                        }
+                    ],
+                }
+            }
+        ]
+    }
+    post = Mock(return_value=response)
+    monkeypatch.setattr("src.llm_client.requests.post", post)
+    result = LLMClient()._chat_openrouter([], None, None)
     assert result == {
         "content": "hello",
         "tool_calls": [{"name": "search", "input": {"q": "x"}}],
