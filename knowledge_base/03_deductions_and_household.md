@@ -1,4 +1,6 @@
 Source: https://www.fns.usda.gov/snap/eligibility-income-and-deductions
+Deduction amounts: https://www.fns.usda.gov/snap/fy-2025-cola (FY2025,
+effective 2024-10-01 through 2025-09-30, 48 States & DC column)
 
 # FNS / SNAP Allowable Deductions
 
@@ -6,10 +8,35 @@ After gross monthly income is calculated, certain deductions are subtracted
 to arrive at net monthly income for the net income test. The following
 deductions are allowed under federal SNAP rules and used by NC FNS.
 
+## The net-income formula (as computed by this agent's calculator)
+
+The calculator applies the federal deduction chain of 7 CFR §273.9(d) in
+this exact order, using FY2025 amounts:
+
+  1. Start with gross monthly income.
+  2. Subtract the standard deduction for the household size.
+  3. Subtract 20% of any earned income (the earned income deduction).
+  4. Subtract actual out-of-pocket dependent-care costs.
+  5. For elderly/disabled households only, subtract out-of-pocket medical
+     expenses above $35/month.
+  6. The result is the household's adjusted income. Subtract the excess
+     shelter deduction: shelter costs above half of adjusted income,
+     capped at $712/month for most households and uncapped for
+     elderly/disabled households.
+  7. The remainder is net monthly income, compared against the net income
+     limit (100% of the federal poverty guideline).
+
+Worked example: a household of 1 with $1,800/month in wages takes a $204
+standard deduction plus a $360 earned income deduction (20% of $1,800),
+giving net monthly income of $1,236 — under the $1,304.17 net limit, so
+the household passes the net test even though its gross income is above
+the $1,695.42 gross limit.
+
 ## 1. Standard Deduction
 Every household gets a flat standard deduction that varies by household
-size (larger for bigger households). USDA updates these each October in
-the SNAP allotment and deduction tables.
+size. FY2025 amounts (48 States & DC): $204/month for households of 1-3,
+$217 for 4, $254 for 5, and $291 for 6 or more. USDA updates these each
+October in the SNAP allotment and deduction tables.
 
 ## 2. Earned Income Deduction
 20% of gross earned income (wages, self-employment) is deducted. This
@@ -26,20 +53,23 @@ out-of-pocket medical expenses above $35 per month. This includes:
 - Costs for service animals and attendant care
 
 ## 4. Dependent Care Deduction
-Actual costs (up to certain limits) for care of a child or other
-dependent who is needed so a household member can work, look for work, or
-attend school or training.
+Actual out-of-pocket costs for care of a child or other dependent who is
+needed so a household member can work, look for work, or attend school or
+training. Under current federal rules this deduction is not capped.
 
 ## 5. Child Support Payment Deduction
 Legally obligated child support payments paid to someone outside the
-household are deducted.
+household are deducted. (Not yet computed by this agent's calculator;
+treat households mentioning child support as "apply anyway" cases.)
 
-## 6. Shelter and Utility Deduction
-Excess shelter costs (rent, mortgage, taxes, insurance) above half of
-income after other deductions may be deducted, capped for most households.
-Households with an elderly or disabled member have no cap. A Standard
-Utility Allowance (SUA) is used in NC for households that pay heating or
-cooling separately or receive LIHEAP assistance.
+## 6. Excess Shelter Deduction (Shelter and Utility Costs)
+The excess shelter deduction covers shelter costs (rent, mortgage, taxes,
+insurance) plus utilities above half of the household's adjusted income
+after the deductions above. For most households the shelter deduction is
+capped at $712/month (FY2025, 48 States & DC); households with an elderly
+or disabled member have no cap. A Standard Utility Allowance (SUA) is used
+in NC for households that pay heating or cooling separately or receive
+LIHEAP assistance.
 
 ---
 

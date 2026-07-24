@@ -51,6 +51,48 @@ class AssessmentState(BaseModel):
         ),
     )
 
+    # --- OPTIONAL deduction inputs (W14) ---
+    # These feed the real federal net-income deduction chain in
+    # ``calculator.compute_net_monthly_income``. They are NOT required
+    # for a screening result and are intentionally absent from
+    # ``missing_fields()`` — the agent only records them when the user
+    # volunteers the information (or, for medical expenses, when an
+    # elderly/disabled member is present and the user mentions costs).
+    # When all four are 0 the calculator produces the pre-W14 result.
+    earned_monthly_income: float = Field(
+        default=0.0,
+        ge=0.0,
+        description=(
+            "Portion of gross monthly income from wages/self-employment. "
+            "Optional; 20% is deducted in the federal net-income chain."
+        ),
+    )
+    dependent_care_monthly: float = Field(
+        default=0.0,
+        ge=0.0,
+        description=(
+            "Out-of-pocket monthly dependent-care costs. Optional; "
+            "deducted uncapped in the federal net-income chain."
+        ),
+    )
+    medical_expenses_monthly: float = Field(
+        default=0.0,
+        ge=0.0,
+        description=(
+            "Out-of-pocket monthly medical expenses. Optional; deductible "
+            "above $35/mo only for elderly/disabled households."
+        ),
+    )
+    shelter_costs_monthly: float = Field(
+        default=0.0,
+        ge=0.0,
+        description=(
+            "Total monthly shelter costs (rent/mortgage, taxes, insurance, "
+            "utilities). Optional; excess over half of adjusted income is "
+            "deducted, capped unless elderly/disabled."
+        ),
+    )
+
     # --- guardrail classification flags (set by the safety layer) ---
     is_crisis: bool = Field(
         default=False,

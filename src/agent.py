@@ -28,11 +28,22 @@ Collect only the three fields the calculator needs:
   2. gross_monthly_income  (number)
   3. has_elderly_or_disabled_member  (boolean)
 
+The calculator also accepts four OPTIONAL deduction inputs. Do NOT ask
+extra questions to collect them — record them ONLY when the user
+volunteers the information in conversation:
+  - earned_monthly_income (the wage/self-employment portion of income)
+  - dependent_care_monthly (childcare/dependent-care costs)
+  - medical_expenses_monthly (out-of-pocket medical costs; relevant when
+    the household has an elderly or disabled member)
+  - shelter_costs_monthly (rent/mortgage, taxes, insurance, utilities)
+Recording volunteered deduction data improves the accuracy of the net
+income screen. Never press the user for these.
+
 NEVER ask the user for any other personally identifiable information. In
 particular, do NOT request: a Social Security number, a full date of birth,
 a home address, a phone number, a bank account number, a driver's license
-number, an immigration status, or any other identifier beyond the three
-fields above. If the user volunteers such information, accept it gracefully
+number, an immigration status, or any other identifier beyond the fields
+above. If the user volunteers such information, accept it gracefully
 but do not store it and do not echo it back verbatim.
 
 Ask exactly ONE question at a time, for the first field listed under
@@ -59,6 +70,10 @@ UPDATE_STATE_TOOL = {
             "household_size": {"type": "integer", "minimum": 1, "maximum": 20},
             "gross_monthly_income": {"type": "number", "minimum": 0},
             "has_elderly_or_disabled_member": {"type": "boolean"},
+            "earned_monthly_income": {"type": "number", "minimum": 0},
+            "dependent_care_monthly": {"type": "number", "minimum": 0},
+            "medical_expenses_monthly": {"type": "number", "minimum": 0},
+            "shelter_costs_monthly": {"type": "number", "minimum": 0},
             "is_crisis": {"type": "boolean"},
             "is_out_of_scope": {"type": "boolean"},
             "is_injection_attempt": {"type": "boolean"},
