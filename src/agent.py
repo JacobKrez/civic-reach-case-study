@@ -452,8 +452,26 @@ class CivicReachAgent:
             payload["deterministic_eligibility_result"] = self._eligibility_result
         return json.dumps(payload, default=str)
 
-    # Intake fields whose change invalidates a cached eligibility result.
-    _INTAKE_FIELDS = ("household_size", "gross_monthly_income", "has_elderly_or_disabled_member")
+    # Fields whose change invalidates a cached eligibility result.
+    # The three required intake fields (household_size, gross_monthly_income,
+    # has_elderly_or_disabled_member) pick the household and the test track.
+    # The four optional deduction fields (earned_monthly_income,
+    # dependent_care_monthly, medical_expenses_monthly, shelter_costs_monthly)
+    # feed the federal net-income deduction chain in
+    # ``compute_net_monthly_income``: a deduction disclosed AFTER a verdict
+    # has been reached must invalidate the cache and trigger a recompute,
+    # otherwise the documented flagship example (household of 1, $1,800 gross
+    # all earned) reports 1800.0 / qualifies=False even though the calculator
+    # with the deduction produces 1236.0 / qualifies=True. See W26.
+    _INTAKE_FIELDS = (
+        "household_size",
+        "gross_monthly_income",
+        "has_elderly_or_disabled_member",
+        "earned_monthly_income",
+        "dependent_care_monthly",
+        "medical_expenses_monthly",
+        "shelter_costs_monthly",
+    )
 
     def _apply_tool_calls(self, calls: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Apply every update_state tool call in ``calls``.
@@ -582,10 +600,24 @@ class CivicReachAgent:
         assert household_size is not None
         assert gross_income is not None
         assert elderly_or_disabled is not None
+        # W26: thread the four optional deduction fields through so the
+        # calculator's net-income deduction chain actually runs when
+        # state has them. Without these, the calculator falls back to the
+        # pre-W14 behavior (gross income vs. limit) even when the user
+        # has volunteered deductions — the documented flagship example
+        # (household of 1, $1,800 gross all earned) produced 1800.0 /
+        # qualifies=False in the agent while the direct calculator call
+        # produced 1236.0 / qualifies=True. Each field defaults to 0.0 on
+        # the state model, so passing them unconditionally is safe when
+        # the user has not disclosed any deduction.
         self._eligibility_result = calculate_eligibility(
             household_size=household_size,
             gross_monthly_income=gross_income,
             has_elderly_or_disabled=elderly_or_disabled,
+            earned_monthly_income=self.state.earned_monthly_income,
+            dependent_care_monthly=self.state.dependent_care_monthly,
+            medical_expenses_monthly=self.state.medical_expenses_monthly,
+            shelter_costs_monthly=self.state.shelter_costs_monthly,
         )
 
     def turn(self, user_message: str) -> str:
