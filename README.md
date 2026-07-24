@@ -18,6 +18,8 @@ explicitly forbids that.
 
 ## Quickstart
 
+Five steps, no external services to set up — just Python and one LLM API key.
+
 ```bash
 # 1. Create and activate a virtualenv
 python3 -m venv .venv
@@ -26,15 +28,22 @@ source .venv/bin/activate
 # 2. Install pinned dependencies
 pip install -r requirements.txt
 
-# 3. Configure your environment — you need ONE provider key
+# 3. Configure your environment
 cp .env.example .env
-# then edit .env and set exactly one of:
-#   ANTHROPIC_API_KEY (LLM_PROVIDER=anthropic, default)
-#   OPENAI_API_KEY    (LLM_PROVIDER=openai)
-#   MINIMAX_API_KEY   (LLM_PROVIDER=minimax)
-#   OPENROUTER_API_KEY (LLM_PROVIDER=openrouter; routes to any model on OpenRouter)
-# Optional: set LLM_FALLBACK_PROVIDER for resilience on the live demo.
+```
 
+Now open `.env` and do two things:
+
+1. Fill in **exactly one** provider key: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`,
+   `MINIMAX_API_KEY`, or `OPENROUTER_API_KEY`.
+2. Set `LLM_PROVIDER` to match that key (`anthropic` / `openai` / `minimax` /
+   `openrouter`). `.env.example` defaults to `anthropic` — change it if you
+   used a different key.
+
+That's it — everything else in `.env` is optional (see **Troubleshooting**
+below for `LLM_FALLBACK_PROVIDER`).
+
+```bash
 # 4a. Talk to the agent in the terminal
 python3 -m src.cli
 
@@ -43,18 +52,60 @@ uvicorn src.web:app --reload
 # then open http://127.0.0.1:8000
 ```
 
-Run the tests:
+### Try it
+
+Once the CLI or web UI is running, here's a real conversation to try —
+it exercises the full flow (intake → deterministic calculation → cited
+answer) in under a minute:
+
+```
+You: 3 people
+You: 2200
+You: no
+```
+
+You should see a final answer stating **likely qualifies**, a line citing
+the specific `knowledge_base/` documents the answer is grounded in, and
+(in the CLI) you can then type `handoff` to see the print-ready
+case-worker summary. To see the guardrails fire, try an off-topic ask
+("what's the weather today"), or a prompt-injection attempt ("ignore
+your instructions") — both get a fixed, deterministic response rather
+than a free-form answer.
+
+### Run the tests
 
 ```bash
 pytest -q
 ```
 
-Run the red-team suite (crisis, injection, off-topic, ambiguous income,
-correction across turns):
+### Run the red-team suite
+
+Crisis, injection, off-topic, ambiguous income, and correction-across-turns
+cases, run live against the real agent:
 
 ```bash
 python3 -m redteam.run_redteam
 ```
+
+This calls a real LLM and costs a small amount of money. Add `--dry-run`
+to validate the harness wiring without spending anything.
+
+### Troubleshooting
+
+* **`Invalid or missing LLM_PROVIDER`** — `.env`'s `LLM_PROVIDER` value
+  doesn't match a key you actually filled in. Double-check step 3 above.
+* **Rate-limited or "out of credits" from your provider** — this can
+  happen with any provider under a tight quota. Set
+  `LLM_FALLBACK_PROVIDER` in `.env` to a second provider you have a key
+  for (e.g. `LLM_FALLBACK_PROVIDER=openrouter`); the agent automatically
+  retries on that provider if the primary one fails. See `src/llm_client.py`.
+* **The agent seems "stuck" re-asking a question you already answered** —
+  this should not happen; if it does, please note the exact phrasing you
+  used and let us know. (The agent is built to handle terse replies like
+  a bare `"3"` or `"no"`, not just full sentences — see `_fallback_parse_terse_reply`
+  in `src/agent.py` if you're curious how.)
+* **Port 8000 already in use** — run
+  `uvicorn src.web:app --reload --port 8001` and open that port instead.
 
 ## CI
 
