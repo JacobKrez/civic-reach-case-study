@@ -18,15 +18,20 @@ import sys
 
 from dotenv import load_dotenv
 
-from .agent import CivicReachAgent
+from .agent import CivicReachAgent, first_turn_disclosure
 from .llm_client import LLMClient
 
 
-_BANNER = (
-    "CivicReach \u2014 NC Food & Nutrition Services (FNS) eligibility assistant.\n"
-    "This is an initial screen, not a final agency determination.\n"
-    "Type your situation and press Enter. Type 'handoff' for a case-worker\n"
-    "handoff summary once the screen is complete. Type 'exit' or press Ctrl-C to leave."
+# W21 — the CLI banner is augmented with the same AI / not-a-person
+# disclosure the web UI surfaces as the first assistant bubble, so the
+# REPL also makes it impossible for a user to confuse CivicReach for a
+# live person / caseworker / hotline before they type anything. The
+# disclosure is hard-coded (not LLM-generated) and identical to the
+# web UI's first bubble so the framing cannot drift across surfaces.
+_BANNER = first_turn_disclosure("en") + (
+    "\n\n--- Repl controls ---\n"
+    "Type 'handoff' for a case-worker handoff summary once the screen "
+    "is complete. Type 'exit' or press Ctrl-C to leave."
 )
 
 

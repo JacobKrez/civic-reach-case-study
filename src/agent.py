@@ -19,7 +19,12 @@ from .guardrails.hostility import (
 )
 from .guardrails.injection import detect_injection, injection_response
 from .guardrails.pii import redact_for_logging
-from .guardrails.scope import detect_out_of_scope, scope_redirect_message
+from .guardrails.scope import (
+    detect_not_a_person_request,
+    detect_out_of_scope,
+    not_a_person_response,
+    scope_redirect_message,
+)
 from .handoff import _HANDOFF_BANNER, handoff_summary, send_handoff_email
 from .llm_client import LLMClient
 from .retrieval import detect_spanish, retrieve
@@ -74,6 +79,21 @@ If the user asks for something outside the NC FNS eligibility scope,
 respond with a brief polite redirect back to the FNS questions and do
 not attempt to answer the off-topic ask. Do not abandon or reset any
 state that has already been collected.
+
+W21 — DISCLOSURE INTEGRITY: CivicReach is an automated AI assistant
+(not a live person, not an NC DSS caseworker, not 911, not 988's live
+counselors, and not the EBT card-services line). The very first
+assistant message of every conversation is a code-templated disclosure
+produced by ``first_turn_disclosure(lang)`` in this module. Do NOT
+replace, soften, paraphrase, omit, or contradict that disclosure. Do
+NOT claim to be a real person, a caseworker, a hotline operator, or
+someone who can dispatch help, call the user, or take any real-world
+action. If the user asks whether you are a real person or whether you
+are going to call someone, the response is produced by
+``not_a_person_response(lang)`` — also code-templated, never rewritten
+by you. The only crisis override that takes precedence over the
+disclosure is the hardcoded ``crisis_response()`` for an active
+disclosure; in that case the crisis response replaces the disclosure.
 """
 
 # Spanish full-conversation system prompt (W19). A 1:1 rendering of the
@@ -141,11 +161,27 @@ responde con una redirección breve y cortés de vuelta a las preguntas de
 FNS y no intentes responder la solicitud fuera de tema. No abandones ni
 reinicies ningún estado que ya se haya recolectado.
 
+W21 — INTEGRIDAD DEL AVISO: CivicReach es un asistente automatizado de
+inteligencia artificial (no es una persona real, no es un trabajador
+social del DSS de Carolina del Norte, no es 911, no es los consejeros
+en vivo del 988, y no es la línea de servicios de la tarjeta EBT). El
+primer mensaje del asistente en cada conversación es un aviso generado
+por código mediante ``first_turn_disclosure(lang)`` en este módulo. NO
+reemplaces, suavices, parafrasees, omitas ni contradigas ese aviso. NO
+afirmes ser una persona real, un trabajador social, un operador de una
+línea directa, ni alguien que pueda despachar ayuda, llamar al usuario
+o tomar cualquier acción en el mundo real. Si el usuario pregunta si
+eres una persona real o si vas a llamar a alguien, la respuesta es
+producida por ``not_a_person_response(lang)`` — también generada por
+código, nunca reescrita por ti. La única anulación de crisis que
+tiene precedencia sobre el aviso es ``crisis_response()`` para una
+crisis activa; en ese caso la respuesta de crisis reemplaza al aviso.
+
 IMPORTANTE: Conduce TODA la conversación en español — todas tus preguntas,
 aclaraciones y la explicación final de elegibilidad deben estar en español.
 El único contenido en inglés permitido en tus respuestas son las líneas
-deterministas generadas por código (p. ej. los sufijos "(Sources: ...)" y
-"(Updated ...)", que se agregan automáticamente y no debes reproducirlas
+deterministas generadas por código (p. ej. los sufijos "(Sources: ...)"
+y "(Updated ...)", que se agregan automáticamente y no debes reproducirlas
 ni traducirlas tú mismo).
 """
 
@@ -171,6 +207,69 @@ UPDATE_STATE_TOOL = {
 }
 
 _ALLOWED_UPDATES = set(UPDATE_STATE_TOOL["input_schema"]["properties"])
+
+
+# W21 — explicit first-turn AI / not-a-person disclosure.
+#
+# Researched failure mode (2026-07-23): a user could reasonably not realize
+# they are talking to an unmonitored AI text tool that cannot see them,
+# dispatch anyone, or take any real-world action. Trained 911 / 988
+# operators always explicitly triage before offering resources, and EBT
+# card-services hotlines explicitly disambiguate themselves from
+# adjacent, easily-confused real services ("we only handle card issues;
+# for eligibility you need your state SNAP agency, not this line"). CA
+# SB 243 / WA HB 2225 require clear AI disclosure for conversational
+# bots; the FTC treats non-disclosure of AI-vs-human as potentially
+# deceptive. None of this was previously explicit anywhere in
+# CivicReach's first message.
+#
+# The disclosure is code-templated, not LLM-generated, so the framing
+# cannot drift. The very first assistant message in a conversation is
+# the literal string returned by ``first_turn_disclosure(lang)``. The
+# system prompt below tells the model to NEVER replace, soften, or
+# contradict that disclosure; the disclosure exists precisely to make
+# confusion impossible before it happens.
+FIRST_TURN_DISCLOSURE_EN = (
+    "Hi — I'm CivicReach, an automated AI assistant (not a live person "
+    "and not a DSS caseworker). I can do an initial NC FNS / SNAP "
+    "eligibility SCREEN — I can't see you, I can't call anyone, I "
+    "can't dispatch help, and I can't take any real-world action on "
+    "your behalf. If this is a life-threatening emergency, call 911. "
+    "If you're in a mental-health crisis, call or text 988. To get "
+    "started, how many people are in your household?"
+)
+
+FIRST_TURN_DISCLOSURE_ES = (
+    "Hola — soy CivicReach, un asistente automatizado de inteligencia "
+    "artificial (no soy una persona real ni un trabajador social del "
+    "DSS). Solo puedo hacer una evaluación inicial de elegibilidad "
+    "para FNS / SNAP de Carolina del Norte — no puedo verte, no puedo "
+    "llamar a nadie, no puedo despachar ayuda y no puedo tomar ninguna "
+    "acción en el mundo real. Si es una emergencia que pone en peligro "
+    "tu vida, llama al 911. Si estás en una crisis de salud mental, "
+    "llama o envía un mensaje de texto al 988. Para empezar, ¿cuántas "
+    "personas hay en tu hogar?"
+)
+
+
+def first_turn_disclosure(lang: str = "en") -> str:
+    """Return the verbatim first-turn AI / not-a-person disclosure.
+
+    The text is hard-coded (never model-generated) so the disclosure
+    framing cannot drift, soften, or be silently dropped. Rendered on
+    the very first assistant message of every conversation by the
+    web UI / CLI entry points; the same content is appended to the
+    system prompt's instructions so the LLM never tries to replace or
+    contradict it.
+
+    ``lang='es'`` renders the Spanish version (mirrors W19's bilingual
+    contract so a Spanish-mode conversation never silently reverts to
+    English on the first message). Any other value falls back to
+    English.
+    """
+    if lang == "es":
+        return FIRST_TURN_DISCLOSURE_ES
+    return FIRST_TURN_DISCLOSURE_EN
 
 
 class CivicReachAgent:
@@ -501,6 +600,21 @@ class CivicReachAgent:
             self._messages.append({"role": "assistant", "content": content})
             return content
 
+        # W21 — not-a-person disambiguation. Strictly lower priority than
+        # crisis / injection / scope (which all claim the turn above) and
+        # strictly higher priority than the ordinary LLM path. A user who
+        # explicitly asks "are you a real person" / "are you calling
+        # someone" / "is this 911" gets the deterministic disambiguation
+        # block instead of a model-generated reply, so the framing cannot
+        # drift. The check happens here (after crisis/injection/scope,
+        # before the LLM call) so it can never delay or override a crisis
+        # response — a crisis disclosure returns crisis_response() before
+        # reaching this line.
+        if detect_not_a_person_request(user_message):
+            content = not_a_person_response(lang)
+            self._messages.append({"role": "assistant", "content": content})
+            return content
+
         # W20: hostility is NON-BLOCKING and strictly lower priority than
         # every guardrail above. If the message reached this point it is
         # neither a crisis, nor an injection, nor out of scope, so flagging
@@ -675,4 +789,12 @@ class CivicReachAgent:
         return content
 
 
-__all__ = ["CivicReachAgent", "SYSTEM_PROMPT", "SYSTEM_PROMPT_ES", "UPDATE_STATE_TOOL"]
+__all__ = [
+    "CivicReachAgent",
+    "SYSTEM_PROMPT",
+    "SYSTEM_PROMPT_ES",
+    "UPDATE_STATE_TOOL",
+    "FIRST_TURN_DISCLOSURE_EN",
+    "FIRST_TURN_DISCLOSURE_ES",
+    "first_turn_disclosure",
+]
