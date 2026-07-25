@@ -24,8 +24,13 @@ W49 — production-grade UI:
 
 from __future__ import annotations
 
+from collections import OrderedDict
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
+import secrets
+import threading
+import time
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request, Response
@@ -33,7 +38,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from .agent import FoodPathAgent, first_turn_disclosure, first_turn_greeting
+from .agent import CivicReachAgent as FoodPathAgent, first_turn_disclosure, first_turn_greeting
 
 app = FastAPI(title="FoodPath — NC FNS Eligibility Guide", version="1.0.0")
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
@@ -41,7 +46,126 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 # Public injection seam for tests and alternate deployments.
 agent_factory: Callable[[], FoodPathAgent] = FoodPathAgent
-_sessions: dict[str, FoodPathAgent] = {}
+
+# Process-local session hygiene. This remains deliberately in-memory for the
+# PoC, but it is bounded: idle entries expire after one hour and the least
+# recently used entry is evicted before a 101st session can be inserted.
+MAX_SESSIONS = 100
+SESSION_TTL_SECONDS = 60 * 60
+
+
+@dataclass
+class _SessionEntry:
+    agent: FoodPathAgent
+    last_accessed: float
+
+
+_sessions: OrderedDict[str, _SessionEntry] = OrderedDict()
+_sessions_lock = threading.RLock()
+
+
+def _evict_sessions_locked(now: float) -> None:
+    """Expire idle sessions and enforce the LRU capacity.
+
+    Caller must hold ``_sessions_lock``. ``OrderedDict`` order is oldest to
+    newest access, so both TTL and capacity eviction are deterministic.
+    """
+    expired = [
+        session_id
+        for session_id, entry in _sessions.items()
+        if now - entry.last_accessed >= SESSION_TTL_SECONDS
+    ]
+    for session_id in expired:
+        _sessions.pop(session_id, None)
+    while len(_sessions) > MAX_SESSIONS:
+        _sessions.popitem(last=False)
+
+
+def _get_session(session_id: str, *, create: bool) -> FoodPathAgent | None:
+    """Return and touch a session, optionally creating it.
+
+    Every successful lookup becomes most-recently-used. Creation evicts the
+    least-recently-used entry first when the registry is at capacity.
+    """
+    now = time.monotonic()
+    with _sessions_lock:
+        _evict_sessions_locked(now)
+        entry = _sessions.pop(session_id, None)
+        if entry is None:
+            if not create:
+                return None
+            while len(_sessions) >= MAX_SESSIONS:
+                _sessions.popitem(last=False)
+            entry = _SessionEntry(agent=agent_factory(), last_accessed=now)
+        else:
+            entry.last_accessed = now
+        _sessions[session_id] = entry
+        return entry.agent
+
+
+def _session_count() -> int:
+    now = time.monotonic()
+    with _sessions_lock:
+        _evict_sessions_locked(now)
+        return len(_sessions)
+
+
+def _fresh_session_id() -> str:
+    """Mint an opaque ID that cannot collide with a currently live session."""
+    with _sessions_lock:
+        while True:
+            candidate = secrets.token_urlsafe(24)
+            if candidate not in _sessions:
+                return candidate
+
+
+_TOAST_FIELDS = (
+    "household_size",
+    "gross_monthly_income",
+    "has_elderly_or_disabled_member",
+    "earned_monthly_income",
+    "dependent_care_monthly",
+    "medical_expenses_monthly",
+    "shelter_costs_monthly",
+)
+
+
+def _toast_events_for_turn(
+    before_state: dict[str, Any],
+    after_state: dict[str, Any],
+    before_result: dict[str, Any] | None,
+    after_result: dict[str, Any] | None,
+    *,
+    crisis_reply: bool,
+) -> list[dict[str, Any]]:
+    """Describe visible state changes for the browser's toast layer.
+
+    Crisis replies are an explicit hard stop. They remain persistent in the
+    transcript and can never be reduced to (or duplicated as) a transient
+    toast, even if future crisis handling also mutates intake state.
+    """
+    if crisis_reply:
+        return []
+    events: list[dict[str, Any]] = []
+    for field in _TOAST_FIELDS:
+        old = before_state.get(field)
+        new = after_state.get(field)
+        if old == new:
+            continue
+        if old is None and new is not None:
+            events.append({"type": "field_recorded", "field": field, "value": new})
+        elif old is not None and new is not None:
+            events.append(
+                {
+                    "type": "correction_applied",
+                    "field": field,
+                    "old": old,
+                    "new": new,
+                }
+            )
+    if after_result is not None and before_result != after_result:
+        events.append({"type": "verdict_ready"})
+    return events
 
 
 class ChatRequest(BaseModel):
@@ -53,9 +177,14 @@ class HandoffRequest(BaseModel):
     session_id: str = Field(min_length=1, max_length=200)
 
 
+class SessionResetRequest(BaseModel):
+    session_id: str = Field(min_length=1, max_length=200)
+
+
 def clear_sessions() -> None:
     """Clear process-local sessions (primarily useful for test isolation)."""
-    _sessions.clear()
+    with _sessions_lock:
+        _sessions.clear()
 
 
 def _resolve_lang(request: Request | None) -> str:
@@ -80,7 +209,8 @@ def _resolve_lang(request: Request | None) -> str:
             return "es"
     if _sessions:
         try:
-            last = next(reversed(_sessions.values()))
+            with _sessions_lock:
+                last = next(reversed(_sessions.values())).agent
             lang = getattr(last.state, "language", "en")
             if lang in ("en", "es"):
                 return lang
@@ -90,22 +220,48 @@ def _resolve_lang(request: Request | None) -> str:
 
 
 @app.get("/health")
-def health() -> dict[str, str]:
-    return {"status": "ok"}
+def health() -> dict[str, str | int]:
+    return {"status": "ok", "sessions": _session_count()}
+
+
+@app.post("/session/reset")
+def reset_session(request: SessionResetRequest) -> dict[str, str | bool]:
+    """Discard one process-local conversation and issue an unused ID.
+
+    The replacement session stays lazy: an agent is not allocated until its
+    first chat turn. That prevents repeated untouched resets from consuming
+    slots in the bounded registry.
+    """
+    with _sessions_lock:
+        removed = _sessions.pop(request.session_id, None) is not None
+        fresh_session_id = _fresh_session_id()
+    return {
+        "session_id": fresh_session_id,
+        "reset": True,
+        "previous_session_found": removed,
+    }
 
 
 @app.post("/chat")
 def chat(request: ChatRequest, response: Response) -> dict[str, Any]:
-    agent = _sessions.get(request.session_id)
-    if agent is None:
-        agent = agent_factory()
-        _sessions[request.session_id] = agent
+    agent = _get_session(request.session_id, create=True)
+    assert agent is not None
+    before_state = agent.state.model_dump(mode="json")
+    before_result = agent.eligibility_result
     try:
         reply = agent.turn(request.message)
     except Exception as exc:
         # Avoid exposing provider credentials or internals to the browser.
         raise HTTPException(status_code=502, detail="The assistant could not answer right now.") from exc
     state = agent.state.model_dump(mode="json")
+    crisis_reply = agent.last_layer == "crisis"
+    events = _toast_events_for_turn(
+        before_state,
+        state,
+        before_result,
+        agent.eligibility_result,
+        crisis_reply=crisis_reply,
+    )
     response.headers["X-FoodPath-Layer"] = agent.last_layer
     response.headers["X-CivicReach-Layer"] = agent.last_layer  # compatibility
     return {
@@ -114,6 +270,7 @@ def chat(request: ChatRequest, response: Response) -> dict[str, Any]:
         "missing_fields": agent.state.missing_fields(),
         "eligibility_result": agent.eligibility_result,
         "citations": agent.last_citations,
+        "events": events,
     }
 
 
@@ -126,7 +283,7 @@ def handoff(request: HandoffRequest) -> dict[str, Any]:
     never blocks or degrades this response. Returns 409 when the screen
     is not complete yet — the summary is never producible early.
     """
-    agent = _sessions.get(request.session_id)
+    agent = _get_session(request.session_id, create=False)
     if agent is None:
         raise HTTPException(status_code=404, detail="Unknown session.")
     package = agent.handoff_summary()
@@ -244,9 +401,17 @@ body{margin:0;background:var(--pale);color:var(--ink-2);font:16px/1.55 var(--fon
 button:focus-visible,a:focus-visible,input:focus-visible,[tabindex]:focus-visible{outline:3px solid var(--focus);outline-offset:3px}
 
 /* --- header --- */
-.top{background:var(--navy);color:white;padding:16px 24px;display:flex;flex-wrap:wrap;gap:8px;align-items:baseline}
+.top{background:var(--navy);color:white;padding:12px 24px;display:flex;flex-wrap:wrap;gap:12px;align-items:center}
+.top .header-copy{display:flex;flex-wrap:wrap;gap:8px;align-items:baseline;min-width:0}
 .top b{font-size:21px;letter-spacing:.005em}
 .top span{opacity:.85;margin-left:12px;font-size:15px}
+.new-screening{
+  min-height:44px;margin-left:auto;padding:8px 14px;border:2px solid #dbeafe;
+  border-radius:var(--radius);background:transparent;color:white;
+  font:inherit;font-size:14px;font-weight:700;cursor:pointer;
+}
+.new-screening:hover{background:#ffffff18}
+.new-screening:disabled{opacity:.6;cursor:wait}
 
 /* --- trust banner (persistent, unmissable) --- */
 .trust-banner{
@@ -464,6 +629,46 @@ pre{max-width:100%;background:#f6f8fa;border-radius:7px;padding:10px;overflow:au
 #handoff:disabled{opacity:.55}
 #handoff-summary{margin-top:10px;white-space:pre-wrap}
 
+/* --- accessible confirmation dialog --- */
+.reset-dialog{
+  width:min(92vw,480px);padding:0;border:0;border-radius:var(--radius-lg);
+  background:white;color:var(--ink-2);box-shadow:0 20px 55px #0006;
+}
+.reset-dialog::backdrop{background:#071526b8}
+.reset-dialog-inner{padding:24px}
+.reset-dialog h2{margin:0 0 8px;color:var(--ink);font-size:22px}
+.reset-dialog p{margin:0 0 22px}
+.dialog-actions{display:flex;justify-content:flex-end;flex-wrap:wrap;gap:10px}
+.dialog-actions button{
+  min-height:44px;padding:8px 16px;border-radius:var(--radius);
+  border:1px solid #64748b;background:white;color:#243b53;
+  font:inherit;font-weight:650;cursor:pointer;
+}
+.dialog-actions .destructive{background:var(--crisis);border-color:var(--crisis);color:white}
+
+/* --- bounded toast / snackbar stack --- */
+.toast-stack{
+  position:fixed;z-index:1300;top:76px;right:16px;width:min(390px,calc(100vw - 32px));
+  display:flex;flex-direction:column;gap:10px;pointer-events:none;
+}
+.toast-region{display:flex;flex-direction:column;gap:10px}
+.toast{
+  pointer-events:auto;display:grid;grid-template-columns:1fr auto;gap:10px;
+  align-items:start;padding:13px 12px 13px 15px;border:1px solid #7c98b6;
+  border-left:5px solid var(--blue);border-radius:var(--radius);
+  background:white;color:var(--ink-2);box-shadow:0 8px 25px #102a4333;
+  animation:toast-in .16s ease-out;
+}
+.toast[data-kind="success"]{border-left-color:var(--green)}
+.toast[data-kind="error"]{border-left-color:var(--crisis)}
+.toast-message{padding-top:3px;font-size:14px;font-weight:600;overflow-wrap:anywhere}
+.toast-close{
+  width:32px;height:32px;border:0;border-radius:50%;background:transparent;
+  color:var(--ink-2);font:700 20px/1 var(--font-base);cursor:pointer;
+}
+.toast-close:hover{background:var(--pale-2)}
+@keyframes toast-in{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:translateY(0)}}
+
 /* --- footer --- */
 .foot{
   max-width:1240px;margin:24px auto 30px;padding:0 18px;
@@ -473,7 +678,9 @@ pre{max-width:100%;background:#f6f8fa;border-radius:7px;padding:10px;overflow:au
 
 /* --- small screens --- */
 @media(max-width:820px){
-  .top{padding:12px 16px}.top span{display:block;margin:2px 0 0;font-size:14px}
+  .top{padding:12px 16px}.top .header-copy{display:block;flex:1}.top span{display:block;margin:2px 0 0;font-size:14px}
+  .new-screening{margin-left:0}
+  .toast-stack{top:72px;right:10px;width:calc(100vw - 20px)}
   .layout{grid-template-columns:minmax(0,1fr);gap:12px;height:auto;margin:12px auto;padding:0 10px}
   .chat{height:calc(100vh - 240px);height:calc(100dvh - 240px);min-height:520px}
   .messages{padding:14px 12px}
@@ -492,7 +699,7 @@ pre{max-width:100%;background:#f6f8fa;border-radius:7px;padding:10px;overflow:au
 
 /* --- forced-colors / high contrast (Windows High Contrast) --- */
 @media(forced-colors:active){
-  .top,.trust-banner,.composer,.panel,.card,.bubble,.citation-row,.citation-suffix{
+  .top,.trust-banner,.composer,.panel,.card,.bubble,.citation-row,.citation-suffix,.toast,.reset-dialog{
     border:1px solid CanvasText;
   }
   :focus-visible{outline:2px solid Highlight}
@@ -613,7 +820,7 @@ def _assemble_page(lang: str) -> str:
 <link rel="apple-touch-icon" sizes="192x192" href="/static/icons/icon-192.png">
 <style>__CSS__</style>
 </head>
-<body>__SKIP_LINK__<header class="top" role="banner"><b>FoodPath</b><span>__TAGLINE__</span></header>__TRUST____PROGRESS__<main class="layout" id="main-content" role="main" tabindex="-1">__FIRST_BUBBLES____FORM_SECTION____DETAILS_PANEL__</main>__FOOTER____SCRIPT__</body></html>"""
+<body>__SKIP_LINK__<header class="top" role="banner"><div class="header-copy"><b>FoodPath</b><span>__TAGLINE__</span></div><button id="new-screening" class="new-screening" type="button">__NEW_SCREENING__</button></header>__TRUST____PROGRESS__<main class="layout" id="main-content" role="main" tabindex="-1">__FIRST_BUBBLES____FORM_SECTION____DETAILS_PANEL__</main>__RESET_DIALOG____TOASTS____FOOTER____SCRIPT__</body></html>"""
 
     title = (
         "FoodPath — Guía de elegibilidad para FNS de Carolina del Norte"
@@ -637,6 +844,10 @@ def _assemble_page(lang: str) -> str:
     page = page.replace("__LANG__", _escape(lang))
     page = page.replace("__TITLE__", _escape(title))
     page = page.replace("__TAGLINE__", _escape(tagline))
+    page = page.replace(
+        "__NEW_SCREENING__",
+        "Iniciar una nueva evaluación" if lang == "es" else "Start a new screening",
+    )
     page = page.replace("__META_DESC__", _escape(meta_desc))
     page = page.replace("__CSS__", _CSS)
     page = page.replace("__SKIP_LINK__", _skip_link(lang))
@@ -645,6 +856,8 @@ def _assemble_page(lang: str) -> str:
     page = page.replace("__FIRST_BUBBLES__", _first_bubble_html(lang))
     page = page.replace("__FORM_SECTION__", _form_section_html(lang))
     page = page.replace("__DETAILS_PANEL__", placeholder_panel)
+    page = page.replace("__RESET_DIALOG__", _reset_dialog_html(lang))
+    page = page.replace("__TOASTS__", _toast_regions_html(lang))
     footer = (
         '<footer class="foot" role="contentinfo">'
         + ('<p>FoodPath es una herramienta independiente y no está afiliada al estado de Carolina del Norte. Esta no es una solicitud oficial.</p>' if lang == "es"
@@ -654,6 +867,41 @@ def _assemble_page(lang: str) -> str:
     page = page.replace("__FOOTER__", footer)
     page = page.replace("__SCRIPT__", _client_script(lang))
     return page
+
+
+def _reset_dialog_html(lang: str) -> str:
+    if lang == "es":
+        heading = "¿Iniciar una nueva evaluación?"
+        body = "Esto borrará lo que nos has contado hasta ahora, incluido cualquier resultado."
+        cancel = "Conservar esta evaluación"
+        confirm = "Borrar e iniciar de nuevo"
+    else:
+        heading = "Start a new screening?"
+        body = "This will erase what you've told me so far, including any screening result."
+        cancel = "Keep this screening"
+        confirm = "Erase and start over"
+    return (
+        '<dialog id="reset-dialog" class="reset-dialog" aria-modal="true" '
+        'aria-labelledby="reset-dialog-title" aria-describedby="reset-dialog-description">'
+        '<div class="reset-dialog-inner">'
+        f'<h2 id="reset-dialog-title">{heading}</h2>'
+        f'<p id="reset-dialog-description">{body}</p>'
+        '<div class="dialog-actions">'
+        f'<button id="reset-cancel" type="button">{cancel}</button>'
+        f'<button id="reset-confirm" class="destructive" type="button">{confirm}</button>'
+        '</div></div></dialog>'
+    )
+
+
+def _toast_regions_html(lang: str) -> str:
+    polite = "Notificaciones" if lang == "es" else "Notifications"
+    errors = "Errores" if lang == "es" else "Errors"
+    return (
+        '<div id="toast-stack" class="toast-stack">'
+        f'<div id="toast-polite" class="toast-region" role="status" aria-live="polite" aria-label="{polite}"></div>'
+        f'<div id="toast-errors" class="toast-region" role="alert" aria-live="assertive" aria-label="{errors}"></div>'
+        '</div>'
+    )
 
 
 def _form_section_html(lang: str) -> str:
@@ -666,7 +914,7 @@ def _form_section_html(lang: str) -> str:
         '<section class="card chat" aria-label="'
         + ("Conversación con el asistente" if lang == "es" else "Conversation with the assistant")
         + '">'
-        + '<div class="status-banner" role="status" aria-live="polite" data-state="offline">'
+        + '<div class="status-banner" role="status" aria-live="polite" data-state="online">'
         + ("Parece que estás sin conexión. Tus respuestas se enviarán cuando vuelvas a estar en línea." if lang == "es"
            else "Looks like you're offline. Your replies will be sent when you reconnect.")
         + '</div>'
@@ -770,7 +1018,7 @@ def _client_script(lang: str) -> str:
     return (
         r"""<script>
 (function(){
-  const sid = (crypto.randomUUID?crypto.randomUUID():Date.now()+Math.random().toString(36));
+  let sid = (crypto.randomUUID?crypto.randomUUID():Date.now()+Math.random().toString(36));
   const form = document.querySelector('#form');
   const input = document.querySelector('#message');
   const messages = document.querySelector('#messages');
@@ -790,6 +1038,19 @@ def _client_script(lang: str) -> str:
       citationsInitial: 'No sources retrieved yet',
       layerInitial: 'No turns yet',
       handoffFail: "Handoff isn't available right now.",
+      dismiss: 'Dismiss notification',
+      fieldRecorded: 'Recorded {field}: {value}',
+      correction: 'Updated {field}: {old} -> {new}',
+      verdictReady: 'Your screening result is ready.',
+      handoffReady: 'Handoff summary generated.',
+      sessionReset: 'New screening started.',
+      resetFail: "The screening couldn't be reset. Nothing was erased.",
+      fields: {
+        household_size: 'household size', gross_monthly_income: 'income',
+        has_elderly_or_disabled_member: 'elderly or disabled household member',
+        earned_monthly_income: 'earned income', dependent_care_monthly: 'dependent-care costs',
+        medical_expenses_monthly: 'medical expenses', shelter_costs_monthly: 'shelter costs'
+      },
     },
     es: {
       typing: 'El asistente está pensando\u2026',
@@ -804,9 +1065,74 @@ def _client_script(lang: str) -> str:
       citationsInitial: 'Aún no se recuperaron fuentes',
       layerInitial: 'Aún no hay turnos',
       handoffFail: 'La transferencia no está disponible ahora.',
+      dismiss: 'Cerrar notificación',
+      fieldRecorded: 'Registrado {field}: {value}',
+      correction: 'Actualizado {field}: {old} -> {new}',
+      verdictReady: 'El resultado de tu evaluación está listo.',
+      handoffReady: 'Resumen de transferencia generado.',
+      sessionReset: 'Nueva evaluación iniciada.',
+      resetFail: 'No se pudo reiniciar la evaluación. No se borró nada.',
+      fields: {
+        household_size: 'tamaño del hogar', gross_monthly_income: 'ingresos',
+        has_elderly_or_disabled_member: 'persona mayor o con discapacidad',
+        earned_monthly_income: 'ingresos laborales', dependent_care_monthly: 'gastos de cuidado',
+        medical_expenses_monthly: 'gastos médicos', shelter_costs_monthly: 'gastos de vivienda'
+      },
     }
   };
   const t = (dict[lang] || dict.en);
+  const MAX_TOASTS = 4;
+  function toast(message, kind){
+    kind = kind || 'info';
+    const region = document.querySelector(kind === 'error' ? '#toast-errors' : '#toast-polite');
+    if(!region || !message) return null;
+    const node = document.createElement('div');
+    node.className = 'toast';
+    node.dataset.kind = kind;
+    const text = document.createElement('div');
+    text.className = 'toast-message';
+    text.textContent = message;
+    const close = document.createElement('button');
+    close.type = 'button'; close.className = 'toast-close'; close.textContent = '\u00d7';
+    close.setAttribute('aria-label', t.dismiss);
+    node.appendChild(text); node.appendChild(close); region.appendChild(node);
+    const dismiss = function(){ if(node.isConnected) node.remove(); };
+    close.addEventListener('click', dismiss);
+    let remaining = 6000;
+    let started = Date.now();
+    let timer = window.setTimeout(dismiss, remaining);
+    const pause = function(){
+      if(timer){ window.clearTimeout(timer); timer = null; remaining -= Date.now()-started; }
+    };
+    const resume = function(){
+      if(!timer && remaining > 0){ started=Date.now(); timer=window.setTimeout(dismiss, remaining); }
+    };
+    node.addEventListener('mouseenter', pause); node.addEventListener('mouseleave', resume);
+    node.addEventListener('focusin', pause); node.addEventListener('focusout', resume);
+    const all = Array.from(document.querySelectorAll('.toast'));
+    while(all.length > MAX_TOASTS){ const oldest=all.shift(); if(oldest) oldest.remove(); }
+    return node;
+  }
+  function displayValue(field, value){
+    if(typeof value === 'boolean') return value ? (lang==='es'?'sí':'yes') : 'no';
+    if(field.indexOf('income')>=0 || field.indexOf('costs')>=0 || field.indexOf('expenses')>=0){
+      const locale = lang==='es' ? 'es-US' : 'en-US';
+      return '$'+Number(value).toLocaleString(locale,{maximumFractionDigits:2});
+    }
+    return String(value);
+  }
+  function eventToasts(events){
+    (events || []).forEach(function(event){
+      const field = (t.fields && t.fields[event.field]) || event.field || '';
+      if(event.type === 'field_recorded'){
+        toast(t.fieldRecorded.replace('{field}',field).replace('{value}',displayValue(event.field,event.value)),'success');
+      } else if(event.type === 'correction_applied'){
+        toast(t.correction.replace('{field}',field).replace('{old}',displayValue(event.field,event.old)).replace('{new}',displayValue(event.field,event.new)),'success');
+      } else if(event.type === 'verdict_ready'){
+        toast(t.verdictReady,'success');
+      }
+    });
+  }
   function announce(text){
     // polite live region dedicated to status messages (network / typing)
     let region = document.querySelector('#status-live');
@@ -862,8 +1188,8 @@ def _client_script(lang: str) -> str:
     const L = labels[lang] || labels.en;
     const items = [0,1,2,3].map(function(i){
       const attrs = [];
-      if(i < step - 1) attrs.push('class="complete"');
-      if(i === step - 1) attrs.push('aria-current="step"');
+      if(i < step) attrs.push('class="complete"');
+      if(i === step) attrs.push('aria-current="step"');
       return '<li '+ attrs.join(' ')+'>'+L[i]+'</li>';
     }).join('');
     const ol = progress.querySelector('ol.steps');
@@ -996,16 +1322,13 @@ def _client_script(lang: str) -> str:
     const banner = document.querySelector('.status-banner');
     if(!banner) return;
     banner.dataset.state = state;
+    if(state === 'online'){ banner.textContent = ''; return; }
     banner.textContent = state === 'offline' ? t.offline : t.reconnecting;
     banner.setAttribute('aria-live', state === 'offline' ? 'assertive' : 'polite');
   }
   function appendError(message){
-    const div = document.createElement('div');
-    div.className = 'error-bubble';
-    div.setAttribute('role','alert');
-    div.innerHTML = '<b>' + t.network + '</b>' + message;
-    messages.appendChild(div);
-    messages.scrollTop = messages.scrollHeight;
+    // Infrastructure failures are transient UI state, never assistant speech.
+    toast(t.network + ': ' + message, 'error');
     announce(t.network + ': ' + message);
   }
   function appendAssistant(text, crisis){
@@ -1044,8 +1367,10 @@ def _client_script(lang: str) -> str:
 
   // network state (consume the banner when back online)
   window.addEventListener('online', function(){ setNetBanner('reconnecting'); });
-  window.addEventListener('offline', function(){ setNetBanner('offline'); });
-  if(navigator.onLine === false){ setNetBanner('offline'); }
+  window.addEventListener('offline', function(){
+    setNetBanner('offline'); toast(t.offline, 'error');
+  });
+  if(navigator.onLine === false){ setNetBanner('offline'); toast(t.offline, 'error'); }
 
   // The very first assistant turn: two templated bubbles (disclosure + greeting).
   // These are code-templated so the disclosure framing cannot drift; we
@@ -1084,12 +1409,16 @@ def _client_script(lang: str) -> str:
       data.layer = r.headers.get('X-FoodPath-Layer') || r.headers.get('X-CivicReach-Layer');
       if(!r.ok) throw new Error((data && data.detail) || ('Request failed ('+r.status+')'));
       hideTyping();
-      const crisis = !!(data.state && data.state.is_crisis);
+      const crisis = data.layer === 'crisis';
       appendAssistant(data.reply, crisis);
       if(!crisis){ renderResultCard(data); }
       renderInspector(data);
       plainSummary(data);
       renderStepIndicator(data.state || {}, data.missing_fields || []);
+      // Crisis replies are deliberately excluded server-side and are never
+      // routed into this transient layer; they persist in the transcript.
+      if(!crisis){ eventToasts(data.events || []); }
+      setNetBanner('online');
       document.documentElement.lang = (data.state && data.state.language) || lang;
     } catch(err){
       hideTyping();
@@ -1118,6 +1447,7 @@ def _client_script(lang: str) -> str:
       handoffBanner.style.display = 'block';
       handoffSummary.textContent = data.summary || '';
       handoffSummary.style.display = 'block';
+      toast(t.handoffReady, 'success');
     } catch(err){
       handoffBanner.textContent = '';
       handoffBanner.style.display = 'none';
@@ -1127,6 +1457,74 @@ def _client_script(lang: str) -> str:
       handoffBtn.disabled = false;
     }
   });
+
+  const newScreeningBtn = document.querySelector('#new-screening');
+  const resetDialog = document.querySelector('#reset-dialog');
+  const resetCancel = document.querySelector('#reset-cancel');
+  const resetConfirm = document.querySelector('#reset-confirm');
+  let resetTrigger = null;
+  function screeningHasProgress(){
+    const stateText = document.querySelector('#state').textContent || '{}';
+    let state = {};
+    try{ state = JSON.parse(stateText); }catch(_err){}
+    return !!messages.querySelector('.bubble.user') || !!document.querySelector('[data-result-outcome]') ||
+      ['household_size','gross_monthly_income','has_elderly_or_disabled_member'].some(function(k){ return state[k] != null; });
+  }
+  function openResetDialog(){
+    resetTrigger = document.activeElement;
+    resetDialog.showModal();
+    resetCancel.focus();
+  }
+  function closeResetDialog(){ if(resetDialog.open) resetDialog.close(); }
+  resetDialog.addEventListener('close', function(){
+    const target = resetTrigger || newScreeningBtn;
+    resetTrigger = null;
+    if(target && target.focus) target.focus();
+  });
+  // Native dialog cancel is the Escape-key path. Preventing its default and
+  // closing explicitly keeps focus restoration consistent across browsers.
+  resetDialog.addEventListener('cancel', function(event){
+    event.preventDefault(); closeResetDialog();
+  });
+  resetDialog.addEventListener('keydown', function(event){
+    if(event.key !== 'Tab') return;
+    const focusable = Array.from(resetDialog.querySelectorAll('button:not([disabled])'));
+    if(!focusable.length) return;
+    const first=focusable[0], last=focusable[focusable.length-1];
+    if(event.shiftKey && document.activeElement===first){ event.preventDefault(); last.focus(); }
+    else if(!event.shiftKey && document.activeElement===last){ event.preventDefault(); first.focus(); }
+  });
+  resetCancel.addEventListener('click', closeResetDialog);
+  newScreeningBtn.addEventListener('click', function(){
+    if(screeningHasProgress()) openResetDialog(); else resetScreening();
+  });
+  resetConfirm.addEventListener('click', function(){ closeResetDialog(); resetScreening(); });
+  async function resetScreening(){
+    newScreeningBtn.disabled = true; resetConfirm.disabled = true;
+    try{
+      const r = await fetch('/session/reset', {
+        method:'POST', headers:{'content-type':'application/json'},
+        body:JSON.stringify({session_id:sid})
+      });
+      const data = await r.json();
+      if(!r.ok || !data.session_id) throw new Error((data && data.detail) || ('Request failed ('+r.status+')'));
+      sid = data.session_id;
+      messages.replaceChildren();
+      appendAssistant(firstBubbleDisclosure, false);
+      appendAssistant(firstBubbleGreeting, false);
+      const empty = {
+        state:{household_size:null,gross_monthly_income:null,has_elderly_or_disabled_member:null},
+        missing_fields:['household_size','gross_monthly_income','has_elderly_or_disabled_member'],
+        eligibility_result:null,citations:[],layer:t.layerInitial
+      };
+      renderInspector(empty); plainSummary(empty); renderStepIndicator(empty.state,empty.missing_fields);
+      handoffBanner.textContent=''; handoffBanner.style.display='none';
+      handoffSummary.textContent=''; handoffSummary.style.display='none';
+      document.querySelectorAll('.toast').forEach(function(node){node.remove();});
+      toast(t.sessionReset,'success'); input.value=''; input.focus();
+    }catch(err){ toast(t.resetFail,'error'); }
+    finally{ newScreeningBtn.disabled=false; resetConfirm.disabled=false; }
+  }
 
   if('serviceWorker' in navigator){
     window.addEventListener('load', function(){

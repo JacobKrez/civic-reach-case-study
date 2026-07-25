@@ -197,9 +197,15 @@ flowchart TD
   nothing demonstrable and bury the guardrail ordering.
 * **Auth, persistence, multi-tenancy.** The case study asks for scope
   discipline. Web sessions live in the process only; restarting the
-  server clears them. That is the right cut for a 20-hour PoC and it
-  matches the case study's "do not submit real applications, do not
-  contact a real agency" guardrail.
+  server clears them. Users can explicitly discard one with **Start a new
+  screening** (or `new` / `restart` in the CLI). To prevent an unattended
+  PoC process from growing without limit, the in-memory registry expires a
+  session after **one hour without access** and keeps at most **100 live
+  sessions**, evicting the least recently used entry before admitting the
+  next one. `/health` exposes the current live-session count. This TTL/LRU
+  policy is a deliberate PoC-scoped safety bound—not persistence or
+  multi-tenancy—and it matches the case study's "do not submit real
+  applications, do not contact a real agency" guardrail.
 * **Real agency integration.** Explicitly forbidden by the case study
   prompt. We never call, scrape, or submit anywhere.
 

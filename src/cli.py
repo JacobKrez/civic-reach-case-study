@@ -37,7 +37,8 @@ _BANNER = (
     + (
         "\n\n--- Repl controls ---\n"
         "Type 'handoff' for a case-worker handoff summary once the screen "
-        "is complete. Type 'exit' or press Ctrl-C to leave."
+        "is complete. Type 'new' or 'restart' to erase this screening and "
+        "start over. Type 'exit' or press Ctrl-C to leave."
     )
 )
 
@@ -79,6 +80,23 @@ def _run_repl(agent: CivicReachAgent, input_stream=sys.stdin, output=sys.stdout)
         if user_message.strip().lower() in {"exit", "quit"}:
             print("Goodbye.", file=output)
             return 0
+        if user_message.strip().lower() in {"new", "restart"}:
+            # Keep the configured provider client and retriever, but replace
+            # every piece of conversation/assessment state with a fresh
+            # agent—exactly the same lifecycle boundary as POST
+            # /session/reset in the web surface.
+            agent = type(agent)(
+                llm_client=agent.llm_client,
+                retriever=agent._retrieve,
+            )
+            print(
+                "\n--- New screening started. Previous answers were erased. ---\n",
+                file=output,
+            )
+            print(first_turn_disclosure("en"), file=output)
+            print(f"\n{first_turn_greeting('en')}", file=output)
+            output.flush()
+            continue
         if user_message.strip().lower() == "handoff":
             # W17: print-ready case-worker handoff summary. Purely local —
             # renders the deterministic screen result; nothing is
