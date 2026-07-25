@@ -183,7 +183,14 @@ def _auto_file(findings: list[dict[str, Any]]) -> int:
             "replies": [t.get("assistant", "") for t in item.get("transcript", [])],
         })
     report = {"summary": {"source": "sim_daemon"}, "results": results}
-    queue = REPO / "redteam" / "attack_cases.jsonl"
+    # W47: queue findings into the dedicated failure queue, NOT the
+    # canonical attack_cases.jsonl. The previous target
+    # (``attack_cases.jsonl``) is the canonical fixture file the
+    # harness ``load_cases()`` reads at run time -- an auto-filer
+    # that can brick the corpus is worse than no filer. The dedicated
+    # queue (``failures_queue.jsonl``) is what the documented CLI in
+    # ``redteam/file_failures.py`` is designed to write to.
+    queue = REPO / "redteam" / "failures_queue.jsonl"
     with tempfile.NamedTemporaryFile("w", suffix=".json", dir=LOG_DIR, delete=False, encoding="utf-8") as handle:
         json.dump(report, handle)
         report_path = Path(handle.name)
@@ -240,6 +247,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--max-conversations", type=int, default=0, help="stop after N conversations; 0 means unbounded")
     parser.add_argument("--interval", type=float, default=30.0, help="seconds between conversations")
     parser.add_argument("--backoff", type=float, default=2.0, help="error backoff multiplier")
+    parser.add_argument(
+        "--max-backoff",
+        type=float,
+        default=900.0,
+        help="cap error backoff in seconds so a recovered provider is retried promptly",
+    )
     parser.add_argument("--seed", type=int, default=42, help="selection RNG seed")
     parser.add_argument("--personas", default=",".join(sorted(PERSONAS)), help="comma-separated persona names")
     parser.add_argument("--scenarios", default="", help="comma-separated scenario ids")
@@ -252,8 +265,16 @@ def main(argv: list[str] | None = None) -> int:
     args.scenarios = [x for x in SCENARIOS if not wanted or x.sid in wanted]
     if not args.scenarios:
         parser.error("no scenarios selected")
-    if args.max_conversations < 0 or args.interval < 0 or args.backoff < 1:
-        parser.error("max-conversations/interval must be non-negative and backoff must be >= 1")
+    if (
+        args.max_conversations < 0
+        or args.interval < 0
+        or args.backoff < 1
+        or args.max_backoff < args.interval
+    ):
+        parser.error(
+            "max-conversations/interval must be non-negative, backoff must be "
+            ">= 1, and max-backoff must be >= interval"
+        )
     FINDINGS_DIR.mkdir(parents=True, exist_ok=True)
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     rng = random.Random(args.seed)
@@ -264,8 +285,12 @@ def main(argv: list[str] | None = None) -> int:
         ordinal += 1
         result = run_once(args, rng, ordinal)
         if result.get("error"):
-            time.sleep(delay)
-            delay = max(args.interval, delay * args.backoff)
+            # Bounded jitter prevents permanent near-sleep after a long
+            # outage and avoids synchronized retries when multiple lanes
+            # share a provider.
+            sleep_for = min(args.max_backoff, delay) * rng.uniform(0.8, 1.2)
+            time.sleep(sleep_for)
+            delay = min(args.max_backoff, max(args.interval, delay * args.backoff))
         else:
             delay = args.interval
             if limit is None or ordinal < limit:
