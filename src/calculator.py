@@ -37,9 +37,9 @@ with others who purchase and prepare food separately — see
   elderly/disabled households, which NC follows. See "FY2026 165%
   standard for separate households" below.
 
-The default ``state_code="NC"`` activates NC BBCE. Other states would
-default to the federal 130% gross floor; only NC is implemented today
-because this agent is NC-only.
+Passing ``state_code="NC"`` activates NC BBCE. The generic calculator API
+defaults to the federal 130% gross floor; the NC-only CivicReach agent passes
+its jurisdiction explicitly.
 
 ## Net-income deduction chain (W31)
 
@@ -64,7 +64,7 @@ USDA FNS for the 48 contiguous states and DC (effective 2025-10-01 through
 
 Deduction source (USDA FNS, "SNAP FY 2026 Cost-of-Living Adjustments",
 effective 2025-10-01 through 2026-09-30):
-    https://www.usda.gov/sites/default/files/guidance-documents/fns.snap-cola-fy26memo.pdf
+    https://www.fns.usda.gov/snap/allotment/cola
 The memo's 48 States & DC table gives standard deductions $209 / $223 /
 $261 / $299 and maximum excess shelter deduction $744.
 
@@ -85,7 +85,7 @@ standards** for the 48 contiguous states and DC. The USDA memo publishes
 the monthly 100% and 130% standards as whole-dollar values, effective
 October 1, 2025 through September 30, 2026. See:
 
-    https://www.usda.gov/sites/default/files/guidance-documents/fns.snap-cola-fy26memo.pdf
+    https://www.fns.usda.gov/snap/allotment/cola
 
 The NC BBCE expanded band is represented as twice the published net
 standard, rounded to cents. Keeping all three bands in this one table
@@ -162,9 +162,14 @@ from typing import Any, Dict
 # Source for the FY2026 SNAP income standards and deductions:
 # USDA FNS, "SNAP FY 2026 Cost-of-Living Adjustments" memo,
 # effective 2025-10-01 through 2026-09-30.
-_POVERTY_GUIDELINES_SOURCE_URL = "https://www.usda.gov/sites/default/files/guidance-documents/fns.snap-cola-fy26memo.pdf"
+_POVERTY_GUIDELINES_SOURCE_URL = "https://www.fns.usda.gov/snap/allotment/cola"
 
-# USDA publishes these FY2026 monthly standards directly (48 States & DC).
+# USDA publishes these FY2026 monthly standards directly as operative
+# whole-dollar thresholds (48 States & DC), so they are stored as data rather
+# than re-derived at runtime. Audit trail: the source table derives gross at
+# 130% and net at 100% from the 2025 HHS poverty guidelines, then rounds each
+# monthly threshold UP to the next whole dollar. For example, HH1 arithmetic
+# gives $1,695.42 gross / $1,304.17 net, while USDA publishes $1,696 / $1,305.
 # The expanded NC BBCE column is twice the published net standard.
 _GROSS_LIMITS_2026: Dict[int, float] = {
     1: 1696.0, 2: 2292.0, 3: 2888.0, 4: 3483.0,
@@ -485,7 +490,7 @@ def calculate_eligibility(
     dependent_care_monthly: float = 0.0,
     medical_expenses_monthly: float = 0.0,
     shelter_costs_monthly: float = 0.0,
-    state_code: str = "NC",
+    state_code: str = "FEDERAL",
     separate_elderly_disabled_household: bool = False,
 ) -> Dict[str, Any]:
     """Run the deterministic NC FNS gross/net income test.
@@ -510,13 +515,13 @@ def calculate_eligibility(
         compared against the applicable limit and the widened 130–200%
         "apply anyway" band is used.
     state_code:
-        Two-letter US state code. Defaults to ``"NC"`` (the only state
-        this agent currently implements). When ``"NC"``, the gross-screen
-        ceiling is **200%** of poverty via BBCE; for any other value the
-        federal 130% gross ceiling is used. The 165% separate-household
-        standard is documented in ``separate_household_limits()`` and is
-        surfaced only via the ``separate_elderly_disabled_household``
-        flag below.
+        Two-letter US state code. Defaults to the federal rules so the
+        calculator's generic public API uses the published 130% gross
+        standard. The NC application must pass ``state_code="NC"``; that
+        route uses NC's **200%** gross-screen ceiling via BBCE. The 165%
+        separate-household standard is documented in
+        ``separate_household_limits()`` and is surfaced only via the
+        ``separate_elderly_disabled_household`` flag below.
     separate_elderly_disabled_household:
         True when the elderly/disabled member is a SEPARATE household
         (lives with others but purchases and prepares food separately).
@@ -688,7 +693,7 @@ def calculate_eligibility(
             and not deductions_used
             and not separate_elderly_disabled_household
         ):
-            # NC BBCE household (any track that defaults to NC) that is
+            # NC BBCE household (an explicitly selected NC track) that is
             # inside the 200% expanded band but failed the applicable test
             # without deductions supplied. This fires for:
             #   - non-elderly NC households between the gross test limit

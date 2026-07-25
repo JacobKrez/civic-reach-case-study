@@ -40,8 +40,14 @@ from __future__ import annotations
 import pytest
 
 from src.agent import CivicReachAgent
-from src.calculator import calculate_eligibility
+from src.calculator import calculate_eligibility as _calculate_eligibility
 from src.guardrails.classifier import CLASSIFIER_SYSTEM_PROMPT
+
+
+def calculate_eligibility(*args, **kwargs):
+    """Compare the NC application against the calculator's explicit NC route."""
+    kwargs.setdefault("state_code", "NC")
+    return _calculate_eligibility(*args, **kwargs)
 
 
 @pytest.fixture(autouse=True)

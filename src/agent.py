@@ -683,6 +683,10 @@ class CivicReachAgent:
             "household_size": household_size,
             "gross_monthly_income": gross_income,
             "has_elderly_or_disabled": elderly_or_disabled,
+            # CivicReach is the NC application.  Pass the jurisdiction
+            # explicitly because the calculator's generic API defaults to
+            # the federal 130% floor when no state is selected.
+            "state_code": "NC",
         }
         optional_deductions = {
             "earned_monthly_income": self.state.earned_monthly_income,

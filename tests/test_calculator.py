@@ -18,9 +18,15 @@ import pytest
 
 from src.calculator import (
     _POVERTY_GUIDELINES_SOURCE_URL,
-    calculate_eligibility,
+    calculate_eligibility as _calculate_eligibility,
     income_limits,
 )
+
+
+def calculate_eligibility(*args, **kwargs):
+    """Exercise CivicReach's NC route unless a test selects another state."""
+    kwargs.setdefault("state_code", "NC")
+    return _calculate_eligibility(*args, **kwargs)
 
 
 # ---------- fixtures for expected values ----------
@@ -51,7 +57,7 @@ def test_single_person_under_gross_qualifies():
     assert result["qualifies"] is True
     assert result["test_used"] == "gross"
     assert result["household_size"] == 1
-    # Under NC BBCE (default state_code="NC") the gross screen is at
+    # Under NC BBCE (selected explicitly by this test module) the gross screen is at
     # 200% of poverty, not the federal 130% floor. See W30.
     assert result["limit"] == HH1_BBCE_LIMIT
     assert result["bbce_limit"] == HH1_BBCE_LIMIT
@@ -178,8 +184,8 @@ def test_source_url_is_a_real_https_link():
     # where the calculator's published monthly income limits and
     # deduction standards come from. USDA FNS re-sources this annually.
     assert _POVERTY_GUIDELINES_SOURCE_URL.startswith("https://")
-    assert "usda.gov" in _POVERTY_GUIDELINES_SOURCE_URL
-    assert "snap-cola-fy26" in _POVERTY_GUIDELINES_SOURCE_URL
+    assert "fns.usda.gov" in _POVERTY_GUIDELINES_SOURCE_URL
+    assert _POVERTY_GUIDELINES_SOURCE_URL.endswith("/snap/allotment/cola")
 
 
 # ---------- W30: four-outcome eligibility band (NC BBCE) ----------
@@ -661,10 +667,11 @@ def test_w14_negative_deduction_inputs_rejected():
 # a household at exactly the published limit qualifies; a household at
 # limit + $1 does not.
 #
-# IMPORTANT: under NC BBCE (default state_code="NC") the operative gross
-# screen is the 200% ceiling, not the federal 130% floor. To exercise the
-# 130% federal-floor boundary the test routes through state_code="TX"
-# (any non-NC value triggers the 130% federal floor). The 100% net limit
+# IMPORTANT: under NC BBCE (selected explicitly by this test module) the operative gross
+# screen is the 200% ceiling, not the federal 130% floor. The boundary test
+# below bypasses this module's NC wrapper and calls the generic public API
+# directly, proving the no-state default uses the USDA-published 130% column.
+# The 100% net limit
 # is tested by marking the household elderly/disabled and keeping the
 # deduction chain disabled (the limit then acts as the comparison figure
 # directly, mirroring the no-deductions path the calculator's regression
@@ -709,23 +716,20 @@ def test_w29_income_limits_match_usda_fy2026_net_column(hh_size):
 def test_w29_federal_130pct_gross_floor_boundary(hh_size):
     """Household at exactly the 130% federal floor qualifies; +$1 does not.
 
-    Routed through ``state_code="TX"`` so the 130% federal floor (the
-    published gross column) is the operative ceiling. Under NC BBCE the
-    default ceiling is higher (200% FPL), which is also asserted by
-    ``test_non_elderly_exactly_at_200_percent_qualifies_under_bbce``.
+    Uses the generic calculator default directly so this test is identical to
+    the public three-argument API boundary: the published federal gross
+    column is the operative ceiling when no state is selected.
     """
     floor = USDA_FY2026_GROSS[hh_size]
-    at_limit = calculate_eligibility(
+    at_limit = _calculate_eligibility(
         household_size=hh_size,
         gross_monthly_income=floor,
         has_elderly_or_disabled=False,
-        state_code="TX",
     )
-    over_limit = calculate_eligibility(
+    over_limit = _calculate_eligibility(
         household_size=hh_size,
         gross_monthly_income=floor + 1.0,
         has_elderly_or_disabled=False,
-        state_code="TX",
     )
     assert at_limit["qualifies"] is True, (
         f"HH{hh_size} at ${floor} (130% federal floor) must qualify"
@@ -750,19 +754,29 @@ def test_w29_net_limit_at_or_below_qualifies_above_does_not(hh_size):
     regression-safe no-deductions path applies the gross figure directly
     against the net limit, producing a conservative bias).
 
-    NOTE: per the calculator's W31 design, no-deductions elderly/disabled
-    households whose gross income is at or below the 200% BBCE ceiling
-    land in ``likely_eligible_gross_pending_net`` (NC-specific outcome),
-    not ``likely_eligible``. The boundary assertion is therefore on the
-    ``net limit`` exposed by the calculator, not on the
-    ``qualifies`` boolean — the value is what the documentation and the
-    KB cite, and the boundary test guards against drift in the table.
+    The net standard is federal and remains operative for an
+    elderly/disabled household. Exactly the published whole-dollar limit
+    passes; one dollar above it does not.
     """
     net_limit = USDA_FY2026_NET[hh_size]
     reported = income_limits(hh_size)["net"]
     assert abs(reported - net_limit) < 0.01, (
         f"HH{hh_size} net limit ${reported} != USDA-published ${net_limit}"
     )
+    at_limit = calculate_eligibility(
+        household_size=hh_size,
+        gross_monthly_income=net_limit,
+        has_elderly_or_disabled=True,
+    )
+    over_limit = calculate_eligibility(
+        household_size=hh_size,
+        gross_monthly_income=net_limit + 1.0,
+        has_elderly_or_disabled=True,
+    )
+    assert at_limit["qualifies"] is True
+    assert at_limit["test_used"] == "net"
+    assert at_limit["limit"] == net_limit
+    assert over_limit["qualifies"] is False
 
 
 def test_w29_gross_additional_per_person_matches_fy2026():

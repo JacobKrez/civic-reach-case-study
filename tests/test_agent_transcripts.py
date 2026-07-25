@@ -81,6 +81,7 @@ def test_scripted_transcript_accumulates_state_and_calculates_once(monkeypatch):
         household_size=3,
         gross_monthly_income=1800.0,
         has_elderly_or_disabled=False,
+        state_code="NC",
     )
     # The classifier runs first (call 0, system=CLASSIFIER_SYSTEM_PROMPT, no tools);
     # the agent's main call (call 1, system=SYSTEM_PROMPT) carries the tools.

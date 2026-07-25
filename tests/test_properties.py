@@ -49,11 +49,17 @@ from hypothesis import HealthCheck, assume, given, settings, strategies as st
 
 from src.agent import CivicReachAgent
 from src.calculator import (
-    calculate_eligibility,
+    calculate_eligibility as _calculate_eligibility,
     income_limits,
     max_household_size,
 )
 from src.state import AssessmentState
+
+
+def calculate_eligibility(*args, **kwargs):
+    """Use NC for agent comparisons; preserve explicit generated states."""
+    kwargs.setdefault("state_code", "NC")
+    return _calculate_eligibility(*args, **kwargs)
 
 
 # ---------------------------------------------------------------------------
