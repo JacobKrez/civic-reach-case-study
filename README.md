@@ -193,10 +193,11 @@ flowchart TD
   a malformed tool call is dropped and the field stays missing so the
   loop re-asks on the next turn.
 * *Deterministic calculator.* Pure-Python, no I/O, no network. The
-  decision is a table lookup plus arithmetic against HHS 2025 poverty
-  guidelines x 1.30 (gross track) or x 1.00 (net track, for households
-  with an elderly or disabled member). All arithmetic happens here, not
-  in the prompt.
+  decision is a table lookup plus arithmetic against the FY2026 federal
+  SNAP income-eligibility standards published by USDA FNS (effective
+  2025-10-01 through 2026-09-30): the 130% gross screen, the 100% net
+  screen for households with an elderly or disabled member, and the
+  NC BBCE 200% ceiling. All arithmetic happens here, not in the prompt.
 * *Retrieval + visible citations.* Every final answer is appended with a
   code-templated `(Sources: ...)` line naming the documents retrieved for
   the applicable income track. The model does not write this line — it
@@ -226,7 +227,33 @@ flowchart TD
   multi-tenancy—and it matches the case study's "do not submit real
   applications, do not contact a real agency" guardrail.
 * **Real agency integration.** Explicitly forbidden by the case study
-  prompt. We never call, scrape, or submit anywhere.
+  prompt. We never call, scrape, or submit anywhere. This also rules
+  out any outbound notification path on the case-worker handoff — the
+  print-ready summary is the entire deliverable, and the good part of
+  the handoff is exactly that it works with zero external dependencies.
+* **Outbound handoff email.** The case-worker handoff is a local,
+  print-ready summary block plus an on-screen banner. A prior revision
+  included a best-effort outbound-email notification gated behind four
+  env vars, but shipping any outbound-contact path in the repo is the
+  wrong signal even when disabled: it would let a careless operator
+  point it at a real recipient. Removed in W39; the local summary is
+  the deliverable.
+* **Full Spanish KB translation.** Only `01_program_overview.md` is
+  translated to Spanish (W19). The income-limits and deductions docs
+  carry numbers and exceptions that need a domain reviewer, not a
+  machine translation; a half-translated bilingual surface reads worse
+  than a clean EN/ES split where Spanish answers are grounded in the
+  English corpus and clearly labeled as such. A clean cut beats a
+  shoddy one — see the Spanish-coverage bullet in **Known limitations**.
+* **Expanded 165% track for separate elderly/disabled households.** The
+  FY2026 memo defines a third standard for households where an elderly
+  or disabled member buys and prepares food separately. The knowledge
+  base documents it (kb/03, "Separate Elderly/Disabled Households —
+  FY2026 165% standard") so a reviewer can trace the rules, but the
+  calculator and intake flow do not yet collect the "separate
+  household" signal. The W18/W31 work added the deduction chain for
+  the standard 100% net case; the 165% track is the next milestone in
+  the **Production roadmap**, not a current capability.
 
 ## Guardrails
 
@@ -236,7 +263,7 @@ flowchart TD
 | Hostility keyword (`detect_hostility`) | Profanity/insults directed at the agent ("fuck you", "stupid bot", "you're useless") — NOT profanity about the user's situation | Non-blocking, deliberately. Sets a per-turn flag, prepends one calm de-escalation instruction to the system prompt for that turn only (stay professional, don't mirror tone, stay on task), and writes a history-only audit note. Never refuses or ends the conversation. **Crisis always wins**: the detector runs only after crisis/injection/scope have cleared, so a hostile *and* crisis-flagged message still gets the full 911/988/DV/211 response. |
 | Prompt-injection keyword (`detect_injection`) | "ignore previous instructions", "you are now DAN", "system:" spoofing, role-override attempts | Hardcoded refusal. The flag is recorded but does not lock the conversation into refusal mode — the next normal message is evaluated normally. |
 | Out-of-scope keyword (`detect_scope`) | Legal advice, unrelated benefit programs, immigration questions, tax / housing / Medicaid | Polite redirect back to FNS questions. State is preserved; nothing already collected is reset. |
-| PII redactor (`redact_for_logging`) | SSN-shaped, account-shaped, routing-shaped patterns | Strips from conversation history before it's logged, so any later dump is safe by construction. |
+| PII redactor (`redact_for_logging`) | SSN-shaped, account-shaped, routing-shaped patterns, US phone numbers in common formats, street-address-shaped patterns, and email addresses | Strips from conversation history before it's logged, so any later dump is safe by construction. Free-form personal-name detection is deliberately not covered — it needs NER to be accurate and would over-redact ordinary English words. |
 | LLM intent classifier (`classify_intent`) | Novel phrasings of the three above that the keyword lists miss | Defense in depth. Failure mode is fail-open: on any error or "normal" label, the agent proceeds to the normal LLM call. |
 | First-turn AI / not-a-person disclosure (`first_turn_disclosure`) | A user who might otherwise not realize they're talking to an unmonitored AI text tool that cannot see them, dispatch anyone, or take any real-world action | The very first assistant message of every conversation (rendered verbatim as the first web-UI bubble and the CLI banner) names FoodPath as an automated AI assistant, states the initial SCREEN scope, lists what it CANNOT do (see, call, dispatch, take real-world action), and points to 911 / 988 for emergencies. Hard-coded, not LLM-generated, so the framing cannot drift. Mirrors how trained 911 / 988 operators explicitly triage at the start of every call and how EBT card-services lines identify themselves ("we only handle card issues; for eligibility you need your state SNAP agency, not this line"). CA SB 243 / WA HB 2225 require this disclosure for conversational bots; the FTC treats non-disclosure of AI-vs-human as potentially deceptive. |
 | Not-a-person disambiguation (`detect_not_a_person_request`) | A user who explicitly asks "is this a real person" / "are you calling someone" / "is this 911" / "is this the EBT line" | Hardcoded "what this is NOT" block naming each adjacent real channel — NC DSS (caseworker), 911, 988 live counselors, EBT card-services line — with a one-line pointer to the real channel for each. Runs strictly below crisis / injection / scope in the guardrail chain, so a crisis disclosure still wins. |
@@ -253,13 +280,17 @@ layers cannot be disabled — they are the floor.
   It is not a final agency determination, and the conversation banner
   and system prompt both say so. Real applicants still need to file with
   their county DSS.
-* **Net-income deductions are simplified.** The federal net-income test
-  subtracts the SNAP standard deduction, earned-income deduction,
-  dependent-care deduction, medical deduction (elderly / disabled), and
-  shelter deduction. The calculator folds the standard deduction into
-  the limit and ignores the rest. The outcome band (130–200% of poverty)
-  is widened to compensate: anyone in that band is told "maybe, talk to
-  a case worker" rather than auto-denied.
+* **Net-income deductions are computed, not stubbed.** The federal
+  net-income test subtracts the SNAP standard deduction (FY2026
+  USDA-published amounts by household size), the 20% earned-income
+  deduction, the dependent-care deduction, the excess medical
+  deduction (elderly / disabled), and the excess shelter deduction
+  (capped at the FY2026 48-states & DC maximum). The calculator
+  honors all of these when the applicant volunteers the underlying
+  fields (`earned_monthly_income`, `dependent_care_monthly`,
+  `medical_expenses_monthly`, `shelter_costs_monthly`); when none are
+  volunteered it falls back to the gross test. No "maybe" band is
+  faked to compensate.
 * **Keyword + classifier is still not exhaustive.** New injection or
   crisis phrasings will keep arriving. The red-team suite (`redteam/`)
   is the regression net; new failure modes must be filed into
@@ -271,43 +302,51 @@ layers cannot be disabled — they are the floor.
   every constant to update. If the table falls behind, the calculator is
   slightly more permissive than the actual program — a known trade-off
   of the deterministic design.
-* **Spanish coverage is heuristic, PoC-grade.** Language detection is a
-  keyword/character heuristic (W15), and the Spanish knowledge-base
-  translation covers only the program-overview doc — Spanish answers on
-  income limits, deductions, and how-to-apply are still grounded in the
-  English corpus. The Spanish system prompt and Spanish guardrail
-  renderings landed in W19; production would add full KB translations
-  and a reviewed language identifier.
-* **PII redactor is regex-only.** It catches SSN-shaped and
-  account-shaped patterns; it does not catch free-form names, addresses,
-  or phone numbers. Conversation history is therefore not fully
-  anonymized — it just doesn't contain the worst-pattern identifiers.
+* **Spanish coverage is partial by design.** Language detection is a
+  keyword/character heuristic (W15), the Spanish system prompt and
+  Spanish guardrail renderings landed in W19, and only
+  `01_program_overview.md` is translated to Spanish
+  (`01_program_overview.es.md`). The income-limits, deductions, and
+  how-to-apply KB docs are English-only, so Spanish answers on those
+  topics are still grounded in the English corpus (the agent quotes
+  the English source path in its citations). A clean EN/ES split is
+  better than a half-translated bilingual surface that mixes the two
+  — see the "Full Spanish KB translation" bullet in **What we
+  deliberately cut and why**. A production deployment would translate
+  the rest of the KB with a domain reviewer and add a real language
+  identifier.
+* **PII redactor is regex-only, by design.** It catches SSN-shaped,
+  account-shaped, routing-shaped, email, US-phone, and street-address
+  patterns — the formats that have a precise enough shape for a
+  regex to be reliable. It deliberately does not catch free-form
+  personal names; that needs NER/ML to be even remotely accurate and
+  produces too many false positives on ordinary English words. So
+  conversation history is hardened against the worst-pattern
+  identifiers, not anonymized — the system prompt also forbids asking
+  for free-form PII in the first place.
 
 ## Production roadmap
 
 What we would build next, in priority order, given more time:
 
-1. **Real deduction math.** Compute the federal net-income test properly:
-   standard deduction + earned-income deduction + dependent-care +
-   medical (elderly / disabled) + shelter. This tightens the outcome
-   band back to 130/100% and removes the "maybe" carve-out.
-2. **Case-worker handoff.** A "talk to a human" handoff that produces a
-   print-ready summary of the intake and the rule citations behind the
-   screen, in plain English, so a DSS case worker can pick up mid-flow.
-   The on-screen summary is the reliable, dependency-free path (what gets
-   demoed live). On top of that, a best-effort notification fires only if
-   SMTP env vars are configured — it demonstrates the *mechanism* a real
-   deployment would use to alert a case worker's queue, not a real
-   integration; the recipient is read from env only and is never a real
-   agency address.
-3. **Deeper Spanish localization.** The Spanish system prompt and Spanish
-   guardrail renderings landed in W19; remaining gaps are full KB
-   translations beyond the overview doc and a production-grade language
-   identifier. The most-requested gap for any NC benefits tool.
-4. **Telemetry with PII redaction.** First-class event log of every
+1. **165% track for separate elderly/disabled households.** The
+   FY2026 memo defines a third gross-income standard for households
+   where an elderly or disabled member buys and prepares food
+   separately. The knowledge base documents it (kb/03) so a reviewer
+   can trace the rules; the calculator and intake flow do not yet
+   collect the "separate household" signal, and the standard 100%
+   net path is what the agent computes today. Adding this is the
+   next milestone in the deduction-chain work that W18/W31 started.
+2. **Deeper Spanish localization.** The Spanish system prompt and
+   Spanish guardrail renderings landed in W19; remaining gaps are
+   full KB translations beyond the overview doc and a
+   production-grade language identifier. The most-requested gap for
+   any NC benefits tool — see the "Full Spanish KB translation" bullet
+   in **What we deliberately cut and why**.
+3. **Telemetry with PII redaction.** First-class event log of every
    turn with the redactor applied at write-time, so we can see failure
    modes in production without ever persisting raw user input.
-5. **Eval harness in CI.** Partially shipped: GitHub Actions runs the
+4. **Eval harness in CI.** Partially shipped: GitHub Actions runs the
    full pytest suite plus a red-team `--dry-run` on every push/PR (see
    the CI section above). Remaining: a scheduled live (non-dry-run)
    red-team pass with a pass/fail threshold on outcome-band stability,
@@ -319,25 +358,29 @@ What we would build next, in priority order, given more time:
 ```
 src/
   agent.py            # conversation loop, tool handling, correction tracking
-  calculator.py       # deterministic eligibility arithmetic (HHS 2025)
+  calculator.py       # deterministic eligibility arithmetic (FY2026 SNAP standards)
   retrieval.py        # RAG over knowledge_base/
   llm_client.py       # provider-agnostic client (anthropic / openai / minimax / openrouter)
   state.py            # typed Pydantic AssessmentState
   cli.py              # `python3 -m src.cli`
-  web.py              # FastAPI UI: POST /chat, GET /, GET /health
+  web.py              # FastAPI UI: POST /chat, POST /handoff, GET /, GET /health
+  handoff.py          # W17 case-worker handoff: print-ready summary + banner
+  branding.py         # product name + UI labels
+  telemetry.py        # per-turn structured event log (PII-redacted at write time)
   guardrails/
     crisis.py         # detect_crisis, crisis_response (911 / 988 / DV hotline 1-800-799-7233 / USDA / 211)
     hostility.py      # detect_hostility + per-turn de-escalation context (non-blocking; crisis wins)
     injection.py      # detect_injection, injection_response
     scope.py          # detect_out_of_scope, scope_redirect_message
     classifier.py     # LLM intent classifier (defense in depth)
-    pii.py            # redact_for_logging
+    pii.py            # redact_for_logging (SSN, account, routing, email, phone, address)
     ambiguity.py      # normalize_income ("$2,500", "$600/week" -> monthly float)
 
-knowledge_base/       # 4 markdown chunks of public NC FNS rules
+knowledge_base/       # FY2026 NC FNS rules (English); 01 is also translated to Spanish
 redteam/              # attack_cases.jsonl + run_redteam + failure file
-tests/                # pytest suite (calculator, guardrails, agent, web)
-scripts/              # one-off generators (KB income table, etc.)
+tests/                # pytest suite (calculator, guardrails, agent, web, golden transcripts, red-team signatures)
+scripts/              # KB table generator, simulator daemon, live red-team runner, self-improve queue
+static/               # web UI static assets (manifest + service worker)
 ```
 
 ## Safety

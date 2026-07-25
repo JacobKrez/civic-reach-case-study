@@ -36,7 +36,7 @@ from .guardrails.scope import (
     not_a_person_response,
     scope_redirect_message,
 )
-from .handoff import _HANDOFF_BANNER, handoff_summary, send_handoff_email
+from .handoff import _HANDOFF_BANNER, handoff_summary
 from .llm_client import LLMClient
 from .retrieval import detect_spanish, retrieve
 from .state import AssessmentState
@@ -358,7 +358,7 @@ def first_turn_greeting(lang: str = "en") -> str:
     return FIRST_TURN_GREETING_EN
 
 
-class CivicReachAgent:
+class FoodPathAgent:
     """Maintain assessment state and delegate extraction to structured tools."""
 
     def __init__(
@@ -407,6 +407,13 @@ class CivicReachAgent:
         self.session_id = str(uuid.uuid4())
         self.last_layer = "llm"
         self.last_turn_event: dict[str, Any] = {}
+        # W48: per-turn attribution of WHICH guardrail layer resolved the
+        # turn. Set by ``_turn_impl`` when a keyword detector or the LLM
+        # intent classifier fires; read by ``turn()`` to populate
+        # ``last_turn_event['guardrail_source']`` so the red-team harness
+        # can report per-layer attribution (keyword vs classifier). Reset
+        # to ``None`` at the start of every turn.
+        self._guardrail_source: str | None = None
 
     @property
     def eligibility_result(self) -> dict[str, Any] | None:
@@ -423,22 +430,20 @@ class CivicReachAgent:
         * ``summary`` — the print-ready plain-English text block
           (code-templated in src/handoff.py, never model-generated);
         * ``banner`` — the on-screen confirmation line for the web UI,
-          so the notification concept is visible with zero external
-          dependencies;
-        * ``email_attempted`` / ``email_sent`` — status of the
-          strictly-secondary best-effort SMTP notification (attempted
-          only when all SMTP_* env vars are present; any SMTP failure is
-          swallowed and never degrades the on-screen path).
+          so the "ready to share with a case worker" signal is visible
+          with zero external dependencies.
+
+        The package is deliberately local-only: there is no outbound
+        notification path of any kind. The case study says explicitly
+        not to submit applications or contact agencies, and the good
+        part of the handoff is the dependency-free summary block.
         """
         summary = handoff_summary(self.state, self._eligibility_result, self.last_citations)
         if summary is None:
             return None
-        email_sent = send_handoff_email(summary)
         return {
             "summary": summary,
             "banner": _HANDOFF_BANNER,
-            "email_attempted": email_sent,
-            "email_sent": email_sent,
         }
 
     def _system_prompt(self) -> str:
@@ -658,9 +663,9 @@ class CivicReachAgent:
             return normalize_income(text)
         if field == "has_elderly_or_disabled_member":
             token = text.lower().strip(".! ")
-            if token in CivicReachAgent._NEGATIVE_WORDS:
+            if token in FoodPathAgent._NEGATIVE_WORDS:
                 return False
-            if token in CivicReachAgent._POSITIVE_WORDS:
+            if token in FoodPathAgent._POSITIVE_WORDS:
                 return True
             return None
         return None
@@ -700,6 +705,10 @@ class CivicReachAgent:
 
     def turn(self, user_message: str) -> str:
         """Telemetry boundary around a complete turn."""
+        # W48: reset per-turn attribution. ``_turn_impl`` sets this to
+        # ``'keyword'`` when a deterministic detector fires and
+        # ``'classifier'`` when the LLM intent classifier fires.
+        self._guardrail_source = None
         before = self.state.model_dump(mode="json")
         started = time.perf_counter()
         reply = ""
@@ -744,6 +753,11 @@ class CivicReachAgent:
             self.last_layer = layer
             event = {"session_id": self.session_id, "turn_index": self.state.turn_count,
                 "user_message": user_message, "layer": layer, "classifier_label": None,
+                # W48: per-layer attribution. ``None`` when the LLM
+                # resolved the turn without a guardrail firing (ordinary
+                # intake / calculator turns). The red-team harness reads
+                # this to report per-layer counts.
+                "guardrail_source": self._guardrail_source,
                 "state_before": before, "state_after": after, "tool_calls": [],
                 "fallback_fired": False, "fallback": None,
                 "retrieval_hits": self._prompt_citations, "calculator_inputs": before,
@@ -796,6 +810,8 @@ class CivicReachAgent:
 
         if detect_crisis(user_message):
             self.state.is_crisis = True
+            # W48: keyword layer attribution.
+            self._guardrail_source = "keyword"
             # The default bilingual block stays the safe choice when the
             # language is still unknown; once a mode is set, the crisis
             # response renders in that language only so a Spanish
@@ -809,12 +825,16 @@ class CivicReachAgent:
         # Injection remains above scope for dual-flag override attempts.
         if detect_injection(user_message):
             self.state.is_injection_attempt = True
+            # W48: keyword layer attribution.
+            self._guardrail_source = "keyword"
             content = injection_response(lang)
             self._messages.append({"role": "assistant", "content": content})
             return content
 
         if detect_out_of_scope(user_message):
             self.state.is_out_of_scope = True
+            # W48: keyword layer attribution.
+            self._guardrail_source = "keyword"
             content = scope_redirect_message(lang)
             self._messages.append({"role": "assistant", "content": content})
             return content
@@ -904,6 +924,8 @@ class CivicReachAgent:
         intent = classify_intent(user_message, self.llm_client)
         if intent == "crisis":
             self.state.is_crisis = True
+            # W48: classifier layer attribution.
+            self._guardrail_source = "classifier"
             content = crisis_response(
                 "bilingual" if not detect_spanish(user_message) else lang
             )
@@ -911,11 +933,15 @@ class CivicReachAgent:
             return content
         if intent == "injection":
             self.state.is_injection_attempt = True
+            # W48: classifier layer attribution.
+            self._guardrail_source = "classifier"
             content = injection_response(lang)
             self._messages.append({"role": "assistant", "content": content})
             return content
         if intent == "off_topic":
             self.state.is_out_of_scope = True
+            # W48: classifier layer attribution.
+            self._guardrail_source = "classifier"
             content = scope_redirect_message(lang)
             self._messages.append({"role": "assistant", "content": content})
             return content
@@ -1243,14 +1269,7 @@ class CivicReachAgent:
         return content
 
 
-# Public rebrand with a compatibility alias: existing case-study tests and
-# integrations importing CivicReachAgent continue to work while new callers
-# get the product-aligned name.
-FoodPathAgent = CivicReachAgent
-
-
 __all__ = [
-    "CivicReachAgent",
     "FoodPathAgent",
     "SYSTEM_PROMPT",
     "SYSTEM_PROMPT_ES",
@@ -1261,4 +1280,4 @@ __all__ = [
     "FIRST_TURN_GREETING_ES",
     "first_turn_disclosure",
     "first_turn_greeting",
-]
+]  # noqa: F401  (re-exported for case-study imports)

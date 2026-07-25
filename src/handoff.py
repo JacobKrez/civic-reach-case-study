@@ -8,34 +8,25 @@ screen so a DSS case worker can pick up mid-flow. Two hard rules:
    ``AssessmentState`` and the deterministic calculator result, so the
    block cannot fabricate intake data.
 2. The on-screen/print-ready path has ZERO external dependencies — it
-   must work standalone in a review meeting with no SMTP, no network,
-   nothing. Email is a strictly secondary, best-effort notification
-   layer: it fires only when SMTP_HOST, SMTP_USER, SMTP_PASS, and
-   SMTP_TO are ALL present in the environment, and any SMTP failure is
-   caught and never propagates to the caller.
+   must work standalone in a review meeting with no network, no
+   notification plumbing, and no third-party transport. The case study
+   explicitly forbids any mechanism that submits real applications or
+   contacts a real agency, so the only artifact is the local,
+   dependency-free summary plus the on-screen banner that says it is
+   ready to share with a case worker.
 
-The email recipient is read from SMTP_TO only — nothing is hardcoded,
-and nothing resembling a real agency address appears in this file. This
-is a demo of the notification MECHANISM a production handoff would use,
-not a real integration.
+The print-ready block is the entire deliverable. There is no email
+layer, no outbound-contact path, and no integration with anything
+external. Anything sent to a real case worker leaves through whatever
+channel the user/operator chooses — copy/paste, screen-share, a print
+dialog — never from this code.
 """
 
 from __future__ import annotations
 
-import logging
-import os
-import smtplib
-from collections.abc import Mapping
-from email.message import EmailMessage
 from typing import Any
 
 from .state import AssessmentState
-
-logger = logging.getLogger(__name__)
-
-# All four must be present for the best-effort email path to attempt a
-# send. Any one missing -> silently skip (one-line log note, no raise).
-SMTP_ENV_VARS = ("SMTP_HOST", "SMTP_USER", "SMTP_PASS", "SMTP_TO")
 
 _HANDOFF_BANNER = "Handoff summary generated — ready to share with a case worker"
 
@@ -142,59 +133,7 @@ def handoff_summary(
     return "\n".join(lines)
 
 
-def smtp_is_configured(env: Mapping[str, str] | None = None) -> bool:
-    """True only when ALL of SMTP_HOST/SMTP_USER/SMTP_PASS/SMTP_TO are set."""
-    source = os.environ if env is None else env
-    return all(source.get(var, "").strip() for var in SMTP_ENV_VARS)
-
-
-def send_handoff_email(
-    summary: str,
-    env: Mapping[str, str] | None = None,
-    *,
-    smtp_factory: Any = None,
-) -> bool:
-    """Best-effort email of the handoff summary. NEVER raises.
-
-    Skips silently (returns False, one-line log) unless all four SMTP_*
-    env vars are present. Catches every SMTP exception and returns False
-    so the on-screen handoff path is never degraded by the notification
-    layer. ``env`` and ``smtp_factory`` are injection seams for tests;
-    production callers use the real environment and smtplib.
-    """
-    source = os.environ if env is None else env
-    if not smtp_is_configured(source):
-        logger.info("SMTP not fully configured — skipping handoff email.")
-        return False
-
-    message = EmailMessage()
-    message["From"] = source["SMTP_USER"].strip()
-    message["To"] = source["SMTP_TO"].strip()
-    message["Subject"] = "FoodPath case-worker handoff summary (demo)"
-    message.set_content(summary)
-
-    factory = smtplib.SMTP if smtp_factory is None else smtp_factory
-    try:
-        port = int(source.get("SMTP_PORT", "").strip() or "587")
-        with factory(source["SMTP_HOST"].strip(), port, timeout=10) as server:
-            try:
-                server.starttls()
-            except (AttributeError, smtplib.SMTPException, OSError):
-                # Some local/demo relays (e.g. a debug sink on localhost)
-                # do not support STARTTLS. Best-effort: proceed without it.
-                logger.info("STARTTLS unavailable — sending without TLS.")
-            server.login(source["SMTP_USER"].strip(), source["SMTP_PASS"].strip())
-            server.send_message(message)
-        return True
-    except Exception as exc:  # noqa: BLE001 — best-effort must never propagate
-        logger.info("Handoff email failed (non-fatal): %s", exc)
-        return False
-
-
 __all__ = [
-    "SMTP_ENV_VARS",
     "_HANDOFF_BANNER",
     "handoff_summary",
-    "send_handoff_email",
-    "smtp_is_configured",
 ]

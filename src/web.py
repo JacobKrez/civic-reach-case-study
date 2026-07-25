@@ -263,7 +263,6 @@ def chat(request: ChatRequest, response: Response) -> dict[str, Any]:
         crisis_reply=crisis_reply,
     )
     response.headers["X-FoodPath-Layer"] = agent.last_layer
-    response.headers["X-CivicReach-Layer"] = agent.last_layer  # compatibility
     return {
         "reply": reply,
         "state": state,
@@ -278,10 +277,12 @@ def chat(request: ChatRequest, response: Response) -> dict[str, Any]:
 def handoff(request: HandoffRequest) -> dict[str, Any]:
     """W17 case-worker handoff: print-ready summary + on-screen banner.
 
-    The on-screen path has zero external dependencies. A best-effort
-    SMTP notification fires only when all SMTP_* env vars are set; it
-    never blocks or degrades this response. Returns 409 when the screen
-    is not complete yet — the summary is never producible early.
+    Local-only by design. The deterministic summary block plus the
+    on-screen banner are the entire deliverable: zero external
+    dependencies, no outbound contact, and the case study's "do not
+    submit applications, do not contact agencies" rule precludes any
+    notification layer. Returns 409 when the screen is not complete
+    yet — the summary is never producible early.
     """
     agent = _get_session(request.session_id, create=False)
     if agent is None:
@@ -1406,7 +1407,7 @@ def _client_script(lang: str) -> str:
         body: JSON.stringify({message: message, session_id: sid})
       });
       const data = await r.json();
-      data.layer = r.headers.get('X-FoodPath-Layer') || r.headers.get('X-CivicReach-Layer');
+      data.layer = r.headers.get('X-FoodPath-Layer');
       if(!r.ok) throw new Error((data && data.detail) || ('Request failed ('+r.status+')'));
       hideTyping();
       const crisis = data.layer === 'crisis';

@@ -5,7 +5,7 @@ Run with::
     python3 -m src.cli
 
 Reads one line at a time from stdin, passes each line to
-``CivicReachAgent.turn``, and prints the assistant reply. Handles
+``FoodPathAgent.turn``, and prints the assistant reply. Handles
 ``KeyboardInterrupt`` (Ctrl-C) and end-of-file input gracefully so the
 process never crashes with a traceback on trivial input during a live demo.
 Exits with status 1 when no LLM provider API key is configured.
@@ -99,9 +99,9 @@ def _run_repl(agent: FoodPathAgent, input_stream=sys.stdin, output=sys.stdout) -
             continue
         if user_message.strip().lower() == "handoff":
             # W17: print-ready case-worker handoff summary. Purely local —
-            # renders the deterministic screen result; nothing is
-            # submitted anywhere. Email is best-effort only when SMTP_*
-            # env vars are all present (never in a normal demo env).
+            # renders the deterministic screen result and prints a banner.
+            # Nothing is submitted anywhere; there is no outbound contact
+            # path. The on-screen summary is the entire deliverable.
             try:
                 package = agent.handoff_summary()
             except Exception as exc:  # noqa: BLE001 — never traceback mid-demo

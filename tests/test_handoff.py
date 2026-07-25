@@ -1,14 +1,14 @@
-"""Tests for W17 case-worker handoff summary + best-effort notification.
+"""Tests for W17 case-worker handoff summary.
 
-Covers the three spec'd areas:
-1. handoff_summary() content + gating (never producible before intake is
-   complete and a deterministic eligibility result exists; reflects real
-   state only).
-2. Email path is skipped cleanly with no SMTP env configured — the
-   default test-suite behavior, with NO real network calls.
-3. With SMTP fully mocked, the attempt fires with the correct
-   recipient/content, and any SMTP exception is caught and does not
-   propagate to the caller.
+Covers the two spec'd areas:
+
+1. handoff_summary() content + gating — never producible before intake
+   is complete and a deterministic eligibility result exists; reflects
+   real state only.
+2. The agent-level package returned to the web UI / CLI is exactly
+   ``{"summary", "banner"}`` — the dependency-free, local-only
+   deliverable. There is no email layer, no SMTP, and no outbound
+   contact path (W39 cut).
 """
 
 from __future__ import annotations
@@ -16,14 +16,9 @@ from __future__ import annotations
 import pytest
 
 from src import handoff as handoff_mod
-from src.agent import CivicReachAgent
+from src.agent import FoodPathAgent
 from src.calculator import calculate_eligibility
-from src.handoff import (
-    _HANDOFF_BANNER,
-    handoff_summary,
-    send_handoff_email,
-    smtp_is_configured,
-)
+from src.handoff import _HANDOFF_BANNER, handoff_summary
 from src.state import AssessmentState
 
 
@@ -84,12 +79,12 @@ def test_handoff_summary_returns_none_when_no_eligibility_result():
 
 
 def test_agent_handoff_summary_none_before_result_exists():
-    agent = CivicReachAgent(llm_client=_NoopLLM())
+    agent = FoodPathAgent(llm_client=_NoopLLM())
     assert agent.handoff_summary() is None
 
 
 def test_handoff_summary_never_calls_the_llm():
-    agent = CivicReachAgent(llm_client=_NoopLLM())
+    agent = FoodPathAgent(llm_client=_NoopLLM())
     agent.state = _complete_state()
     agent._eligibility_result = _result_for(agent.state)
     package = agent.handoff_summary()
@@ -156,129 +151,37 @@ def test_handoff_summary_works_without_citations():
     assert "RULE CITATIONS" not in summary
 
 
-def test_agent_handoff_package_shape_and_banner():
-    agent = CivicReachAgent(llm_client=_NoopLLM())
+def test_handoff_summary_marks_volunteered_deductions_with_real_chain():
+    # W31: the actual calculator honors the deduction chain. The handoff
+    # block must show whatever the applicant volunteered, not stub copy.
+    state = _complete_state(
+        earned_monthly_income=1_600.0,
+        dependent_care_monthly=300.0,
+        shelter_costs_monthly=900.0,
+        medical_expenses_monthly=200.0,
+        has_elderly_or_disabled_member=True,
+    )
+    summary = handoff_summary(state, _result_for(state))
+    assert summary is not None
+    assert "Earned (wage) monthly income: $1,600.00" in summary
+    assert "Dependent-care costs (monthly): $300.00" in summary
+    assert "Shelter costs (monthly): $900.00" in summary
+    assert "Medical expenses (monthly): $200.00" in summary
+
+
+# ---------------------------------------------------------------------
+# 3. Agent package — local-only, exactly summary + banner
+# ---------------------------------------------------------------------
+
+def test_agent_handoff_package_is_local_only_summary_and_banner():
+    agent = FoodPathAgent(llm_client=_NoopLLM())
     agent.state = _complete_state()
     agent._eligibility_result = _result_for(agent.state)
     package = agent.handoff_summary()
     assert package is not None
-    assert set(package) == {"summary", "banner", "email_attempted", "email_sent"}
+    # W39 cut: no email fields, no outbound notification. The package
+    # is the dependency-free local summary plus the banner.
+    assert set(package) == {"summary", "banner"}
     assert package["banner"] == _HANDOFF_BANNER
     assert "ready to share with a case worker" in package["banner"]
-
-
-# ---------------------------------------------------------------------
-# 3. Email path — skipped cleanly with no SMTP env (default), mocked
-#    attempt fires correctly, SMTP exceptions never propagate
-# ---------------------------------------------------------------------
-
-def test_smtp_is_configured_requires_all_four_vars():
-    full = {"SMTP_HOST": "h", "SMTP_USER": "u", "SMTP_PASS": "p", "SMTP_TO": "t"}
-    assert smtp_is_configured(full) is True
-    for missing in full:
-        partial = {k: v for k, v in full.items() if k != missing}
-        assert smtp_is_configured(partial) is False
-    assert smtp_is_configured({}) is False
-
-
-def test_email_skipped_cleanly_with_no_smtp_env(monkeypatch):
-    # Default test-suite behavior: no SMTP env, no network calls at all.
-    for var in handoff_mod.SMTP_ENV_VARS:
-        monkeypatch.delenv(var, raising=False)
-    assert send_handoff_email("summary text") is False
-
-
-def test_email_skipped_when_any_single_var_missing():
-    env = {"SMTP_HOST": "h", "SMTP_USER": "u", "SMTP_PASS": "p"}  # no SMTP_TO
-    assert send_handoff_email("summary text", env) is False
-
-
-class _FakeSMTP:
-    """Context-manager SMTP double; records every interaction."""
-
-    instances: list["_FakeSMTP"] = []
-
-    def __init__(self, host, port, timeout=None):
-        self.host = host
-        self.port = port
-        self.timeout = timeout
-        self.logged_in = None
-        self.sent = []
-        self.tls = False
-        _FakeSMTP.instances.append(self)
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc):
-        return False
-
-    def starttls(self):
-        self.tls = True
-
-    def login(self, user, password):
-        self.logged_in = (user, password)
-
-    def send_message(self, message):
-        self.sent.append(message)
-
-
-def test_email_attempt_fires_with_correct_recipient_and_content():
-    _FakeSMTP.instances = []
-    env = {
-        "SMTP_HOST": "smtp.example.test",
-        "SMTP_PORT": "2525",
-        "SMTP_USER": "demo-sender@example.test",
-        "SMTP_PASS": "secret",
-        "SMTP_TO": "caseworker-demo@example.test",
-    }
-    ok = send_handoff_email("THE SUMMARY BODY", env, smtp_factory=_FakeSMTP)
-    assert ok is True
-    assert len(_FakeSMTP.instances) == 1
-    server = _FakeSMTP.instances[0]
-    assert (server.host, server.port) == ("smtp.example.test", 2525)
-    assert server.logged_in == ("demo-sender@example.test", "secret")
-    assert len(server.sent) == 1
-    message = server.sent[0]
-    assert message["To"] == "caseworker-demo@example.test"
-    assert message["From"] == "demo-sender@example.test"
-    assert "THE SUMMARY BODY" in message.get_content()
-
-
-class _ExplodingSMTP(_FakeSMTP):
-    def send_message(self, message):
-        raise OSError("connection refused")
-
-
-def test_smtp_exception_is_caught_and_never_propagates():
-    env = {
-        "SMTP_HOST": "smtp.example.test",
-        "SMTP_USER": "u",
-        "SMTP_PASS": "p",
-        "SMTP_TO": "t@example.test",
-    }
-    # Must not raise; returns False and the caller's flow is unaffected.
-    assert send_handoff_email("body", env, smtp_factory=_ExplodingSMTP) is False
-
-
-def test_agent_handoff_onscreen_path_unaffected_without_smtp(monkeypatch):
-    # The demo-meeting scenario: zero SMTP env, on-screen summary works.
-    for var in handoff_mod.SMTP_ENV_VARS:
-        monkeypatch.delenv(var, raising=False)
-    agent = CivicReachAgent(llm_client=_NoopLLM())
-    agent.state = _complete_state()
-    agent._eligibility_result = _result_for(agent.state)
-    package = agent.handoff_summary()
-    assert package is not None
-    assert package["email_attempted"] is False
-    assert package["email_sent"] is False
     assert "CASE-WORKER HANDOFF SUMMARY" in package["summary"]
-
-
-def test_handoff_email_recipient_comes_from_env_only():
-    # Guard against regression to a hardcoded recipient: with no SMTP_TO
-    # the send is skipped even when everything else is configured.
-    env = {"SMTP_HOST": "h", "SMTP_USER": "u", "SMTP_PASS": "p"}
-    _FakeSMTP.instances = []
-    assert send_handoff_email("body", env, smtp_factory=_FakeSMTP) is False
-    assert _FakeSMTP.instances == []
