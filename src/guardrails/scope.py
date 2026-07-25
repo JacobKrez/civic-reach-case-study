@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import re
 
+from ..branding import PRODUCT_NAME
+
 # Off-topic patterns. Each entry is a literal phrase (case-insensitive
 # substring match) that, when present in the user's message, signals the
 # request is outside the NC FNS initial screen scope.
@@ -150,21 +152,21 @@ def scope_redirect_message(lang: str = "en") -> str:
     """
     if lang == "es":
         return (
-            "Agradezco que lo compartas, pero solo puedo ayudar con una "
-            "evaluación inicial de elegibilidad para los Servicios de "
-            "Alimentos y Nutrición de Carolina del Norte (FNS / SNAP). No "
-            "puedo dar asesoría legal ni ayudar con temas no relacionados."
-            "\n\n"
+            f"Agradezco que lo compartas, pero solo soy {PRODUCT_NAME} y "
+            "solo puedo ayudar con una evaluación inicial de elegibilidad "
+            "para los Servicios de Alimentos y Nutrición de Carolina del "
+            "Norte (FNS / SNAP). No puedo dar asesoría legal ni ayudar con "
+            "temas no relacionados.\n\n"
             "Si quieres, podemos continuar con las preguntas de elegibilidad "
             "de FNS — solo necesito el tamaño de tu hogar, tus ingresos "
             "mensuales brutos y si alguna persona del hogar tiene 60 años "
             "o más o tiene una discapacidad."
         )
     return (
-        "I appreciate you sharing that, but I'm only able to help with an "
-        "initial screen for North Carolina Food and Nutrition Services "
-        "(FNS / SNAP) eligibility. I can't give legal advice, and I can't "
-        "help with unrelated topics.\n\n"
+        f"I appreciate you sharing that, but I'm {PRODUCT_NAME} and I'm "
+        "only able to help with an initial screen for North Carolina Food "
+        "and Nutrition Services (FNS / SNAP) eligibility. I can't give "
+        "legal advice, and I can't help with unrelated topics.\n\n"
         "If you'd like, we can keep going with the FNS eligibility "
         "questions — I just need your household size, your gross "
         "monthly income, and whether anyone in the household is 60+ or "
@@ -388,7 +390,7 @@ def not_a_person_response(lang: str = "en") -> str:
             "Norte. No puedo verte, no puedo llamar a nadie, no puedo "
             "despachar ayuda y no puedo tomar ninguna acción en el "
             "mundo real.\n\n"
-            "FoodPath NO es:\n"
+            f"{PRODUCT_NAME} NO es:\n"
             "- Un trabajador social real del DSS de Carolina del Norte "
             "(para aplicar, llama a tu oficina local del DSS o ve a "
             "https://www.ncdhhs.gov/divisions/social-services).\n"
@@ -410,7 +412,7 @@ def not_a_person_response(lang: str = "en") -> str:
         "only perform an initial NC FNS / SNAP eligibility screen. I "
         "can't see you, I can't call anyone, I can't dispatch help, and "
         "I can't take any real-world action on your behalf.\n\n"
-        "FoodPath is NOT:\n"
+        f"{PRODUCT_NAME} is NOT:\n"
         "- A live NC DSS caseworker (to apply, contact your local DSS "
         "office or visit https://www.ncdhhs.gov/divisions/social-services).\n"
         "- 911 (if this is a life-threatening emergency, call 911).\n"

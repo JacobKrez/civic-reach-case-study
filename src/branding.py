@@ -1,10 +1,10 @@
 """Single source of truth for the product name.
 
 The product is intentionally NOT named after the company/agency being applied
-to (the NC FNS / SNAP program). Going by ``FoodPath`` instead of ``CivicReach``
-keeps the application name neutral and avoids implying an official endorsement
-that does not exist. This is deliberate and is captured in README.md so a
-reviewer reading the repo does not read the choice as accidental.
+to (the NC FNS / SNAP program). Going by ``FoodPath`` keeps the application
+name neutral and avoids implying an official endorsement that does not exist.
+This is deliberate and is captured in README.md so a reviewer reading the repo
+does not read the choice as accidental.
 
 All user-visible response functions (disclosure, greeting, injection,
 scope redirect, not-a-person, expedited, benefit-amount, application-status

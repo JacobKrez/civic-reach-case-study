@@ -22,6 +22,8 @@ from __future__ import annotations
 
 import re
 
+from ..branding import PRODUCT_NAME
+
 
 # English: phrases that indicate the user is already inside or past
 # the SNAP/FNS application process (already applied, denied, appeal,
@@ -78,7 +80,7 @@ def application_status_response(lang: str = "en") -> str:
     """
     if lang == "es":
         return (
-            "FoodPath realiza una evaluacion INICIAL de elegibilidad "
+            f"{PRODUCT_NAME} realiza una evaluacion INICIAL de elegibilidad "
             "para FNS / SNAP -- no procesa solicitudes reales, no maneja "
             "apelaciones ni proporciona asesoria legal. Si ya presento su "
             "solicitud:\n"
@@ -94,7 +96,7 @@ def application_status_response(lang: str = "en") -> str:
             "Que prefiere?"
         )
     return (
-        "FoodPath does an INITIAL FNS / SNAP eligibility screen -- it "
+        f"{PRODUCT_NAME} does an INITIAL FNS / SNAP eligibility screen -- it "
         "does not process applications, handle appeals, or give legal "
         "advice. If you've already applied:\n"
         "  - Read the decision notice for the reason, the deadline, and "

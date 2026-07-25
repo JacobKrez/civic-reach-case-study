@@ -10,6 +10,7 @@ from typing import Any, Callable
 
 from pydantic import ValidationError
 
+from .branding import PRODUCT_NAME
 from .calculator import calculate_eligibility, income_limits
 from .guardrails.ambiguity import normalize_income
 from .guardrails.application_status import (
@@ -295,7 +296,7 @@ def volatile_rule_redirect(lang: str = "en") -> str:
 # hard-coded / code-templated; splitting is presentation only, nothing
 # in the underlying safety content changed.
 FIRST_TURN_DISCLOSURE_EN = (
-    "FoodPath is an independent automated AI assistant — not a live person and "
+    f"{PRODUCT_NAME} is an independent automated AI assistant — not a live person and "
     "not a DSS caseworker. It performs an initial NC FNS / SNAP "
     "eligibility SCREEN only: it can't see you, can't call anyone, "
     "can't dispatch help, and can't take any real-world action on your "
@@ -304,7 +305,7 @@ FIRST_TURN_DISCLOSURE_EN = (
 )
 
 FIRST_TURN_DISCLOSURE_ES = (
-    "FoodPath es un asistente automatizado e independiente de inteligencia artificial "
+    f"{PRODUCT_NAME} es un asistente automatizado e independiente de inteligencia artificial "
     "— no es una persona real ni un trabajador social del DSS. Solo "
     "realiza una evaluación inicial de elegibilidad para FNS / SNAP de "
     "Carolina del Norte: no puede verte, no puede llamar a nadie, no "
