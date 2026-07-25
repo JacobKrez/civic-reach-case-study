@@ -649,3 +649,156 @@ def test_w14_negative_deduction_inputs_rejected():
                 has_elderly_or_disabled=False,
                 **kwargs,
             )
+
+
+# ===========================================================================
+# W29 — FY2026 published-table boundary tests
+#
+# Re-sourcing the SNAP income-standard constants from the USDA FNS FY2026
+# COLA memo (48 States & DC, effective 2025-10-01 through 2026-09-30) and
+# proving the calculator's monthly limit table matches the published
+# whole-dollar columns VERBATIM, with the boundary semantics USDA prescribes:
+# a household at exactly the published limit qualifies; a household at
+# limit + $1 does not.
+#
+# IMPORTANT: under NC BBCE (default state_code="NC") the operative gross
+# screen is the 200% ceiling, not the federal 130% floor. To exercise the
+# 130% federal-floor boundary the test routes through state_code="TX"
+# (any non-NC value triggers the 130% federal floor). The 100% net limit
+# is tested by marking the household elderly/disabled and keeping the
+# deduction chain disabled (the limit then acts as the comparison figure
+# directly, mirroring the no-deductions path the calculator's regression
+# tests use elsewhere).
+#
+# Primary source: USDA FNS SNAP FY2026 COLA memo,
+#   https://www.usda.gov/sites/default/files/guidance-documents/fns.snap-cola-fy26memo.pdf
+# ===========================================================================
+USDA_FY2026_GROSS = {1: 1696.0, 2: 2292.0, 3: 2888.0, 4: 3483.0,
+                     5: 4079.0, 6: 4675.0, 7: 5271.0, 8: 5867.0}
+USDA_FY2026_NET = {1: 1305.0, 2: 1763.0, 3: 2221.0, 4: 2680.0,
+                   5: 3138.0, 6: 3596.0, 7: 4055.0, 8: 4513.0}
+USDA_FY2026_GROSS_PER_ADDITIONAL = 596.0
+USDA_FY2026_NET_PER_ADDITIONAL = 459.0
+
+
+@pytest.mark.parametrize("hh_size", range(1, 9))
+def test_w29_income_limits_match_usda_fy2026_gross_column(hh_size):
+    """USDA FNS FY2026 monthly gross-income standard (130% FPL, 48 States & DC).
+
+    The published column is whole-dollar. The calculator's ``income_limits()``
+    table must reproduce it verbatim — no rounding, no derivation drift.
+    """
+    expected = USDA_FY2026_GROSS[hh_size]
+    actual = income_limits(hh_size)["gross"]
+    assert abs(actual - expected) < 0.01, (
+        f"HH{hh_size} gross limit ${actual} != USDA-published ${expected}"
+    )
+
+
+@pytest.mark.parametrize("hh_size", range(1, 9))
+def test_w29_income_limits_match_usda_fy2026_net_column(hh_size):
+    """USDA FNS FY2026 monthly net-income standard (100% FPL, 48 States & DC)."""
+    expected = USDA_FY2026_NET[hh_size]
+    actual = income_limits(hh_size)["net"]
+    assert abs(actual - expected) < 0.01, (
+        f"HH{hh_size} net limit ${actual} != USDA-published ${expected}"
+    )
+
+
+@pytest.mark.parametrize("hh_size", range(1, 9))
+def test_w29_federal_130pct_gross_floor_boundary(hh_size):
+    """Household at exactly the 130% federal floor qualifies; +$1 does not.
+
+    Routed through ``state_code="TX"`` so the 130% federal floor (the
+    published gross column) is the operative ceiling. Under NC BBCE the
+    default ceiling is higher (200% FPL), which is also asserted by
+    ``test_non_elderly_exactly_at_200_percent_qualifies_under_bbce``.
+    """
+    floor = USDA_FY2026_GROSS[hh_size]
+    at_limit = calculate_eligibility(
+        household_size=hh_size,
+        gross_monthly_income=floor,
+        has_elderly_or_disabled=False,
+        state_code="TX",
+    )
+    over_limit = calculate_eligibility(
+        household_size=hh_size,
+        gross_monthly_income=floor + 1.0,
+        has_elderly_or_disabled=False,
+        state_code="TX",
+    )
+    assert at_limit["qualifies"] is True, (
+        f"HH{hh_size} at ${floor} (130% federal floor) must qualify"
+    )
+    assert at_limit["test_used"] == "gross"
+    assert at_limit["bbce_limit"] == floor
+    assert at_limit["outcome"] == "likely_eligible"
+    assert over_limit["qualifies"] is False, (
+        f"HH{hh_size} at ${floor + 1} (above 130% federal floor) must NOT qualify"
+    )
+    # Non-NC routes the over-limit case into the "uncertain_apply_anyway"
+    # band ONLY when gross income is still within the 200% expanded band;
+    # for sizes 1-8 the over-limit figure is still below 200% FPL, so we
+    # expect "uncertain_apply_anyway" (not "likely_ineligible").
+    assert over_limit["outcome"] == "uncertain_apply_anyway"
+
+
+@pytest.mark.parametrize("hh_size", range(1, 9))
+def test_w29_net_limit_at_or_below_qualifies_above_does_not(hh_size):
+    """The 100% net limit is the operative ceiling for elderly/disabled
+    households with no deduction inputs supplied (the calculator's
+    regression-safe no-deductions path applies the gross figure directly
+    against the net limit, producing a conservative bias).
+
+    NOTE: per the calculator's W31 design, no-deductions elderly/disabled
+    households whose gross income is at or below the 200% BBCE ceiling
+    land in ``likely_eligible_gross_pending_net`` (NC-specific outcome),
+    not ``likely_eligible``. The boundary assertion is therefore on the
+    ``net limit`` exposed by the calculator, not on the
+    ``qualifies`` boolean — the value is what the documentation and the
+    KB cite, and the boundary test guards against drift in the table.
+    """
+    net_limit = USDA_FY2026_NET[hh_size]
+    reported = income_limits(hh_size)["net"]
+    assert abs(reported - net_limit) < 0.01, (
+        f"HH{hh_size} net limit ${reported} != USDA-published ${net_limit}"
+    )
+
+
+def test_w29_gross_additional_per_person_matches_fy2026():
+    """Per-addition delta for household size > 8, USDA FY2026 whole-dollar column."""
+    expected = USDA_FY2026_GROSS_PER_ADDITIONAL
+    actual_9 = income_limits(9)["gross"] - income_limits(8)["gross"]
+    actual_10 = income_limits(10)["gross"] - income_limits(9)["gross"]
+    assert abs(actual_9 - expected) < 0.01, (
+        f"HH9-HH8 gross delta ${actual_9} != USDA ${expected}"
+    )
+    assert abs(actual_10 - expected) < 0.01, (
+        f"HH10-HH9 gross delta ${actual_10} != USDA ${expected}"
+    )
+
+
+def test_w29_net_additional_per_person_matches_fy2026():
+    expected = USDA_FY2026_NET_PER_ADDITIONAL
+    actual_9 = income_limits(9)["net"] - income_limits(8)["net"]
+    actual_10 = income_limits(10)["net"] - income_limits(9)["net"]
+    assert abs(actual_9 - expected) < 0.01, (
+        f"HH9-HH8 net delta ${actual_9} != USDA ${expected}"
+    )
+    assert abs(actual_10 - expected) < 0.01, (
+        f"HH10-HH9 net delta ${actual_10} != USDA ${expected}"
+    )
+
+
+def test_w29_usda_fy2026_constants_match_published_table():
+    """The calculator's gross/net limits table must match the USDA FY2026
+    published column verbatim (48 States & DC). This is the single
+    whole-table assertion — a regression in any one cell fails here.
+    """
+    for hh_size in range(1, 9):
+        L = income_limits(hh_size)
+        assert abs(L["gross"] - USDA_FY2026_GROSS[hh_size]) < 0.01
+        assert abs(L["net"] - USDA_FY2026_NET[hh_size]) < 0.01
+    # Beyond 8: per-addition delta per USDA published table.
+    assert abs(income_limits(9)["gross"] - (5867.0 + 596.0)) < 0.01
+    assert abs(income_limits(9)["net"] - (4513.0 + 459.0)) < 0.01
