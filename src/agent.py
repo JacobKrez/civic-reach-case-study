@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import re
+import time
+import uuid
 from typing import Any, Callable
 
 from pydantic import ValidationError
@@ -29,6 +31,7 @@ from .handoff import _HANDOFF_BANNER, handoff_summary, send_handoff_email
 from .llm_client import LLMClient
 from .retrieval import detect_spanish, retrieve
 from .state import AssessmentState
+from .telemetry import emit_turn
 
 SYSTEM_PROMPT = """You are CivicReach, an empathetic North Carolina Food and
 Nutrition Services (FNS) eligibility assistant. Your scope is strictly an
@@ -392,6 +395,9 @@ class CivicReachAgent:
         # Exact grounding blocks placed in the most recent prompt. Final
         # citations are derived from this list, never from a second retrieval.
         self._prompt_citations: list[dict[str, Any]] = []
+        self.session_id = str(uuid.uuid4())
+        self.last_layer = "llm"
+        self.last_turn_event: dict[str, Any] = {}
 
     @property
     def eligibility_result(self) -> dict[str, Any] | None:
@@ -680,6 +686,38 @@ class CivicReachAgent:
         self._eligibility_result = calculate_eligibility(**calculator_kwargs)
 
     def turn(self, user_message: str) -> str:
+        """Telemetry boundary around a complete turn."""
+        before = self.state.model_dump(mode="json")
+        started = time.perf_counter()
+        reply = ""
+        try:
+            reply = self._turn_impl(user_message)
+            return reply
+        finally:
+            after = self.state.model_dump(mode="json")
+            if after.get("is_crisis") and not before.get("is_crisis"):
+                layer = "crisis"
+            elif after.get("is_injection_attempt") and not before.get("is_injection_attempt"):
+                layer = "injection"
+            elif after.get("is_out_of_scope") and not before.get("is_out_of_scope"):
+                layer = "scope"
+            elif self._audit and self._audit[-1].get("turn") == self.state.turn_count and self._audit[-1].get("event") == "hostility_detected":
+                layer = "hostility"
+            else:
+                layer = "llm"
+            self.last_layer = layer
+            event = {"session_id": self.session_id, "turn_index": self.state.turn_count,
+                "user_message": user_message, "layer": layer, "classifier_label": None,
+                "state_before": before, "state_after": after, "tool_calls": [],
+                "fallback_fired": False, "fallback": None,
+                "retrieval_hits": self._prompt_citations, "calculator_inputs": before,
+                "calculator_output": self._eligibility_result,
+                "provider": type(self.llm_client).__name__,
+                "llm_latency_ms": round((time.perf_counter() - started) * 1000, 3), "reply": reply}
+            self.last_turn_event = event
+            emit_turn(event)
+
+    def _turn_impl(self, user_message: str) -> str:
         """Process one user turn, prioritizing deterministic guardrails.
 
         Order of evaluation:
@@ -1030,7 +1068,7 @@ class CivicReachAgent:
             user_message, re.I,
         )
         if self._eligibility_result is not None and not (
-            result_just_produced and not correction_cue_for_explain
+            result_just_produced and not correction_cue_for_explain and self.state.language != "es"
         ):
             explain_response = self.llm_client.chat(
                 [*self._messages, {"role": "user", "content": self._context(user_message)}],
@@ -1079,6 +1117,9 @@ class CivicReachAgent:
         # instead of invisible. Hits are also stored on self.last_citations
         # for the web UI's citation panel.
         if result_just_produced:
+            # Rebuild context after the final field lands so structured limits
+            # and their exact retrieval hits are available to telemetry/UI.
+            self._context(user_message)
             # _context() built the explanation prompt immediately above; cite
             # those exact blocks rather than issuing a different retrieval.
             hits = self._prompt_citations

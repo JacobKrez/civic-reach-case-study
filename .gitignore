@@ -2,6 +2,7 @@
 __pycache__/
 *.pyc
 .venv/
+logs/
 redteam/report_latest.json
 
 # Private planning notes — keep local, never publish
