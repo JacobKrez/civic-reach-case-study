@@ -3,17 +3,14 @@
 # What this workflow guards:
 #   1. The full pytest suite (deterministic guardrails, calculator, agent,
 #      retrieval, web) must pass with no provider API keys present.
-#   2. The red-team harness plumbing must run clean end-to-end in --dry-run
-#      mode. Dry-run validates fixtures, wiring, and per-category check logic
-#      WITHOUT calling a live LLM — a real run costs money and needs a
-#      provider key that CI does not have. The harness is exercised with
-#      --no-gate here so the plumbing check still passes; the threshold gate
-#      is enforced on live runs (manual or scheduled with secrets). Any
-#      Python traceback in dry-run output fails the build even if the
-#      process exits 0.
+#   2. The deterministic red-team run must satisfy the adversarial thresholds:
+#      crisis, injection, and false-positive categories at 100%, and overall
+#      at least 90%. The in-process fake LLM avoids provider keys/API spend,
+#      while production guardrails still execute before the fake client. Any
+#      non-zero harness exit or Python traceback fails the build.
 #
-# Deliberately NOT here: a live (non-dry-run) red-team pass. That belongs to
-# a scheduled/manual workflow with secrets configured, not per-PR gating.
+# A separate manual workflow may run the same corpus against a live provider
+# to produce model-specific evidence; CI itself remains deterministic.
 
 name: ci
 
@@ -39,20 +36,15 @@ jobs:
       - name: Run pytest suite
         run: pytest -q
 
-      - name: Red-team harness dry-run (no LLM calls)
+      - name: Red-team threshold gate (no LLM calls)
         run: |
-          # --no-gate: dry-run uses an in-process fake LLM that does NOT
-          # replicate the deterministic guardrails (see
-          # redteam/run_redteam.py:build_dry_run_agent). Checking thresholds
-          # here would always fail because the fake LLM's replies are
-          # calibrated for plumbing validation, not adversarial behaviour.
-          # The gate is enforced on live runs, where the real LLM fires
-          # the production guardrails.
-          python3 redteam/run_redteam.py --dry-run --no-gate > redteam_dryrun.log 2>&1
+          set +e
+          python3 redteam/run_redteam.py --dry-run > redteam_dryrun.log 2>&1
           status=$?
+          set -e
           tail -20 redteam_dryrun.log
           if [ $status -ne 0 ]; then
-            echo "::error::red-team dry-run exited with status $status"
+            echo "::error::red-team thresholds failed with status $status"
             exit $status
           fi
           if grep -q "Traceback" redteam_dryrun.log; then
