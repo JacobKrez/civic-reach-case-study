@@ -80,6 +80,11 @@ _SPANISH_WORDS: frozenset[str] = frozenset({
     "cual", "cuales", "quien", "quienes", "tiene", "tienen", "tengo",
     "somos", "estoy", "estamos", "hay", "personas", "hogar", "ingresos",
     "anos", "mes", "ayuda", "alimentos", "cupones",
+    # High-confidence imperative/persona words used in Spanish prompt-injection
+    # attempts.  These keep an unaccented phrase such as "olvida todo lo
+    # anterior, ahora eres..." on the Spanish refusal path without weakening
+    # the two-whole-token threshold for ordinary English messages.
+    "olvida", "anterior", "ahora", "eres",
 })
 
 # Whole-word token pattern for the heuristic (letters only, including

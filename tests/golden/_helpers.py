@@ -400,16 +400,22 @@ def assert_universal_invariants(result: TranscriptResult, *, expect_completed: b
 
 
 # Income keywords for the "income cue" check. Same vocabulary the
-# agent's correction-fallback uses, plus the obvious currency tokens.
+# agent's correction-fallback uses, plus the obvious English and Spanish
+# currency/frequency terms used by this bilingual transcript suite.
 _INCOME_CUE_RE = re.compile(
     r"\$|\b(make|makes|earn|earns|earned|income|salary|wage|wages|paid|pay\b|"
     r"per\s+month|monthly|week\b|wk\b|hr\b|hour\b|hourly|month\b|"
+    r"gano|gana|ganamos|ganan|ingreso|ingresos|salario|sueldo|pagado|"
+    r"al\s+mes|mensual|semana|semanal|hora|por\s+hora|"
     r"\d+\s*k\b|k\b)\b",
     re.IGNORECASE,
 )
 
 # The same fuzzy shapes normalize_income() accepts, treated as cues:
-_INCOME_CUE_TOKENS = ("$", "/mo", "/wk", "/hr", "month", "week", "hour")
+_INCOME_CUE_TOKENS = (
+    "$", "/mo", "/wk", "/hr", "month", "week", "hour",
+    " mes", "semana", "hora",
+)
 
 
 def message_carries_income_cue(message: str) -> bool:
