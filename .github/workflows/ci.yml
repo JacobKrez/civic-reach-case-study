@@ -1,4 +1,4 @@
-# CivicReach CI — runs on every push and pull request.
+# FoodPath CI — runs on every push and pull request.
 #
 # What this workflow guards:
 #   1. The full pytest suite (deterministic guardrails, calculator, agent,

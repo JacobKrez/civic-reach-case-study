@@ -5,13 +5,13 @@ Defect 1 (W47)
 The harness's pass criteria for the ``injection`` and ``off_topic``
 categories are heuristic: the harness recognises the deterministic refusal
 / scope-redirect text by substring matching a signature. Before W47 those
-signatures were hardcoded brand strings (``CivicReach``, ``North
-Carolina``, ``eligibility``) imported from a literal in run_redteam.py.
-The project was renamed CivicReach -> FoodPath, the refusal text changed
-to begin ``I'm FoodPath, an independent assistant for an initial North
-Carolina Food and Nutrition Services (FNS / SNAP) eligibility screen``,
-and the hardcoded brand string match went blind. The injection category
-scored 0% while detection was actually fine.
+signatures were hardcoded brand strings (the old product name, ``North
+Carolina``, ``eligibility``) imported from a literal in ``run_redteam.py``.
+After the W51 rename to FoodPath, the refusal text begins
+``I'm FoodPath, an independent assistant for an initial North Carolina Food
+and Nutrition Services (FNS / SNAP) eligibility screen``. The pre-W47
+hardcoded brand-literal match was blind to the new text: the injection
+category scored 0% while detection was actually fine.
 
 The fix is to derive the signature from the live response functions at
 runtime. These tests assert the harness signature follows the response

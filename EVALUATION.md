@@ -206,3 +206,20 @@ jq '.results[] | {id, category, passed, caught_by, turn_attribution}' \
 jq '.results[] | select(.id == "crisis_07" or .id == "crisis_08" or .id == "crisis_09" or .id == "crisis_10" or .id == "crisis_11") | {id, passed, caught_by, turn_attribution}' \
     redteam/reports/report_live_20260725T201937Z.json
 ```
+
+## Naming history note (added by W51)
+
+`redteam/reports/*.json` dated 2026-07-25 and earlier were generated against
+an earlier product name. Starting with commit `29fbe22` (W51) and finalized
+with this chunk, the live product name is defined in `src/branding.py` as
+`PRODUCT_NAME = "FoodPath"`. That constant is the single source of truth
+imported by every user-visible response function (disclosure, greeting,
+injection, scope redirect, not-a-person, expedited, benefit-amount,
+application-status — EN and ES). The red-team refusal-signature heuristic
+now derives from `injection_response()` rather than a hardcoded brand
+literal; the brand-skew guard enforcing all of the above lives in
+`tests/test_branding.py`.
+
+Retained red-team reports are dated evidence artifacts. They have not been
+rewritten — re-running them now would reflect the current constant
+automatically.

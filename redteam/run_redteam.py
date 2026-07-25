@@ -3,7 +3,7 @@
 This script is the executor for Loop B of the FoodPath build plan. It
 loads adversarial test cases from ``attack_cases.jsonl`` (each line is
 one JSON object: ``{id, category, turns, expected_behavior}``) and runs
-each case's ``turns`` through a live ``CivicReachAgent`` using whichever
+each case's ``turns`` through a live ``FoodPathAgent`` using whichever
 ``LLM_PROVIDER`` is configured in the environment. After every case it
 applies a per-category pass/fail check and writes a structured report
 to ``report_latest.json``.
