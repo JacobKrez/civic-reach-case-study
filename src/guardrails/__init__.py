@@ -1,4 +1,4 @@
-"""Guardrail layer for the CivicReach agent.
+"""Guardrail layer for the FoodPath agent.
 
 Deterministic keyword detectors (crisis, hostility, injection, scope, PII,
 ambiguity) run first in the agent loop. The LLM intent classifier

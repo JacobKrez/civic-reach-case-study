@@ -1,7 +1,7 @@
 {
-  "name": "CivicReach",
-  "short_name": "CivicReach",
-  "description": "North Carolina FNS initial eligibility screen",
+  "name": "FoodPath — NC FNS Eligibility Guide",
+  "short_name": "FoodPath",
+  "description": "Independent North Carolina FNS initial eligibility screen",
   "id": "/",
   "start_url": "/",
   "scope": "/",

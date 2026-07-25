@@ -1,0 +1,139 @@
+# Live adversarial evidence run.
+#
+# Two-layer guardrail design (W42/W44/W47/W48) means a documented live pass
+# rate with per-layer attribution is the reviewer-facing evidence that the
+# design earns its keep. The dry-run CI lane (`ci.yml`) only validates the
+# harness plumbing with a fake LLM; it deliberately does NOT exercise the
+# classifier layer. This workflow is the manual lane that does.
+#
+# Trigger: `workflow_dispatch` (manual). Live runs spend API tokens and we
+# don't want this firing on every PR. The default branch is `main`; override
+# via the workflow input if you want to validate a feature branch.
+#
+# Secrets required (configured at the repo or org level):
+#   MINIMAX_API_KEY   — primary provider (per repo .env / LLM_PROVIDER)
+#   OPENROUTER_API_KEY — fallback (LLM_FALLBACK_PROVIDER)
+#
+# Output artifacts:
+#   redteam/reports/report_live_<UTC-ISO-date>.json  — full report
+#   redteam/reports/report_live_<UTC-ISO-date>.md    — markdown summary
+# Both are uploaded as build artifacts under `redteam-live-report` so they
+# survive the ephemeral runner.
+
+name: redteam-live
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: 'Branch to run against (default: main)'
+        required: false
+        default: 'main'
+      extra_args:
+        description: 'Extra args to pass to run_redteam.py (e.g. --threshold-crisis 0.92)'
+        required: false
+        default: ''
+
+jobs:
+  live-redteam:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.branch || 'main' }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install pinned dependencies
+        run: pip install -r requirements.txt
+
+      - name: Configure LLM provider from secrets
+        env:
+          MINIMAX_API_KEY: ${{ secrets.MINIMAX_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          # Make the classifier layer explicit. The repo defaults to enabled,
+          # but we set it here so a misconfigured runner env cannot silently
+          # blind the second layer.
+          GUARDRAIL_CLASSIFIER: 'on'
+          LLM_PROVIDER: 'minimax'
+          LLM_FALLBACK_PROVIDER: 'openrouter'
+        run: |
+          {
+            echo "MINIMAX_API_KEY=${MINIMAX_API_KEY}"
+            echo "OPENROUTER_API_KEY=${OPENROUTER_API_KEY}"
+            echo "MINIMAX_BASE_URL=https://api.minimax.io/v1"
+            echo "OPENROUTER_BASE_URL=https://api.openrouter.ai/api/v1"
+            echo "GUARDRAIL_CLASSIFIER=${GUARDRAIL_CLASSIFIER}"
+            echo "LLM_PROVIDER=${LLM_PROVIDER}"
+            echo "LLM_FALLBACK_PROVIDER=${LLM_FALLBACK_PROVIDER}"
+          } >> "$GITHUB_ENV"
+
+      - name: Run live red-team suite with classifier ON
+        env:
+          MINIMAX_API_KEY: ${{ secrets.MINIMAX_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+        run: |
+          set -euo pipefail
+          mkdir -p redteam/reports
+          STAMP=$(date -u +%Y-%m-%dT%H%M%SZ)
+          REPORT_JSON="redteam/reports/report_live_${STAMP}.json"
+          REPORT_MD="redteam/reports/report_live_${STAMP}.md"
+          echo "Live red-team run starting at ${STAMP}"
+          echo "Report will be: ${REPORT_JSON}"
+          # shellcheck disable=SC2086
+          python3 -m redteam.run_redteam \
+            --report "${REPORT_JSON}" \
+            ${{ github.event.inputs.extra_args }}
+          # Refresh the symlink-style pointer file so the reviewer-facing
+          # output is always at a stable path.
+          cp "${REPORT_JSON}" redteam/report_latest.json
+          # Markdown summary is optional but cheap; we just dump the JSON
+          # summary block so the artifact is human-readable.
+          python3 -c "
+          import json, sys
+          with open('${REPORT_JSON}') as f:
+              r = json.load(f)
+          s = r['summary']
+          by = s['by_category']
+          att = s.get('guardrail_layer_attribution', {}).get('case_counts', {})
+          out = []
+          out.append(f\"# Live red-team report ${STAMP}\")
+          out.append('')
+          out.append(f\"- mode: {r['mode']}\")
+          out.append(f\"- provider: {r['llm_provider']}\")
+          out.append(f\"- model: {r['llm_model']}\")
+          out.append(f\"- classifier_enabled: {r['guardrail_classifier_enabled']}\")
+          out.append('')
+          out.append(f\"## Overall: {s['passed']}/{s['total']} passed ({s['pass_rate']*100:.1f}%)\")
+          out.append('')
+          out.append('| category | passed | total | pass_rate |')
+          out.append('|---|---|---|---|')
+          for cat in ('crisis','injection','off_topic','ambiguity','contradiction','false_positive'):
+              if cat in by:
+                  c = by[cat]
+                  out.append(f\"| {cat} | {c['passed']} | {c['total']} | {c['pass_rate']*100:.1f}% |\")
+          out.append('')
+          out.append('## Per-layer attribution (case_counts)')
+          out.append('')
+          out.append(f\"- keyword: {att.get('keyword', 0)}\")
+          out.append(f\"- classifier: {att.get('classifier', 0)}\")
+          with open('${REPORT_MD}', 'w') as f:
+              f.write('\n'.join(out) + '\n')
+          "
+          echo "Wrote ${REPORT_JSON} and ${REPORT_MD}"
+
+      - name: Upload retained report as artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: redteam-live-report
+          path: |
+            redteam/reports/report_live_*.json
+            redteam/reports/report_live_*.md
+            redteam/report_latest.json
+          if-no-files-found: warn

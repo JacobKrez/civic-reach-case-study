@@ -22,6 +22,8 @@ from __future__ import annotations
 
 import re
 
+from ..branding import PRODUCT_NAME
+
 
 # English: question about the dollar amount of the SNAP monthly benefit.
 _BENEFIT_AMOUNT_PATTERNS: tuple[re.Pattern[str], ...] = (
@@ -65,7 +67,7 @@ def benefit_amount_response(lang: str = "en") -> str:
     """
     if lang == "es":
         return (
-            "CivicReach realiza una evaluacion INICIAL de elegibilidad "
+            f"{PRODUCT_NAME} realiza una evaluacion INICIAL de elegibilidad "
             "para FNS / SNAP -- no calcula el monto mensual del beneficio. "
             "El monto real del beneficio depende del Plan de Alimentos "
             "Economico (Thrifty Food Plan) para el tamano de su hogar, "
@@ -78,7 +80,7 @@ def benefit_amount_response(lang: str = "en") -> str:
             "solicitud. Desea continuar con las preguntas de elegibilidad?"
         )
     return (
-        "CivicReach does an INITIAL FNS / SNAP eligibility screen -- it "
+        f"{PRODUCT_NAME} does an INITIAL FNS / SNAP eligibility screen -- it "
         "does not calculate the monthly benefit amount. The actual benefit "
         "depends on the USDA Thrifty Food Plan amount for your household "
         "size, your net income after allowable deductions, and the "

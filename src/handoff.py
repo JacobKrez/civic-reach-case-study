@@ -170,7 +170,7 @@ def send_handoff_email(
     message = EmailMessage()
     message["From"] = source["SMTP_USER"].strip()
     message["To"] = source["SMTP_TO"].strip()
-    message["Subject"] = "CivicReach case-worker handoff summary (demo)"
+    message["Subject"] = "FoodPath case-worker handoff summary (demo)"
     message.set_content(summary)
 
     factory = smtplib.SMTP if smtp_factory is None else smtp_factory

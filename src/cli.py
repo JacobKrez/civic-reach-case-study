@@ -1,4 +1,4 @@
-"""Command-line REPL for the CivicReach agent.
+"""Command-line REPL for the FoodPath agent.
 
 Run with::
 
@@ -18,13 +18,13 @@ import sys
 
 from dotenv import load_dotenv
 
-from .agent import CivicReachAgent, first_turn_disclosure, first_turn_greeting
+from .agent import FoodPathAgent, first_turn_disclosure, first_turn_greeting
 from .llm_client import LLMClient
 
 
 # W21 — the CLI banner is augmented with the same AI / not-a-person
 # disclosure the web UI surfaces as its first two assistant bubbles, so
-# the REPL also makes it impossible for a user to confuse CivicReach for
+# the REPL also makes it impossible for a user to confuse FoodPath for
 # a live person / caseworker / hotline before they type anything. Shown
 # as two visually separated paragraphs (safety disclosure, then a short
 # friendly opener) rather than one block, matching the web UI's two
@@ -63,7 +63,7 @@ def _missing_key_error(provider: str) -> str | None:
     return None
 
 
-def _run_repl(agent: CivicReachAgent, input_stream=sys.stdin, output=sys.stdout) -> int:
+def _run_repl(agent: FoodPathAgent, input_stream=sys.stdin, output=sys.stdout) -> int:
     print(_BANNER, file=output)
     output.flush()
     while True:
@@ -151,7 +151,7 @@ def main() -> int:
         client = LLMClient()
     except KeyboardInterrupt:
         return 0
-    agent = CivicReachAgent(llm_client=client)
+    agent = FoodPathAgent(llm_client=client)
     try:
         return _run_repl(agent)
     except KeyboardInterrupt:

@@ -1,4 +1,4 @@
-/* CivicReach's network-first service worker. Deliberately no cache: the demo
+/* FoodPath's network-first service worker. Deliberately no cache: the demo
  * needs its live API/LLM connection and should never show stale assessments. */
 self.addEventListener("install", (event) => {
   self.skipWaiting();

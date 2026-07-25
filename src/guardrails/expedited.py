@@ -35,6 +35,8 @@ from __future__ import annotations
 
 import re
 
+from ..branding import PRODUCT_NAME
+
 
 # English-language expedited/emergency-SNAP phrases. The match is
 # specifically on the SNAP-expedited framing, not on the bare word
@@ -99,7 +101,7 @@ def expedited_response(lang: str = "en") -> str:
     """
     if lang == "es":
         return (
-            "CivicReach hace una evaluacion INICIAL de elegibilidad para "
+            f"{PRODUCT_NAME} hace una evaluacion INICIAL de elegibilidad para "
             "FNS / SNAP -- no procesa solicitudes reales ni determina la "
             "tramitacion acelerada. Bajo las reglas de SNAP, las "
             "siguientes categorias de hogares suelen calificar para el "
@@ -118,7 +120,7 @@ def expedited_response(lang: str = "en") -> str:
             "preguntas de elegibilidad?"
         )
     return (
-        "CivicReach does an INITIAL FNS / SNAP eligibility screen -- it "
+        f"{PRODUCT_NAME} does an INITIAL FNS / SNAP eligibility screen -- it "
         "does not process actual applications or make the expedited "
         "determination. Under SNAP rules, the following categories of "
         "households typically qualify for 7-day expedited processing:\n"

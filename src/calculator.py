@@ -38,7 +38,7 @@ with others who purchase and prepare food separately — see
   standard for separate households" below.
 
 Passing ``state_code="NC"`` activates NC BBCE. The generic calculator API
-defaults to the federal 130% gross floor; the NC-only CivicReach agent passes
+defaults to the federal 130% gross floor; the NC-only FoodPath agent passes
 its jurisdiction explicitly.
 
 ## Net-income deduction chain (W31)

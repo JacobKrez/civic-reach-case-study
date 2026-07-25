@@ -1,8 +1,8 @@
-# CivicReach — NC FNS Eligibility Agent
+# FoodPath — NC FNS Eligibility Guide
 
 ## What this is
 
-CivicReach is a proof-of-concept text agent that walks a North Carolina
+FoodPath is a proof-of-concept text guide that walks a North Carolina
 resident through an *initial* Food and Nutrition Services (FNS / SNAP)
 eligibility screen. It collects three intake fields across a multi-turn
 conversation, grounds every answer in a small retrieval-augmented knowledge
@@ -15,6 +15,25 @@ intent classifier in front of the main agent loop.
 This is a case-study deliverable: scope is deliberately narrow. It is not
 a real application, not connected to any agency, and the case study
 explicitly forbids that.
+
+## Why the name FoodPath
+
+Public-benefit chatbots tend to pair a short, approachable product name with
+an explicit description of the narrow job they do. mRelief calls its SNAP
+application chatbot **Johnnie**; Link Health calls its benefits-enrollment
+assistant **LEO**; and Arizona named its employee-facing SNAP policy chatbot
+**SEAN**. FoodPath follows that pattern while keeping the purpose visible:
+helping a resident find a path through an initial food-benefits screen.
+
+FoodPath is an independent case-study prototype. It is not an NC DHHS or
+county DSS service, it does not determine eligibility, and it does not submit
+applications.
+
+Naming references:
+
+- mRelief, “Meet Johnnie”: https://ai.mrelief.com/
+- Link Health, “Meet LEO”: https://link-health.org/meet-leo/
+- Arizona DES / Microsoft, “SEAN”: https://www.microsoft.com/en-us/industry/blog/?p=31279
 
 ## Quickstart
 
@@ -219,7 +238,7 @@ flowchart TD
 | Out-of-scope keyword (`detect_scope`) | Legal advice, unrelated benefit programs, immigration questions, tax / housing / Medicaid | Polite redirect back to FNS questions. State is preserved; nothing already collected is reset. |
 | PII redactor (`redact_for_logging`) | SSN-shaped, account-shaped, routing-shaped patterns | Strips from conversation history before it's logged, so any later dump is safe by construction. |
 | LLM intent classifier (`classify_intent`) | Novel phrasings of the three above that the keyword lists miss | Defense in depth. Failure mode is fail-open: on any error or "normal" label, the agent proceeds to the normal LLM call. |
-| First-turn AI / not-a-person disclosure (`first_turn_disclosure`) | A user who might otherwise not realize they're talking to an unmonitored AI text tool that cannot see them, dispatch anyone, or take any real-world action | The very first assistant message of every conversation (rendered verbatim as the first web-UI bubble and the CLI banner) names CivicReach as an automated AI assistant, states the initial SCREEN scope, lists what it CANNOT do (see, call, dispatch, take real-world action), and points to 911 / 988 for emergencies. Hard-coded, not LLM-generated, so the framing cannot drift. Mirrors how trained 911 / 988 operators explicitly triage at the start of every call and how EBT card-services lines identify themselves ("we only handle card issues; for eligibility you need your state SNAP agency, not this line"). CA SB 243 / WA HB 2225 require this disclosure for conversational bots; the FTC treats non-disclosure of AI-vs-human as potentially deceptive. |
+| First-turn AI / not-a-person disclosure (`first_turn_disclosure`) | A user who might otherwise not realize they're talking to an unmonitored AI text tool that cannot see them, dispatch anyone, or take any real-world action | The very first assistant message of every conversation (rendered verbatim as the first web-UI bubble and the CLI banner) names FoodPath as an automated AI assistant, states the initial SCREEN scope, lists what it CANNOT do (see, call, dispatch, take real-world action), and points to 911 / 988 for emergencies. Hard-coded, not LLM-generated, so the framing cannot drift. Mirrors how trained 911 / 988 operators explicitly triage at the start of every call and how EBT card-services lines identify themselves ("we only handle card issues; for eligibility you need your state SNAP agency, not this line"). CA SB 243 / WA HB 2225 require this disclosure for conversational bots; the FTC treats non-disclosure of AI-vs-human as potentially deceptive. |
 | Not-a-person disambiguation (`detect_not_a_person_request`) | A user who explicitly asks "is this a real person" / "are you calling someone" / "is this 911" / "is this the EBT line" | Hardcoded "what this is NOT" block naming each adjacent real channel — NC DSS (caseworker), 911, 988 live counselors, EBT card-services line — with a one-line pointer to the real channel for each. Runs strictly below crisis / injection / scope in the guardrail chain, so a crisis disclosure still wins. |
 | `update_state` validation (Pydantic) | Out-of-range household_size, malformed income strings, type confusion | Drops the bad update, keeps state valid, re-asks the field next turn. |
 

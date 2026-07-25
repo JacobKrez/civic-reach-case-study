@@ -10,7 +10,7 @@ acknowledgement + a redirect to the canonical NC FNS appeal path:
   1. Read the denial notice for the reason, deadline, and fair-hearing
      instructions.
   2. Contact the county DSS office if anything is unclear.
-  3. CivicReach does not provide legal advice, and the appeal is
+  3. FoodPath does not provide legal advice, and the appeal is
      outside the scope of this initial screen.
 
 The handler is deterministic and code-templated. The intake is
@@ -78,7 +78,7 @@ def application_status_response(lang: str = "en") -> str:
     """
     if lang == "es":
         return (
-            "CivicReach realiza una evaluacion INICIAL de elegibilidad "
+            "FoodPath realiza una evaluacion INICIAL de elegibilidad "
             "para FNS / SNAP -- no procesa solicitudes reales, no maneja "
             "apelaciones ni proporciona asesoria legal. Si ya presento su "
             "solicitud:\n"
@@ -94,7 +94,7 @@ def application_status_response(lang: str = "en") -> str:
             "Que prefiere?"
         )
     return (
-        "CivicReach does an INITIAL FNS / SNAP eligibility screen -- it "
+        "FoodPath does an INITIAL FNS / SNAP eligibility screen -- it "
         "does not process applications, handle appeals, or give legal "
         "advice. If you've already applied:\n"
         "  - Read the decision notice for the reason, the deadline, and "

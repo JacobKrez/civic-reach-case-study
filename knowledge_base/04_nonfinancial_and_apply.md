@@ -12,20 +12,20 @@ supersedes: null
 
 ## Volatile rules are outside this screen
 Federal work-requirement and non-citizen eligibility rules changed materially
-in 2025. CivicReach does **not** evaluate either topic and does not ask for a
+in 2025. FoodPath does **not** evaluate either topic and does not ask for a
 person's immigration status. A county Department of Social Services (DSS)
 office must evaluate the current rules and any individual exemptions or
-documentation. Do not use an income-screen result from CivicReach as an
+documentation. Do not use an income-screen result from FoodPath as an
 opinion about eligibility under these rules.
 
 For a current determination, apply through ePASS or contact the applicant's
 county DSS office. A person may apply for other household members without
-asking CivicReach to evaluate anyone's immigration status.
+asking FoodPath to evaluate anyone's immigration status.
 
 ## Residency and identity
 Applicants seeking NC FNS generally apply through the county where they live.
 The county DSS determines what identity and residency verification is needed.
-CivicReach does not collect identity documents, Social Security numbers,
+FoodPath does not collect identity documents, Social Security numbers,
 addresses, or immigration documents.
 
 ## How to apply in North Carolina
@@ -69,7 +69,7 @@ must verify the categorical trigger before issuing benefits on the
 ## Preparing for DSS
 DSS may request proof concerning identity, household composition, income,
 and allowable expenses. Ask DSS which documents apply before sending
-sensitive records. CivicReach never needs those records to run its limited
+sensitive records. FoodPath never needs those records to run its limited
 income screen.
 
 ## Documents DSS may ask for (W43 close-the-loop KB addition)
@@ -83,7 +83,7 @@ categories are:
     passport) and proof of NC address (utility bill, lease, mail).
   - **Household composition.** Names, dates of birth, and relationships
     of every person in the household. For each person, Social Security
-    numbers if available (CivicReach does not collect these).
+    numbers if available (FoodPath does not collect these).
   - **Income.** Recent pay stubs (typically the last 30 days), a letter
     from the employer, or self-employment records. For each source of
     income (wages, Social Security, unemployment, child support,
@@ -95,12 +95,12 @@ categories are:
 DSS may also ask for immigration documents for any household member the
 applicant chooses to include; this screen does not ask and does not
 evaluate immigration status. For a current list and per-county guidance,
-contact the county DSS office; CivicReach never sees these documents.
+contact the county DSS office; FoodPath never sees these documents.
 
 ## If the application is denied
 Read the denial notice for the stated reason, deadline, and instructions for
 requesting a fair hearing. Contact county DSS for help understanding the
-agency's current process; CivicReach does not provide legal advice.
+agency's current process; FoodPath does not provide legal advice.
 
 Fair-hearing requests have a strict deadline (typically 90 days from the
 denial date, but confirm on the notice itself). The hearing is conducted

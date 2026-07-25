@@ -1,4 +1,4 @@
-"""Conversation state schema for the CivicReach NC FNS eligibility agent.
+"""Conversation state schema for the FoodPath NC FNS eligibility agent.
 
 Pure data model — no I/O, no LLM calls. Used by the agent loop to track what
 information the user has provided so far and what still needs to be collected

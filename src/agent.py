@@ -1,4 +1,4 @@
-"""Stateful, tool-driven conversation loop for the CivicReach agent."""
+"""Stateful, tool-driven conversation loop for the FoodPath agent."""
 
 from __future__ import annotations
 
@@ -42,7 +42,7 @@ from .retrieval import detect_spanish, retrieve
 from .state import AssessmentState
 from .telemetry import emit_turn
 
-SYSTEM_PROMPT = """You are CivicReach, an empathetic North Carolina Food and
+SYSTEM_PROMPT = """You are FoodPath, an empathetic, independent North Carolina Food and
 Nutrition Services (FNS) eligibility assistant. Your scope is strictly an
 initial eligibility screen for NC FNS / SNAP; you do not give legal advice
 and you do not help with unrelated topics.
@@ -92,7 +92,7 @@ respond with a brief polite redirect back to the FNS questions and do
 not attempt to answer the off-topic ask. Do not abandon or reset any
 state that has already been collected.
 
-W21 — DISCLOSURE INTEGRITY: CivicReach is an automated AI assistant
+W21 — DISCLOSURE INTEGRITY: FoodPath is an automated AI assistant
 (not a live person, not an NC DSS caseworker, not 911, not 988's live
 counselors, and not the EBT card-services line). The first two
 assistant messages of every conversation are code-templated and
@@ -119,7 +119,7 @@ disclosure; in that case the crisis response replaces the disclosure.
 # explanation in Spanish. Keep rule vocabulary (income limits, deduction
 # names) aligned with knowledge_base/01_program_overview.es.md so the
 # model's phrasing matches the retrieved Spanish rule text.
-SYSTEM_PROMPT_ES = """Eres CivicReach, un asistente empático de elegibilidad para los
+SYSTEM_PROMPT_ES = """Eres FoodPath, un asistente independiente y empático de elegibilidad para los
 Servicios de Alimentos y Nutrición (FNS) de Carolina del Norte. Tu alcance
 está estrictamente limitado a una evaluación inicial de elegibilidad para
 NC FNS / SNAP; no das asesoría legal ni ayudas con temas no relacionados.
@@ -175,7 +175,7 @@ responde con una redirección breve y cortés de vuelta a las preguntas de
 FNS y no intentes responder la solicitud fuera de tema. No abandones ni
 reinicies ningún estado que ya se haya recolectado.
 
-W21 — INTEGRIDAD DEL AVISO: CivicReach es un asistente automatizado de
+W21 — INTEGRIDAD DEL AVISO: FoodPath es un asistente automatizado de
 inteligencia artificial (no es una persona real, no es un trabajador
 social del DSS de Carolina del Norte, no es 911, no es los consejeros
 en vivo del 988, y no es la línea de servicios de la tarjeta EBT). Los
@@ -280,7 +280,7 @@ def volatile_rule_redirect(lang: str = "en") -> str:
 # SB 243 / WA HB 2225 require clear AI disclosure for conversational
 # bots; the FTC treats non-disclosure of AI-vs-human as potentially
 # deceptive. None of this was previously explicit anywhere in
-# CivicReach's first message.
+# FoodPath's first message.
 #
 # The disclosure is code-templated, not LLM-generated, so the framing
 # cannot drift. The very first assistant message in a conversation is
@@ -295,7 +295,7 @@ def volatile_rule_redirect(lang: str = "en") -> str:
 # hard-coded / code-templated; splitting is presentation only, nothing
 # in the underlying safety content changed.
 FIRST_TURN_DISCLOSURE_EN = (
-    "CivicReach is an automated AI assistant — not a live person and "
+    "FoodPath is an independent automated AI assistant — not a live person and "
     "not a DSS caseworker. It performs an initial NC FNS / SNAP "
     "eligibility SCREEN only: it can't see you, can't call anyone, "
     "can't dispatch help, and can't take any real-world action on your "
@@ -304,7 +304,7 @@ FIRST_TURN_DISCLOSURE_EN = (
 )
 
 FIRST_TURN_DISCLOSURE_ES = (
-    "CivicReach es un asistente automatizado de inteligencia artificial "
+    "FoodPath es un asistente automatizado e independiente de inteligencia artificial "
     "— no es una persona real ni un trabajador social del DSS. Solo "
     "realiza una evaluación inicial de elegibilidad para FNS / SNAP de "
     "Carolina del Norte: no puede verte, no puede llamar a nadie, no "
@@ -683,7 +683,7 @@ class CivicReachAgent:
             "household_size": household_size,
             "gross_monthly_income": gross_income,
             "has_elderly_or_disabled": elderly_or_disabled,
-            # CivicReach is the NC application.  Pass the jurisdiction
+            # FoodPath is the NC application. Pass the jurisdiction
             # explicitly because the calculator's generic API defaults to
             # the federal 130% floor when no state is selected.
             "state_code": "NC",
@@ -882,7 +882,7 @@ class CivicReachAgent:
                     "turn": self.state.turn_count,
                     "event": "hostility_detected",
                     "note": (
-                        "[CivicReach audit] The user's previous message was "
+                        "[FoodPath audit] The user's previous message was "
                         "flagged as hostile toward the assistant. De-escalation "
                         "context was added to the system prompt for this turn "
                         "only; the conversation continues normally. Do not "
@@ -1243,8 +1243,15 @@ class CivicReachAgent:
         return content
 
 
+# Public rebrand with a compatibility alias: existing case-study tests and
+# integrations importing CivicReachAgent continue to work while new callers
+# get the product-aligned name.
+FoodPathAgent = CivicReachAgent
+
+
 __all__ = [
     "CivicReachAgent",
+    "FoodPathAgent",
     "SYSTEM_PROMPT",
     "SYSTEM_PROMPT_ES",
     "UPDATE_STATE_TOOL",

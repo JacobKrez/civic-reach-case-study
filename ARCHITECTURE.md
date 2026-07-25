@@ -1,4 +1,4 @@
-# CivicReach — Architecture (reviewer's narration)
+# FoodPath — Architecture (reviewer's narration)
 
 This is the artifact we hand to the reviewer the day of the live architecture
 review. It answers the four predictable questions ("how does a turn actually

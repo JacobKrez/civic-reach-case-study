@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""W45 -- Recursive self-improvement for the CivicReach build loop.
+"""W45 -- Recursive self-improvement for the FoodPath build loop.
 
 This script is the missing link in the "close the loop" claim. The red-team
 harness (W7/W7.1/W11) finds problems; the persona simulator (W37) finds more
@@ -9,7 +9,7 @@ actually does. W45 reads all of that evidence, ranks the *residual* gaps by
 writes correctly-specified Mission Control chunks for the top N gaps so a
 future Loop B execution can close them.
 
-W45 is **read-mostly**. It NEVER edits CivicReach code; it ONLY writes new
+W45 is **read-mostly**. It NEVER edits FoodPath code; it ONLY writes new
 chunks into the Mission Control database. The default mode is ``--dry-run``,
 which prints the proposed chunks and writes an audit log without touching
 the database. ``--apply`` is required to enqueue.
@@ -42,8 +42,8 @@ Usage::
 
 Exit codes::
 
-    0  -- ran successfully (whether or not anything was enqueued)
-    1  -- a guardrail was tripped; nothing was enqueued
+    0  -- ran successfully (including intentional queue backpressure)
+    1  -- an unexpected policy guardrail failure prevented the run
     2  -- an input was missing or malformed; nothing was enqueued
 
 See ``ARCHITECTURE.md`` section 6 for how this fits the larger recursive
@@ -705,6 +705,29 @@ def _queue_depth(db: sqlite3.Connection) -> int:
     )
 
 
+def _active_chunk_for_gap(db: sqlite3.Connection, gap_id: str) -> tuple[str, str] | None:
+    """Return an existing active chunk for *gap_id*, if one exists.
+
+    Scheduled self-improvement must be idempotent. A still-failing tripwire
+    can otherwise enqueue the same finding every hour until the queue ceiling
+    is reached, creating parallel no-op work and obscuring the real signal.
+    """
+    needle = f"close '{gap_id}'"
+    row = db.execute(
+        """
+        SELECT id, status
+          FROM chunks
+         WHERE project_id = ?
+           AND status IN ('queued', 'claimed', 'running', 'done')
+           AND title LIKE ?
+         ORDER BY updated_at DESC
+         LIMIT 1
+        """,
+        (PROJECT_ID, f"%{needle}%"),
+    ).fetchone()
+    return (str(row[0]), str(row[1])) if row else None
+
+
 def _build_chunk(gap: Gap, w_number: int) -> Chunk:
     """Synthesize a Mission Control chunk spec from a gap.
 
@@ -1007,7 +1030,7 @@ def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(
         prog="self_improve.py",
         description=(
-            "CivicReach recursive self-improvement: read evidence, "
+            "FoodPath recursive self-improvement: read evidence, "
             "rank residual gaps, optionally enqueue Mission Control "
             "chunks for the top N."
         ),
@@ -1076,36 +1099,50 @@ def main(argv: list[str] | None = None) -> int:
             )
         print()
 
-    # 3. Build chunk specs (top --max).
-    top = gaps[: args.max]
+    # 3. Build chunk specs. ``--max`` limits accepted proposals, not gaps
+    # inspected: a stale top-ranked gap must not starve valid lower-ranked
+    # work forever.
     if not MC_DB.exists():
         print(f"ERROR: Mission Control DB not found at {MC_DB}", file=sys.stderr)
         _audit({"event": "no_mc_db", "path": str(MC_DB)})
         return 2
 
-    db = sqlite3.connect(str(MC_DB))
+    db = sqlite3.connect(str(MC_DB), timeout=30)
+    db.execute("PRAGMA busy_timeout=30000")
     try:
         depth = _queue_depth(db)
         _audit({"event": "queue_depth", "depth": depth})
         if args.apply and depth > args.queue_ceiling:
             print(
-                f"REFUSED: queue depth {depth} > ceiling {args.queue_ceiling}; "
-                f"refusing to enqueue more chunks (run --dry-run to inspect "
-                f"without writing).",
+                f"BACKPRESSURE: queue depth {depth} > ceiling "
+                f"{args.queue_ceiling}; no new chunks enqueued "
+                f"(run --dry-run to inspect without writing).",
                 file=sys.stderr,
             )
             _audit({"event": "refused_queue_depth", "depth": depth,
                     "ceiling": args.queue_ceiling})
-            return 1
+            return 0
 
         w_start = _next_w_number(db)
         thresholds = (report.get("thresholds", {}) or {}).get("rows", {}) or {}
 
         chunks_with_meta: list[tuple[Chunk, str, str]] = []
         enqueued_ids: list[str] = []
-        for offset, gap in enumerate(top):
-            chunk = _build_chunk(gap, w_start + offset)
-            verdict = _enforce_guardrails(chunk, thresholds)
+        accepted = 0
+        for gap in gaps:
+            chunk = _build_chunk(gap, w_start + accepted)
+            existing = _active_chunk_for_gap(db, gap.gap_id)
+            verdict = (
+                GuardrailVerdict(
+                    ok=False,
+                    reason=(
+                        f"duplicate suppressed: gap already has active chunk "
+                        f"{existing[0]} ({existing[1]})"
+                    ),
+                )
+                if existing
+                else _enforce_guardrails(chunk, thresholds)
+            )
             decision = "ENQUEUE" if verdict.ok and args.apply else (
                 "WOULD-ENQUEUE" if verdict.ok else "REJECT"
             )
@@ -1122,10 +1159,14 @@ def main(argv: list[str] | None = None) -> int:
                 "apply": args.apply,
             })
             if verdict.ok and args.apply:
-                chunk_id = _enqueue_chunk(db, chunk, w_start + offset)
+                chunk_id = _enqueue_chunk(db, chunk, w_start + accepted)
                 enqueued_ids.append(chunk_id)
                 _audit({"event": "chunk_enqueued", "id": chunk_id,
                         "title": chunk.title})
+            if verdict.ok:
+                accepted += 1
+                if accepted >= args.max:
+                    break
         db.commit()
     finally:
         db.close()

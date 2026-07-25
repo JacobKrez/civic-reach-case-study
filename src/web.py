@@ -38,7 +38,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from .agent import CivicReachAgent as FoodPathAgent, first_turn_disclosure, first_turn_greeting
+from .agent import FoodPathAgent, first_turn_disclosure, first_turn_greeting
 
 app = FastAPI(title="FoodPath — NC FNS Eligibility Guide", version="1.0.0")
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"

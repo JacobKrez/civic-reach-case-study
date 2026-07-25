@@ -78,7 +78,7 @@ def test_injection_attempts_get_fixed_refusal_without_calling_llm(attempt):
     # the Spanish refusal; an English attempt gets the English refusal.
     lang = "es" if detect_spanish(attempt) else "en"
     assert response == injection_response(lang)
-    assert "CivicReach" in response
+    assert "FoodPath" in response
     assert ("North Carolina" in response) or ("Carolina del Norte" in response)
     assert ("eligibility" in response) or ("elegibilidad" in response)
     assert agent.state.is_injection_attempt is True

@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import re
 
+from ..branding import PRODUCT_NAME
+
 
 # This is heuristic, not perfect: legitimate messages containing words such
 # as "ignore" can produce false positives, which is an acceptable trade-off
@@ -160,7 +162,7 @@ def injection_response(lang: str = "en") -> str:
     """
     if lang == "es":
         return (
-            "Soy FoodPath, un asistente independiente para una evaluación inicial de "
+            f"Soy {PRODUCT_NAME}, un asistente independiente para una evaluación inicial de "
             "elegibilidad para los Servicios de Alimentos y Nutrición de "
             "Carolina del Norte (FNS / SNAP). No puedo seguir solicitudes "
             "para anular mis instrucciones ni cambiar mi función. Puedo "
@@ -169,7 +171,7 @@ def injection_response(lang: str = "en") -> str:
             "tiene una discapacidad."
         )
     return (
-        "I'm FoodPath, an independent assistant for an initial North Carolina Food and "
+        f"I'm {PRODUCT_NAME}, an independent assistant for an initial North Carolina Food and "
         "Nutrition Services (FNS / SNAP) eligibility screen. I can't follow "
         "requests to override my instructions or change my role. I can help "
         "with your household size, gross monthly income, and whether anyone "
