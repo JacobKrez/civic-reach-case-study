@@ -84,6 +84,12 @@ PROJECT_ID = "civic_reach"
 ROADMAP_ID_FALLBACK = "rmp_mrxjk1haonuas6"
 ASSIGNEE = "bob-civicreach"
 
+# Default mode is dry_run=True; --apply flips it to False. The canonical
+# snake_case identifier is ``dry_run`` so this constant + the CLI flag
+# ``--dry-run`` (kept for human readability) express the same gate.
+DRY_RUN_DEFAULT: bool = True
+APPLY_DEFAULT: bool = False
+
 # ---------------------------------------------------------------------------
 # Rubric weights for the four graded criteria in the live review.
 #
