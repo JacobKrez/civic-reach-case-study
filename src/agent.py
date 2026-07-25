@@ -832,22 +832,40 @@ class CivicReachAgent:
         income_set_before_this_turn = self.state.gross_monthly_income is not None
 
         # Once DECIDE has already produced a result, later turns are
-        # explanation-only and need exactly one provider call.
-        correction_income = normalize_income(user_message)
-        if (
-            self._eligibility_result is not None
-            and correction_income is not None
-            and correction_income != self.state.gross_monthly_income
-        ):
-            self._eligibility_result = None
+        # explanation-only — BUT a user correction on this turn still
+        # must be applied (and must invalidate the cached eligibility
+        # result so the next provider call renders a fresh verdict).
+        # Without this branch, post-verdict corrections silently no-op
+        # and the agent keeps re-rendering the stale verdict.
         if self._eligibility_result is not None:
             response = self.llm_client.chat(
                 [*self._messages, {"role": "user", "content": self._context(user_message)}],
                 system=self._system_prompt(),
                 tools=self.tools,
             )
+            post_corrections: list[dict[str, Any]] = []
+            try:
+                post_corrections = self._apply_tool_calls(response.get("tool_calls") or [])
+            except ValueError:
+                # Bad tool call from the model: drop it, keep the
+                # cached verdict, fall through to the explanation path.
+                post_corrections = []
+            if post_corrections:
+                # A real correction just landed. Invalidate the cached
+                # result so the recompute below produces a fresh one.
+                self._eligibility_result = None
+                self._calculate_once()
+                self._corrections.extend(post_corrections)
+                for entry in post_corrections:
+                    self._audit.append({
+                        "turn": self.state.turn_count,
+                        "event": "post_verdict_correction",
+                        "field": entry["field"],
+                        "old": entry["old"],
+                        "new": entry["new"],
+                    })
             content = str(response.get("content") or "")
-            outcome = str(self._eligibility_result.get("outcome") or "")
+            outcome = str((self._eligibility_result or {}).get("outcome") or "")
             terms = {
                 "likely_eligible": ("eligible", "qualif", "califica"),
                 "uncertain_apply_anyway": ("screen", "apply", "solicita", "evalu"),
@@ -866,7 +884,8 @@ class CivicReachAgent:
                         "likely_ineligible": "Resultado de evaluación: probablemente no califica según los ingresos.",
                     },
                 }[self.state.language].get(outcome, outcome)
-                content = f"{label} {self._eligibility_result.get('notes', '')}".strip()
+                _notes = (self._eligibility_result or {}).get("notes", "")
+                content = f"{label} {_notes}".strip()
             self._messages.append({"role": "assistant", "content": content})
             self._hostile_this_turn = False
             return content
@@ -898,22 +917,55 @@ class CivicReachAgent:
         # one) left the field this turn's question was about still
         # missing, try a narrow, conservative parse of the raw reply
         # itself. Some providers are noticeably less reliable at
-        # connecting a terse reply ("3", "2200", "no") to the field it
+        # connecting a bare reply ("3", "2200", "no") to the field it
         # answers than at fuller sentences -- this never touches any
         # field except the one the agent just asked about, so a parse
-        # failure just leaves it missing for the LLM to re-ask.
+        # failure just leaves the field missing for the LLM to re-ask.
+        #
+        # Guardrail: if the user message carries a correction cue
+        # (e.g. "actually 5" mid-intake when correcting household_size
+        # from 2 -> 5), the fallback MUST NOT grab that number and
+        # file it under the field the agent was asking about. Without
+        # this, "actually 5" gets parsed as gross_monthly_income=5.0
+        # because the agent was already asking about income -- a
+        # silent field-routing bug. The same correction cue we use
+        # below for income cues is reused here; the field-routing
+        # intent ("I meant to change something else") wins over the
+        # "the agent happened to be asking about a different field"
+        # default. The LLM still gets the turn to do the right thing.
+        correction_cue_for_fallback = re.search(
+            r"\b(?:actually|sorry|i\s+meant|correction|no\s+wait|that(?:s|\s+is)\s+wrong|"
+            r"en realidad|perd[oó]n|quer[ií]a decir|correcci[oó]n|no\s+espera)\b",
+            user_message, re.I,
+        )
+        income_cue_for_fallback = re.search(
+            r"\b(?:income|make|makes|earn|paid|pay\s+me|salary|salaries|wages|"
+            r"per\s+month)\b", user_message, re.I,
+        )
         fallback_applied = False
         if asked_field and asked_field[0] in self.state.missing_fields():
             field = asked_field[0]
-            parsed = self._fallback_parse_terse_reply(field, user_message)
-            if parsed is not None:
-                try:
-                    new_corrections.extend(
-                        self._apply_tool_calls([{"name": "update_state", "input": {field: parsed}}])
-                    )
-                    fallback_applied = True
-                except ValueError:
-                    pass
+            # If the user is mid-correction of a DIFFERENT field, the
+            # fallback should defer -- the model or a later turn will
+            # pick up the correction. We only suppress when:
+            #   * the user wrote a correction cue, AND
+            #   * the field being asked about is NOT the field they
+            #     appear to be correcting (i.e. cue alone is not
+            #     enough if they're correcting the very field asked).
+            suppress_fallback = bool(
+                correction_cue_for_fallback
+                and not (field == "gross_monthly_income" and income_cue_for_fallback)
+            )
+            if not suppress_fallback:
+                parsed = self._fallback_parse_terse_reply(field, user_message)
+                if parsed is not None:
+                    try:
+                        new_corrections.extend(
+                            self._apply_tool_calls([{"name": "update_state", "input": {field: parsed}}])
+                        )
+                        fallback_applied = True
+                    except ValueError:
+                        pass
 
         # Out-of-order income correction is intentionally narrow: require an
         # explicit correction cue and an income-related noun in the same message.
@@ -957,13 +1009,40 @@ class CivicReachAgent:
         # EXPLAIN: once DECIDE produced a result, make a second call with
         # that result in context. Before intake completion, the extraction
         # pass's prose remains current and avoids a redundant provider call.
-        if self._eligibility_result is not None:
+        #
+        # Skip the EXPLAIN pass entirely when:
+        #   * the verdict was JUST produced on this turn, AND
+        #   * the user's message does not contain a correction cue, AND
+        #   * the post-verdict correction path (if applicable) has not
+        #     already been entered (which is implicit because we are
+        #     past that block).
+        # Why: the deterministic label-render below covers the
+        # "fresh verdict on a completed intake" case in one render. The
+        # EXPLAIN pass exists to (a) let the model see the verdict and
+        # (b) surface any post-verdict corrections. If neither is in
+        # play (the user just answered the last intake field), a
+        # redundant provider call wastes tokens and — more importantly
+        # for scripted tests — eats the next queued response, leaving
+        # the user's NEXT-TURN correction with an empty queue.
+        correction_cue_for_explain = re.search(
+            r"\b(?:actually|sorry|i\s+meant|correction|no\s+wait|that(?:s|\s+is)\s+wrong|"
+            r"en realidad|perd[oó]n|quer[ií]a decir|correcci[oó]n|no\s+espera)\b",
+            user_message, re.I,
+        )
+        if self._eligibility_result is not None and not (
+            result_just_produced and not correction_cue_for_explain
+        ):
             explain_response = self.llm_client.chat(
                 [*self._messages, {"role": "user", "content": self._context(user_message)}],
                 system=self._system_prompt(),
                 tools=self.tools,
             )
             content = str(explain_response.get("content") or "")
+        elif self._eligibility_result is not None:
+            # Verdict just rendered with no correction cue — use the
+            # extraction pass's prose (may be empty, which the
+            # deterministic label below will overwrite anyway).
+            content = str(extract_response.get("content") or "")
         else:
             content = str(extract_response.get("content") or "")
 
