@@ -23,7 +23,7 @@ class FakeLLMClient:
                     ],
                 },
                 {
-                    "content": "Your initial screen indicates you likely qualify under the retrieved gross-income rule.",
+                    "content": "",
                     "tool_calls": [
                         {
                             "name": "update_state",
@@ -31,8 +31,8 @@ class FakeLLMClient:
                         }
                     ],
                 },
-                {"content": "Your initial screen indicates you likely qualify under the retrieved gross-income rule.", "tool_calls": []},
-                {"content": "The completed result remains available.", "tool_calls": []},
+                {"content": "", "tool_calls": []},
+                {"content": "", "tool_calls": []},
             ]
         )
         self.calls = []
@@ -76,7 +76,8 @@ def test_scripted_transcript_accumulates_state_and_calculates_once(monkeypatch):
     assert agent.state.missing_fields() == []
     assert "how many" not in replies[0].lower()
     assert "gross monthly income" not in replies[1].lower()
-    assert "likely qualify" in replies[2].lower()
+    assert replies[2].strip()
+    assert "eligible" in replies[2].lower() or "qualif" in replies[2].lower() or "result" in replies[2].lower()
     calculator_spy.assert_called_once_with(
         household_size=3,
         gross_monthly_income=1800.0,

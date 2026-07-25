@@ -54,7 +54,7 @@ def test_expedited_snap_question_triggers_deterministic_handler():
     assert len(result.assistant_replies) == 1
     reply = result.assistant_replies[0]
     # The handler identities:
-    assert "CivicReach" in reply
+    assert "FoodPath" in reply
     assert "expedited" in reply.lower()
     assert "7-day" in reply or "7 day" in reply or "7 days" in reply.lower()
     # The 7 CFR categories are surfaced:
@@ -154,7 +154,7 @@ def test_benefit_amount_question_triggers_deterministic_handler():
     assert len(result.assistant_replies) == 1
     reply = result.assistant_replies[0]
     # The handler identities:
-    assert "CivicReach" in reply
+    assert "FoodPath" in reply
     # The handler explicitly says it does NOT compute the allotment:
     assert (
         "does not" in reply.lower() or "doesn't" in reply.lower()
@@ -234,7 +234,7 @@ def test_already_applied_question_triggers_deterministic_handler():
     assert len(result.assistant_replies) == 1
     reply = result.assistant_replies[0]
     # The handler identities:
-    assert "CivicReach" in reply
+    assert "FoodPath" in reply
     # The handler names the canonical NC FNS appeal path:
     assert "decision" in reply.lower() or "denial" in reply.lower()
     assert "fair hearing" in reply.lower()
@@ -253,7 +253,7 @@ def test_appeal_question_triggers_deterministic_handler():
     )
     reply = result.assistant_replies[0]
     assert "hear" in reply.lower() or "appeal" in reply.lower()
-    assert "CivicReach" in reply
+    assert "FoodPath" in reply
     assert_universal_invariants(result)
 
 
