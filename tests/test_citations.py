@@ -6,7 +6,7 @@ agent produces its eligibility verdict it appends a deterministic
 stores the hits on self.last_citations for the web UI.
 """
 
-from src.agent import CivicReachAgent
+from src.agent import FoodPathAgent
 from src.guardrails.classifier import CLASSIFIER_SYSTEM_PROMPT
 
 
@@ -43,7 +43,7 @@ def _complete_intake_response():
 
 def test_result_turn_appends_sources_line_with_real_kb_doc():
     # Uses the REAL retriever (default) over the real knowledge_base/.
-    agent = CivicReachAgent(llm_client=ScriptedLLM([_complete_intake_response()]))
+    agent = FoodPathAgent(llm_client=ScriptedLLM([_complete_intake_response()]))
     reply = agent.turn("2 of us, $1,500/month, nobody elderly or disabled")
     assert "(Sources:" in reply
     assert ".md" in reply  # names at least one real knowledge_base file
@@ -51,7 +51,7 @@ def test_result_turn_appends_sources_line_with_real_kb_doc():
 
 
 def test_last_citations_populated_with_doc_snippet_score():
-    agent = CivicReachAgent(llm_client=ScriptedLLM([_complete_intake_response()]))
+    agent = FoodPathAgent(llm_client=ScriptedLLM([_complete_intake_response()]))
     agent.turn("2 of us, $1,500/month, no elderly or disabled")
     assert agent.last_citations, "expected citations to be captured"
     top = agent.last_citations[0]
@@ -66,14 +66,14 @@ def test_no_sources_line_before_result_is_ready():
             {"name": "update_state", "input": {"gross_monthly_income": 1500.0}}
         ],
     }
-    agent = CivicReachAgent(llm_client=ScriptedLLM([partial]))
+    agent = FoodPathAgent(llm_client=ScriptedLLM([partial]))
     reply = agent.turn("I make $1,500 a month")
     assert "(Sources:" not in reply
     assert agent.last_citations == []
 
 
 def test_sources_line_appears_once_not_repeated_on_later_turns():
-    agent = CivicReachAgent(
+    agent = FoodPathAgent(
         llm_client=ScriptedLLM(
             [
                 _complete_intake_response(),

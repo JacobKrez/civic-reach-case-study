@@ -39,7 +39,7 @@ from __future__ import annotations
 
 import pytest
 
-from src.agent import CivicReachAgent
+from src.agent import FoodPathAgent
 from src.calculator import calculate_eligibility as _calculate_eligibility
 from src.guardrails.classifier import CLASSIFIER_SYSTEM_PROMPT
 
@@ -122,7 +122,7 @@ def _run_agent_with_deductions(
             "shelter_costs_monthly": shelter_costs_monthly,
         }}]},
     ]
-    agent = CivicReachAgent(llm_client=ScriptedLLM(responses))
+    agent = FoodPathAgent(llm_client=ScriptedLLM(responses))
     for _ in range(3):
         agent.turn("placeholder")
     assert agent.eligibility_result is not None, "agent did not compute a result"
@@ -282,7 +282,7 @@ def test_deduction_disclosed_after_verdict_invalidates_cache():
         {"content": "ok", "tool_calls": [{"name": "update_state", "input": {"gross_monthly_income": 1800.0}}]},
         {"content": "ok", "tool_calls": [{"name": "update_state", "input": {"has_elderly_or_disabled_member": False}}]},
     ]
-    agent = CivicReachAgent(llm_client=ScriptedLLM(responses))
+    agent = FoodPathAgent(llm_client=ScriptedLLM(responses))
     for _ in range(3):
         agent.turn("placeholder")
     # Sanity: the verdict was locked with no deductions: 1800.0 / True under

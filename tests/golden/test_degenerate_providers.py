@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import pytest
 
-from src.agent import CivicReachAgent
+from src.agent import FoodPathAgent
 
 from ._helpers import (
     assert_universal_invariants,
@@ -114,7 +114,7 @@ def test_degenerate_malformed_tool_input_does_not_crash():
     ValueError internally; the intake branch catches it, drops the
     malformed update, and keeps the conversation alive by asking the
     next missing field. No phantom state or correction may be recorded."""
-    from src.agent import CivicReachAgent as CRA
+    from src.agent import FoodPathAgent as CRA
 
     bad = {"content": "", "tool_calls": [{"name": "update_state", "input": []}]}
 
@@ -148,7 +148,7 @@ def test_degenerate_out_of_range_value_dropped_silently():
     validation rejects the bad value; the field stays None; the
     backstop asks the next missing field on the same turn. The
     test asserts the bad value did not enter state."""
-    from src.agent import CivicReachAgent as CRA
+    from src.agent import FoodPathAgent as CRA
 
     out_of_range = {
         "content": "",
@@ -196,7 +196,7 @@ def test_degenerate_provider_exception_propagates():
     agent's ``turn()`` does NOT swallow it -- the caller learns
     about the provider failure immediately so it can decide
     whether to retry, fall back, or surface a 5xx."""
-    from src.agent import CivicReachAgent as CRA
+    from src.agent import FoodPathAgent as CRA
 
     class ExplodingLLM:
         def chat(self, messages, system=None, tools=None):

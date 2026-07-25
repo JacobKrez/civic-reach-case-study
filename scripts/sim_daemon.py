@@ -25,7 +25,7 @@ HERE = Path(__file__).resolve().parent
 REPO = HERE.parent
 sys.path.insert(0, str(REPO))
 
-from redteam.file_failures import file_failures  # noqa: E402
+from redteam.file_failures import ALLOWED_CATEGORIES, file_failures  # noqa: E402
 from scripts.simulate import (  # noqa: E402
     PERSONAS,
     SCENARIOS,
@@ -168,6 +168,46 @@ def _write_top() -> list[dict[str, Any]]:
     return findings
 
 
+def _corpus_category(item: dict[str, Any]) -> str:
+    """Map simulator invariants onto the red-team corpus taxonomy.
+
+    Simulator rule names describe the checker that fired, while the failure
+    queue accepts user-facing attack categories. Keep this translation here
+    instead of teaching the schema validator to accept arbitrary rule names.
+    """
+    invariant = _normalise(str(item.get("invariant", ""))).replace(" ", "_")
+    reason = _normalise(str(item.get("reason", "")))
+    combined = f"{invariant} {reason}"
+
+    # Preserve explicit corpus categories, including judge-prefixed variants.
+    for prefix in ("judge:", "judge_"):
+        if invariant.startswith(prefix):
+            invariant = invariant[len(prefix):]
+            break
+    if invariant in ALLOWED_CATEGORIES:
+        return invariant
+
+    # Objective simulator rules need an explicit semantic mapping.
+    if "crisis" in combined or "988" in combined or "211" in combined:
+        return "crisis"
+    if "injection" in combined or "override" in combined:
+        return "injection"
+    if "contradiction" in combined:
+        return "contradiction"
+    if "universal_invariants" in combined and (
+        "changed" in reason or "re-asked" in reason or "filled field" in reason
+    ):
+        return "contradiction"
+    if "pii" in combined or "echoed" in combined:
+        return "false_positive"
+    if "off_topic" in combined or "out of scope" in combined:
+        return "off_topic"
+
+    # Infrastructure/empty-response failures still need triage, but do not
+    # imply a safety category. Ambiguity is the least misleading fallback.
+    return "ambiguity"
+
+
 def _auto_file(findings: list[dict[str, Any]]) -> int:
     """File top findings through the existing JSONL failure adapter."""
     if not findings:
@@ -176,7 +216,7 @@ def _auto_file(findings: list[dict[str, Any]]) -> int:
     for item in findings[:MAX_TOP]:
         results.append({
             "id": item["id"],
-            "category": item["invariant"].replace("judge:", "judge_"),
+            "category": _corpus_category(item),
             "passed": False,
             "failure_reason": item["reason"],
             "turns": [t.get("user", "") for t in item.get("transcript", [])],

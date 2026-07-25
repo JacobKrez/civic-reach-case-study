@@ -11,7 +11,7 @@ The agent must:
 
 import pytest
 
-from src.agent import CivicReachAgent
+from src.agent import FoodPathAgent
 from src.guardrails.classifier import CLASSIFIER_SYSTEM_PROMPT
 from src.guardrails.scope import (
     detect_out_of_scope,
@@ -130,7 +130,7 @@ def test_detect_out_of_scope_is_case_insensitive():
 
 def test_out_of_scope_returns_fixed_redirect_text():
     llm = RecordingLLM()
-    agent = CivicReachAgent(llm_client=llm)
+    agent = FoodPathAgent(llm_client=llm)
 
     response = agent.turn("Can you write me code for a Snake game?")
 
@@ -149,7 +149,7 @@ def test_spanish_out_of_scope_returns_fixed_redirect_without_llm():
     revert to English.
     """
     llm = RecordingLLM()
-    agent = CivicReachAgent(llm_client=llm)
+    agent = FoodPathAgent(llm_client=llm)
 
     response = agent.turn("Necesito un abogado, ¿puedes ayudarme?")
 
@@ -194,7 +194,7 @@ def test_out_of_scope_does_not_destroy_collected_state():
             return {"content": "What is your gross monthly income?", "tool_calls": []}
 
     scripted = ScriptedLLM()
-    agent = CivicReachAgent(llm_client=scripted)
+    agent = FoodPathAgent(llm_client=scripted)
 
     agent.turn("There are four of us.")
     assert agent.state.household_size == 4
@@ -209,7 +209,7 @@ def test_out_of_scope_does_not_destroy_collected_state():
 
 def test_out_of_scope_classification_flag_is_persisted():
     llm = RecordingLLM()
-    agent = CivicReachAgent(llm_client=llm)
+    agent = FoodPathAgent(llm_client=llm)
 
     agent.turn("I want to sue someone.")
     assert agent.state.is_out_of_scope is True
@@ -217,7 +217,7 @@ def test_out_of_scope_classification_flag_is_persisted():
 
 def test_in_scope_message_does_not_set_out_of_scope_flag():
     llm = RecordingLLM()
-    agent = CivicReachAgent(llm_client=llm)
+    agent = FoodPathAgent(llm_client=llm)
 
     agent.turn("There are three of us in my household.")
     assert agent.state.is_out_of_scope is False

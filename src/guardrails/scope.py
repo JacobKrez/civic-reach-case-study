@@ -175,9 +175,9 @@ def scope_redirect_message(lang: str = "en") -> str:
 # W21 — "what this is NOT" disambiguation layer.
 #
 # Researched failure mode (2026-07-23): a user can mistakenly believe
-# CivicReach IS a live person, IS 911 / 988's live counselors, IS an EBT
+# FoodPath IS a live person, IS 911 / 988's live counselors, IS an EBT
 # card-services line, or IS going to dispatch a DSS caseworker on their
-# behalf. CivicReach is none of those. Real hotlines identify themselves at
+# behalf. FoodPath is none of those. Real hotlines identify themselves at
 # the START of every call (911 / 988 operators explicitly triage before
 # offering resources; EBT card-services lines say "we only handle card
 # issues; for eligibility you need your state SNAP agency, not this line")
@@ -191,7 +191,7 @@ def scope_redirect_message(lang: str = "en") -> str:
 # detect_out_of_scope(). A crisis disclosure still wins unconditionally
 # (it is checked first in agent.turn()); an out-of-scope legal ask still
 # wins (it is checked second). The not-a-person check only fires for a
-# user who is asking about CivicReach's own nature, so it is third in the
+# user who is asking about FoodPath's own nature, so it is third in the
 # guardrail chain — after safety, after injection, after scope, after
 # hostility.
 #
@@ -330,7 +330,7 @@ _NOT_A_PERSON_PATTERNS_ES = _compile_bounded_phrases(_NOT_A_PERSON_PHRASES_ES)
 
 
 def detect_not_a_person_request(text: str) -> bool:
-    """Return ``True`` if *text* is a question about CivicReach's own nature.
+    """Return ``True`` if *text* is a question about FoodPath's own nature.
 
     Triggered by the user asking whether this is a live person, a live
     agent, a chatbot, an AI, a hotline, a 911/988 dispatcher, an EBT
@@ -366,7 +366,7 @@ def detect_not_a_person_request(text: str) -> bool:
 def not_a_person_response(lang: str = "en") -> str:
     """Return the deterministic "what this is NOT" disambiguation block.
 
-    Named after the real hotlines / lines that CivicReach can be confused
+    Named after the real hotlines / lines that FoodPath can be confused
     with so a confused user has a real channel to call instead. Real
     EBT card-services lines say "we only handle card issues; for
     eligibility you need your state SNAP agency, not this line" — that

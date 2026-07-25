@@ -2,7 +2,7 @@ from fastapi.testclient import TestClient
 import pytest
 
 import src.web as web
-from src.agent import CivicReachAgent
+from src.agent import FoodPathAgent
 
 
 class IntakeLLM:
@@ -27,7 +27,7 @@ class IntakeLLM:
 @pytest.fixture
 def client(monkeypatch):
     monkeypatch.setenv("GUARDRAIL_CLASSIFIER", "off")
-    monkeypatch.setattr(web, "agent_factory", lambda: CivicReachAgent(llm_client=IntakeLLM()))
+    monkeypatch.setattr(web, "agent_factory", lambda: FoodPathAgent(llm_client=IntakeLLM()))
     web.clear_sessions()
     with TestClient(web.app) as test_client:
         yield test_client
@@ -234,7 +234,7 @@ def test_structured_limit_row_appears_with_kind_and_snippet(monkeypatch):
     limit-row block as a distinct, clearly-labelled 'computed limit'
     entry (not just a KB doc hit)."""
     monkeypatch.setenv("GUARDRAIL_CLASSIFIER", "off")
-    monkeypatch.setattr(web, "agent_factory", lambda: CivicReachAgent(llm_client=GroundedLLM()))
+    monkeypatch.setattr(web, "agent_factory", lambda: FoodPathAgent(llm_client=GroundedLLM()))
     web.clear_sessions()
     with TestClient(web.app) as client:
         body = client.post(

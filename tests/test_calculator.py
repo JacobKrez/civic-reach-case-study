@@ -24,7 +24,7 @@ from src.calculator import (
 
 
 def calculate_eligibility(*args, **kwargs):
-    """Exercise CivicReach's NC route unless a test selects another state."""
+    """Exercise FoodPath's NC route unless a test selects another state."""
     kwargs.setdefault("state_code", "NC")
     return _calculate_eligibility(*args, **kwargs)
 

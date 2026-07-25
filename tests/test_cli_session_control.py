@@ -2,7 +2,7 @@
 
 from io import StringIO
 
-from src.agent import CivicReachAgent
+from src.agent import FoodPathAgent
 from src.cli import _BANNER, _run_repl
 
 
@@ -31,7 +31,7 @@ def test_banner_documents_new_and_restart_controls():
 def test_new_command_replaces_agent_state_but_reuses_client(monkeypatch):
     monkeypatch.setenv("GUARDRAIL_CLASSIFIER", "off")
     llm = RecordingIntakeLLM()
-    original = CivicReachAgent(llm_client=llm, retriever=lambda _q: "")
+    original = FoodPathAgent(llm_client=llm, retriever=lambda _q: "")
     output = StringIO()
 
     result = _run_repl(
@@ -53,7 +53,7 @@ def test_restart_is_alias_for_new(monkeypatch):
     monkeypatch.setenv("GUARDRAIL_CLASSIFIER", "off")
     output = StringIO()
     result = _run_repl(
-        CivicReachAgent(llm_client=RecordingIntakeLLM(), retriever=lambda _q: ""),
+        FoodPathAgent(llm_client=RecordingIntakeLLM(), retriever=lambda _q: ""),
         input_stream=StringIO("restart\nexit\n"),
         output=output,
     )

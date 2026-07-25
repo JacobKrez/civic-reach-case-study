@@ -3,7 +3,7 @@
 Three layers are exercised here, all code-templated:
 
 1. ``first_turn_disclosure(lang)`` is the very first assistant message of
-   every conversation. It names CivicReach as an automated AI assistant,
+   every conversation. It names FoodPath as an automated AI assistant,
    states the FNS eligibility SCREEN scope, lists what it CANNOT do
    (see, call, dispatch, take real-world action), and points to 911 /
    988 for emergencies. It is hard-coded — not LLM-generated — so the
@@ -32,7 +32,7 @@ import pytest
 from src.agent import (
     FIRST_TURN_DISCLOSURE_EN,
     FIRST_TURN_DISCLOSURE_ES,
-    CivicReachAgent,
+    FoodPathAgent,
     first_turn_disclosure,
 )
 from src.guardrails.classifier import CLASSIFIER_SYSTEM_PROMPT
@@ -181,7 +181,7 @@ def test_detect_not_a_person_request_catches_spanish_questions(message):
     "message",
     [
         # Normal intake chatter must NOT trigger. A phrase that contains
-        # the word "person" in a non-question-about-CivicReach context
+        # the word "person" in a non-question-about-FoodPath context
         # (e.g. household composition) is in-scope FNS intake, not a
         # not-a-person question.
         "There are three of us in my household.",
@@ -257,7 +257,7 @@ def test_not_a_person_response_english_returns_same_string_each_call():
 
 def test_agent_turn_returns_not_a_person_block_when_user_asks_if_real():
     llm = RecordingLLM()
-    agent = CivicReachAgent(llm_client=llm)
+    agent = FoodPathAgent(llm_client=llm)
 
     response = agent.turn("Are you a real person?")
 
@@ -281,7 +281,7 @@ def test_agent_turn_returns_not_a_person_block_when_user_asks_if_real():
 def test_agent_turn_not_a_person_short_circuits_without_llm(message):
     """Each real-channel confusion path short-circuits the LLM call."""
     llm = RecordingLLM()
-    agent = CivicReachAgent(llm_client=llm)
+    agent = FoodPathAgent(llm_client=llm)
 
     response = agent.turn(message)
 
@@ -292,7 +292,7 @@ def test_agent_turn_not_a_person_short_circuits_without_llm(message):
 def test_agent_turn_not_a_person_short_circuits_in_spanish_mode():
     """W19 parity: Spanish not-a-person question gets the Spanish block."""
     llm = RecordingLLM()
-    agent = CivicReachAgent(llm_client=llm)
+    agent = FoodPathAgent(llm_client=llm)
 
     response = agent.turn("¿Eres una persona real?")
 
@@ -311,7 +311,7 @@ def test_crisis_still_takes_priority_over_not_a_person():
     returns the crisis response — the not-a-person layer is below
     crisis in the chain and must never delay or override it."""
     llm = RecordingLLM()
-    agent = CivicReachAgent(llm_client=llm)
+    agent = FoodPathAgent(llm_client=llm)
 
     # The keyword ``want to die`` trips ``detect_crisis``; the "are you
     # a real person" suffix would also trip ``detect_not_a_person_request``
@@ -336,7 +336,7 @@ def test_scope_still_takes_priority_over_not_a_person():
     because scope is higher priority in the guardrail chain.
     """
     llm = RecordingLLM()
-    agent = CivicReachAgent(llm_client=llm)
+    agent = FoodPathAgent(llm_client=llm)
 
     # ``sue`` trips ``detect_out_of_scope``; the "are you a real
     # person" suffix would also trip not-a-person if asked in
@@ -356,7 +356,7 @@ def test_not_a_person_does_not_set_out_of_scope_or_crisis_flag():
     set, because doing so would confuse downstream state-based logic
     (e.g. the in-scope message that follows)."""
     llm = RecordingLLM()
-    agent = CivicReachAgent(llm_client=llm)
+    agent = FoodPathAgent(llm_client=llm)
 
     agent.turn("Are you a real person?")
 
@@ -369,7 +369,7 @@ def test_not_a_person_does_not_destroy_collected_intake_state():
     """If the user has already provided intake fields and then asks a
     not-a-person question, the intake state must survive."""
     llm = RecordingLLM()
-    agent = CivicReachAgent(llm_client=llm)
+    agent = FoodPathAgent(llm_client=llm)
 
     # Seed state by running a normal intake question through a scripted
     # LLM that emits an update_state tool call on the first turn.
@@ -393,7 +393,7 @@ def test_not_a_person_does_not_destroy_collected_intake_state():
             return {"content": "What is your gross monthly income?", "tool_calls": []}
 
     scripted = ScriptedLLM()
-    agent = CivicReachAgent(llm_client=scripted)
+    agent = FoodPathAgent(llm_client=scripted)
 
     agent.turn("There are four of us.")
     assert agent.state.household_size == 4
@@ -453,7 +453,7 @@ def test_web_index_page_has_two_separate_first_bubbles():
 
 def test_cli_banner_is_the_disclosure():
     """The CLI REPL banner is the hard-coded disclosure so a CLI user
-    also cannot mistake CivicReach for a live person / hotline."""
+    also cannot mistake FoodPath for a live person / hotline."""
     from src.cli import _BANNER
 
     assert FIRST_TURN_DISCLOSURE_EN in _BANNER

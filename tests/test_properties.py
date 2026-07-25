@@ -47,7 +47,7 @@ from typing import Any, Dict, List, Optional
 import pytest
 from hypothesis import HealthCheck, assume, given, settings, strategies as st
 
-from src.agent import CivicReachAgent
+from src.agent import FoodPathAgent
 from src.calculator import (
     calculate_eligibility as _calculate_eligibility,
     income_limits,
@@ -517,7 +517,7 @@ def _agent_result_for(
         {"content": "ok", "tool_calls": [{"name": "update_state", "input": turn3[0]}]},
     ]
 
-    agent = CivicReachAgent(llm_client=_ThreePlusDeductionsLLM(scripted_responses))
+    agent = FoodPathAgent(llm_client=_ThreePlusDeductionsLLM(scripted_responses))
     for _ in range(3):
         agent.turn("placeholder")
     assert agent.eligibility_result is not None, (
@@ -603,7 +603,7 @@ def test_agent_result_matches_calculator_for_same_inputs(
 @given(message=adversarial_text_st)
 def test_turn_never_raises_on_adversarial_input(message):
     """``agent.turn(msg)`` must not raise for any string ``msg``."""
-    agent = CivicReachAgent(llm_client=ScriptedIdleLLM())
+    agent = FoodPathAgent(llm_client=ScriptedIdleLLM())
     reply = agent.turn(message)
     assert isinstance(reply, str), (
         f"agent.turn returned non-string reply of type {type(reply).__name__}"
@@ -613,7 +613,7 @@ def test_turn_never_raises_on_adversarial_input(message):
 @given(message=adversarial_text_st)
 def test_turn_keeps_state_pydantic_valid(message):
     """After a single adversarial turn, ``state`` still round-trips through Pydantic."""
-    agent = CivicReachAgent(llm_client=ScriptedIdleLLM())
+    agent = FoodPathAgent(llm_client=ScriptedIdleLLM())
     agent.turn(message)
     # Round-trip the state through ``model_dump`` + ``model_validate``.
     # If any field has been corrupted to an illegal value (e.g. negative
@@ -631,7 +631,7 @@ def test_turn_keeps_state_pydantic_valid(message):
 )
 def test_sequence_of_adversarial_turns_keeps_state_valid(messages):
     """A sequence of adversarial turns must leave state valid."""
-    agent = CivicReachAgent(llm_client=ScriptedIdleLLM())
+    agent = FoodPathAgent(llm_client=ScriptedIdleLLM())
     for msg in messages:
         reply = agent.turn(msg)
         assert isinstance(reply, str)
@@ -684,7 +684,7 @@ def test_assessment_state_invariant_after_any_sequence(messages):
     documented field constraint (household_size 1..20, income >= 0,
     language in {"en","es"}, guardrail flags are bools) must hold.
     """
-    agent = CivicReachAgent(llm_client=ScriptedIdleLLM())
+    agent = FoodPathAgent(llm_client=ScriptedIdleLLM())
     seen = 0
     for msg in messages:
         agent.turn(msg)

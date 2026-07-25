@@ -2,11 +2,11 @@
 
 import json
 
-from src.agent import CivicReachAgent
+from src.agent import FoodPathAgent
 
 
 def test_deductions_question_retrieves_deductions_document():
-    agent = CivicReachAgent()
+    agent = FoodPathAgent()
     context = json.loads(agent._context(
         "What deductions are allowed for medical costs and dependent care?"
     ))

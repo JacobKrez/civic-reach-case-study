@@ -9,7 +9,7 @@ changes an intake field they already provided, the agent must:
     correction.
 """
 
-from src.agent import CivicReachAgent
+from src.agent import FoodPathAgent
 from src.guardrails.classifier import CLASSIFIER_SYSTEM_PROMPT
 
 
@@ -36,7 +36,7 @@ def _update(**fields):
 
 def test_first_time_provision_is_not_a_correction():
     llm = ScriptedLLM([_update(household_size=3)])
-    agent = CivicReachAgent(llm_client=llm)
+    agent = FoodPathAgent(llm_client=llm)
     reply = agent.turn("there are 3 of us")
     assert "Updated" not in reply
     assert agent._corrections == []
@@ -45,7 +45,7 @@ def test_first_time_provision_is_not_a_correction():
 
 def test_changed_field_is_acknowledged_with_suffix():
     llm = ScriptedLLM([_update(household_size=2), _update(household_size=5)])
-    agent = CivicReachAgent(llm_client=llm)
+    agent = FoodPathAgent(llm_client=llm)
     agent.turn("2 people")
     reply = agent.turn("wait, actually 5 people")
     assert "(Updated household_size: 2 -> 5.)" in reply
@@ -73,7 +73,7 @@ def test_multiple_corrections_in_one_turn_are_all_acknowledged():
             },
         ]
     )
-    agent = CivicReachAgent(llm_client=llm)
+    agent = FoodPathAgent(llm_client=llm)
     agent.turn("2 of us, $1000/mo")
     reply = agent.turn("no wait, 4 of us and I make $3000")
     assert "(Updated household_size: 2 -> 4.)" in reply
@@ -85,7 +85,7 @@ def test_multiple_corrections_in_one_turn_are_all_acknowledged():
 
 def test_same_value_restated_is_not_a_correction():
     llm = ScriptedLLM([_update(gross_monthly_income=1500.0), _update(gross_monthly_income=1500.0)])
-    agent = CivicReachAgent(llm_client=llm)
+    agent = FoodPathAgent(llm_client=llm)
     agent.turn("$1500 a month")
     reply = agent.turn("yes, $1500")
     assert "Updated" not in reply
@@ -94,7 +94,7 @@ def test_same_value_restated_is_not_a_correction():
 
 def test_corrections_surface_in_context():
     llm = ScriptedLLM([_update(household_size=2), _update(household_size=6)])
-    agent = CivicReachAgent(llm_client=llm)
+    agent = FoodPathAgent(llm_client=llm)
     agent.turn("2 people")
     agent.turn("actually 6")
     # The next context payload the model sees must include the trail.

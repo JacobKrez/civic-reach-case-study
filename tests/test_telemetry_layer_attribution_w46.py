@@ -2,7 +2,7 @@
 
 import json
 
-from src.agent import CivicReachAgent
+from src.agent import FoodPathAgent
 
 
 class ScriptedLLM:
@@ -23,7 +23,7 @@ def _response(**fields):
 def test_intake_turn_is_not_mislabeled_as_llm(monkeypatch, tmp_path):
     monkeypatch.setenv("CIVICREACH_LOG_DIR", str(tmp_path))
     monkeypatch.setenv("GUARDRAIL_CLASSIFIER", "off")
-    agent = CivicReachAgent(llm_client=ScriptedLLM([_response(household_size=2)]))
+    agent = FoodPathAgent(llm_client=ScriptedLLM([_response(household_size=2)]))
 
     agent.turn("2 people")
 
@@ -35,7 +35,7 @@ def test_intake_turn_is_not_mislabeled_as_llm(monkeypatch, tmp_path):
 def test_completed_screen_is_attributed_to_calculator(monkeypatch, tmp_path):
     monkeypatch.setenv("CIVICREACH_LOG_DIR", str(tmp_path))
     monkeypatch.setenv("GUARDRAIL_CLASSIFIER", "off")
-    agent = CivicReachAgent(llm_client=ScriptedLLM([
+    agent = FoodPathAgent(llm_client=ScriptedLLM([
         _response(household_size=2),
         _response(gross_monthly_income=1800),
         _response(has_elderly_or_disabled_member=False),

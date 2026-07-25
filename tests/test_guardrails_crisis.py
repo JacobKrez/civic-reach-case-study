@@ -2,7 +2,7 @@
 
 import pytest
 
-from src.agent import CivicReachAgent
+from src.agent import FoodPathAgent
 from src.guardrails.classifier import CLASSIFIER_SYSTEM_PROMPT
 from src.guardrails.crisis import CRISIS_RESOURCES, crisis_response, detect_crisis
 
@@ -59,7 +59,7 @@ class RecordingLLM:
 )
 def test_each_crisis_disclosure_gets_exact_hardcoded_resources(disclosure):
     llm = RecordingLLM()
-    agent = CivicReachAgent(llm_client=llm)
+    agent = FoodPathAgent(llm_client=llm)
 
     response = agent.turn(disclosure)
 
@@ -138,7 +138,7 @@ def test_english_crisis_detection_still_works_after_spanish_addition():
 
 def test_assessment_continues_gently_on_subsequent_turn():
     llm = RecordingLLM()
-    agent = CivicReachAgent(llm_client=llm)
+    agent = FoodPathAgent(llm_client=llm)
 
     agent.turn("There is nothing to eat.")
     response = agent.turn("Okay, I am ready to continue.")
@@ -218,7 +218,7 @@ class TestW20DomesticViolenceResponse:
 
     def test_dv_disclosure_through_agent_returns_dv_hotline(self):
         llm = RecordingLLM()
-        agent = CivicReachAgent(llm_client=llm)
+        agent = FoodPathAgent(llm_client=llm)
         response = agent.turn("my partner hits me, I am afraid to go home")
         assert agent.state.is_crisis is True
         assert "1-800-799-7233" in response
@@ -342,7 +342,7 @@ class TestW20CrisisAlwaysWinsOverHostility:
         assert detect_crisis(message) is True
 
         llm = RecordingLLM()
-        agent = CivicReachAgent(llm_client=llm)
+        agent = FoodPathAgent(llm_client=llm)
         response = agent.turn(message)
 
         assert agent.state.is_crisis is True
@@ -361,7 +361,7 @@ class TestW20CrisisAlwaysWinsOverHostility:
     def test_hostile_then_crisis_on_next_turn_still_gets_resources(self):
         """Hostility on turn 1 must not suppress crisis handling on turn 2."""
         llm = RecordingLLM()
-        agent = CivicReachAgent(llm_client=llm)
+        agent = FoodPathAgent(llm_client=llm)
 
         agent.turn("you're useless")
         response = agent.turn("I want to die")
@@ -378,7 +378,7 @@ class TestW20HostilityNonBlockingBehavior:
         from src.guardrails.hostility import HOSTILITY_CONTEXT_EN
 
         llm = RecordingLLM()
-        agent = CivicReachAgent(llm_client=llm)
+        agent = FoodPathAgent(llm_client=llm)
 
         response = agent.turn("you're useless, but I still need food stamps")
 
@@ -400,7 +400,7 @@ class TestW20HostilityNonBlockingBehavior:
         from src.guardrails.hostility import HOSTILITY_CONTEXT_EN
 
         llm = RecordingLLM()
-        agent = CivicReachAgent(llm_client=llm)
+        agent = FoodPathAgent(llm_client=llm)
 
         agent.turn("fuck you")
         assert HOSTILITY_CONTEXT_EN in llm.systems[-1]
@@ -413,7 +413,7 @@ class TestW20HostilityNonBlockingBehavior:
         from src.guardrails.hostility import HOSTILITY_CONTEXT_ES
 
         llm = RecordingLLM()
-        agent = CivicReachAgent(llm_client=llm)
+        agent = FoodPathAgent(llm_client=llm)
         agent.state.language = "es"
 
         agent.turn("fuck you")
@@ -425,7 +425,7 @@ class TestW20HostilityNonBlockingBehavior:
         from src.guardrails.hostility import HOSTILITY_CONTEXT_EN
 
         llm = RecordingLLM()
-        agent = CivicReachAgent(llm_client=llm)
+        agent = FoodPathAgent(llm_client=llm)
         agent.turn("you're worthless")
 
         history_text = " ".join(m["content"] for m in agent._messages)
@@ -433,7 +433,7 @@ class TestW20HostilityNonBlockingBehavior:
 
     def test_hostile_turn_writes_audit_note_not_visible_reply(self):
         llm = RecordingLLM()
-        agent = CivicReachAgent(llm_client=llm)
+        agent = FoodPathAgent(llm_client=llm)
 
         response = agent.turn("you're worthless")
 
@@ -450,7 +450,7 @@ class TestW20HostilityNonBlockingBehavior:
     def test_hostility_does_not_suppress_subsequent_normal_turns(self):
         """A hostile turn changes nothing about how later turns behave."""
         llm = RecordingLLM()
-        agent = CivicReachAgent(llm_client=llm)
+        agent = FoodPathAgent(llm_client=llm)
 
         agent.turn("stupid bot")
         response = agent.turn("There are three people in my household")

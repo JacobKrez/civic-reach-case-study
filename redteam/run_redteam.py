@@ -563,9 +563,9 @@ class _FakeLLM:
 
 def build_dry_run_agent():
     """Build a CivicReachAgent with deterministic CI intent classification."""
-    from src.agent import CivicReachAgent
+    from src.agent import FoodPathAgent
 
-    return CivicReachAgent(llm_client=_FakeLLM())
+    return FoodPathAgent(llm_client=_FakeLLM())
 
 
 def build_live_agent():
@@ -575,10 +575,10 @@ def build_live_agent():
     harness can clearly report a missing key instead of crashing on
     import.
     """
-    from src.agent import CivicReachAgent
+    from src.agent import FoodPathAgent
     from src.llm_client import LLMClient
 
-    return CivicReachAgent(llm_client=LLMClient())
+    return FoodPathAgent(llm_client=LLMClient())
 
 
 def restore_calculator():

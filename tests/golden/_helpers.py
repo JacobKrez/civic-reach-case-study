@@ -168,7 +168,7 @@ def run_transcript(
     classifier_response: str = "normal",
     capture_calculator: bool = True,
 ) -> TranscriptResult:
-    """Drive ``CivicReachAgent`` through ``user_messages`` and capture
+    """Drive ``FoodPathAgent`` through ``user_messages`` and capture
     every signal the universal invariants care about.
 
     Parameters
@@ -181,7 +181,7 @@ def run_transcript(
         main call returns a bare-tool-call stub).
     build_agent:
         Optional callable that, given a ``RecordingLLM``, returns a
-        configured ``CivicReachAgent`` (e.g. for tests that need a
+        configured ``FoodPathAgent`` (e.g. for tests that need a
         custom ``retriever`` or pre-seeded state). Defaults to a
         freshly-constructed agent with the recording LLM.
     classifier_response:
@@ -196,7 +196,7 @@ def run_transcript(
         calculator's inputs directly (income only changes when the
         caller did it, etc.) without depending on the real calculator.
     """
-    from src.agent import CivicReachAgent  # local import to keep the helper free of side effects
+    from src.agent import FoodPathAgent  # local import to keep the helper free of side effects
     from src.calculator import calculate_eligibility
 
     llm = RecordingLLM(
@@ -206,7 +206,7 @@ def run_transcript(
     if build_agent is not None:
         agent = build_agent(llm)
     else:
-        agent = CivicReachAgent(llm_client=llm)
+        agent = FoodPathAgent(llm_client=llm)
 
     result = TranscriptResult()
 

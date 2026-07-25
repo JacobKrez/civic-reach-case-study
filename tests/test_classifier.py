@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import pytest
 
-from src.agent import CivicReachAgent, SYSTEM_PROMPT
+from src.agent import FoodPathAgent, SYSTEM_PROMPT
 from src.guardrails.classifier import (
     CLASSIFIER_SYSTEM_PROMPT,
     INTENT_CRISIS,
@@ -264,7 +264,7 @@ def test_classifier_routes_through_agent_when_keyword_layer_misses(monkeypatch):
     # The classifier returns 'crisis' for an unseen phrasing; the agent
     # answers with the hardcoded crisis response.
     llm = FakeLLM(content="assistant answer", classifier_content="crisis")
-    agent = CivicReachAgent(llm_client=llm)
+    agent = FoodPathAgent(llm_client=llm)
 
     # "I'm about to stop eating altogether" — no crisis keyword present,
     # but obviously a crisis phrasing the classifier should catch.
@@ -289,7 +289,7 @@ def test_classifier_pass_through_when_disabled(monkeypatch):
     layer does not catch."""
     monkeypatch.setenv("GUARDRAIL_CLASSIFIER", "off")
     llm = FakeLLM(content="normal", classifier_content="crisis")
-    agent = CivicReachAgent(llm_client=llm)
+    agent = FoodPathAgent(llm_client=llm)
 
     # An in-scope message that the keyword detector does not catch.
     # With the classifier off, the agent must call the LLM for the
@@ -304,7 +304,7 @@ def test_classifier_pass_through_when_disabled(monkeypatch):
 
 def test_classifier_injection_path_returns_fixed_response():
     llm = FakeLLM(content="assistant answer", classifier_content="injection")
-    agent = CivicReachAgent(llm_client=llm)
+    agent = FoodPathAgent(llm_client=llm)
 
     # A phrasing that the keyword list does not catch but the
     # classifier must: imperative, no "ignore" or "you are now", yet
@@ -320,7 +320,7 @@ def test_classifier_injection_path_returns_fixed_response():
 
 def test_classifier_off_topic_path_returns_fixed_redirect():
     llm = FakeLLM(content="assistant answer", classifier_content="off_topic")
-    agent = CivicReachAgent(llm_client=llm)
+    agent = FoodPathAgent(llm_client=llm)
 
     # Off-topic phrasing the keyword list does not catch.
     response = agent.turn("Could you draft an email for me to my landlord?")
@@ -335,7 +335,7 @@ def test_classifier_normal_path_falls_through_to_agent_llm():
     main LLM exactly once and surface that answer (plus any eligibility
     or citation suffix). The classifier is invisible to the user."""
     llm = FakeLLM(content="How many people are in your household?")
-    agent = CivicReachAgent(llm_client=llm)
+    agent = FoodPathAgent(llm_client=llm)
 
     response = agent.turn("There are three of us in my household.")
     assert response == "How many people are in your household?"
@@ -368,7 +368,7 @@ def test_classifier_fail_open_in_agent():
             return {"content": "main answer", "tool_calls": []}
 
     llm = DispatchingLLM()
-    agent = CivicReachAgent(llm_client=llm)
+    agent = FoodPathAgent(llm_client=llm)
 
     # In-scope message. Keyword layer passes; classifier raises; the
     # agent must fall through to the main LLM call and return its answer.
@@ -394,7 +394,7 @@ def test_classifier_does_not_shadow_keyword_path():
     # The classifier would say "normal" — but the keyword layer catches
     # the crisis first and the crisis response is returned regardless.
     llm = FakeLLM(content="assistant answer", classifier_content="normal")
-    agent = CivicReachAgent(llm_client=llm)
+    agent = FoodPathAgent(llm_client=llm)
 
     response = agent.turn("I want to kill myself")
     assert CRISIS_RESOURCES["suicide_crisis_lifeline"] in response
@@ -410,7 +410,7 @@ def test_classifier_checkpoints_run_after_keyword_layer_in_messages():
     next-turn recovery semantics (the agent's ``_messages`` is the
     memory of the conversation)."""
     llm = FakeLLM(content="assistant answer", classifier_content="crisis")
-    agent = CivicReachAgent(llm_client=llm)
+    agent = FoodPathAgent(llm_client=llm)
 
     agent.turn("Honestly, I'm about to stop eating altogether")
     # Last two messages: user echo + the crisis response.
