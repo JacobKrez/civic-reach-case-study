@@ -121,35 +121,35 @@ facing evidence the project needs.
 
 ### Per-layer attribution (W48 live run)
 
-The summary block of every retained report contains
-`summary.guardrail_layer_attribution.case_counts` with the breakdown of
-which guardrail layer caught each case. The `by_category` sub-block has
-the same split per category. The latest live run is at:
+The retained evidence artifact is:
 
 ```text
-redteam/reports/report_live_2026-07-25.json
+redteam/reports/report_live_20260725T201937Z.json
 ```
 
-The headline numbers from that run (LLM classifier ON, real provider):
+This was a live MiniMax run (`MiniMax-M3`) with the classifier enabled against
+the 21-case W48 safety subset (`redteam/fixtures_subset/w48_subset.jsonl`), not
+the full 92-case corpus. It passed 21/21 (100%): all 12 crisis cases and all 9
+injection cases. Attribution shows 14 cases caught by the keyword layer and 7
+by the classifier:
 
-| category        | passed | total | pass_rate | caught_by_keyword | caught_by_classifier |
-|-----------------|--------|-------|-----------|-------------------|----------------------|
-| crisis          | (see report)        | 12     | (see report)       | (see report)               | (see report)                  |
-| injection       | (see report)        | 30     | (see report)       | (see report)               | (see report)                  |
-| off_topic       | (see report)        | 10     | (see report)       | (see report)               | (see report)                  |
-| ambiguity       | (see report)        | 12     | (see report)       | (see report)               | (see report)                  |
-| contradiction   | (see report)        | 8      | (see report)       | (see report)               | (see report)                  |
-| false_positive  | (see report)        | 20     | (see report)       | (see report)               | (see report)                  |
-| **overall**     | (see report)        | 92     | (see report)       | (see report)               | (see report)                  |
+| category | passed | total | pass_rate | caught_by_keyword | caught_by_classifier |
+|---|---:|---:|---:|---:|---:|
+| crisis | 12 | 12 | 100% | 6 | 6 |
+| injection | 9 | 9 | 100% | 8 | 1 |
+| **subset overall** | **21** | **21** | **100%** | **14** | **7** |
 
-The headline reading of the per-layer split: the keyword layer catches
-the deterministic cases (overwhelming majority of injection/off_topic,
-keyword-anchored crisis). The classifier layer is the safety net for the
-indirect crisis phrasings (crisis_07 through crisis_11) and the
-novel-shape injection attempts the keyword list does not cover. If the
-classifier layer is OFF, the indirect crisis cases are unverified; if
-it is ON, those cases either pass because the classifier fires correctly
-or fail with a named residual gap. Either outcome is documented.
+The report records its timestamp, fixture path, provider, model, and
+`guardrail_classifier_enabled: true`. This subset is targeted evidence for the
+two-layer safety design; it must not be represented as a full-corpus live
+score. The manual workflow below remains the repeatable path for a full live
+92-case run.
+
+The per-case `turn_attribution` records the resolved layer and
+`guardrail_source`. The five highest-priority indirect crisis cases,
+`crisis_07` through `crisis_11`, all passed and were caught by the classifier,
+not the keyword layer. No classifier-prompt strengthening was required for
+this provider/model run.
 
 ### Indirect-crisis evidence (the W48 bet)
 
@@ -192,17 +192,17 @@ action that produces reviewer-facing evidence.
 
 ```text
 # Overall headline
-jq '.summary' redteam/reports/report_live_2026-07-25.json
+jq '.summary' redteam/reports/report_live_20260725T201937Z.json
 
 # Per-layer attribution (the interesting engineering result)
-jq '.summary.guardrail_layer_attribution' redteam/reports/report_live_2026-07-25.json
+jq '.summary.guardrail_layer_attribution' redteam/reports/report_live_20260725T201937Z.json
 
 # Per-case results with guardrail_source
-jq '.results[] | {id, category, passed, guardrail_source, classifier_label}' \
-    redteam/reports/report_live_2026-07-25.json
+jq '.results[] | {id, category, passed, caught_by, turn_attribution}' \
+    redteam/reports/report_live_20260725T201937Z.json
 
 # Indirect-crisis cases only (the five cases the keyword layer is not
 # supposed to catch)
-jq '.results[] | select(.id | startswith("crisis_0") or startswith("crisis_1")) | select(.id >= "crisis_07")' \
-    redteam/reports/report_live_2026-07-25.json
+jq '.results[] | select(.id == "crisis_07" or .id == "crisis_08" or .id == "crisis_09" or .id == "crisis_10" or .id == "crisis_11") | {id, passed, caught_by, turn_attribution}' \
+    redteam/reports/report_live_20260725T201937Z.json
 ```
