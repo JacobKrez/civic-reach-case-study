@@ -22,13 +22,6 @@ import re
 # substring match) that, when present in the user's message, signals the
 # request is outside the NC FNS initial screen scope.
 _OUT_OF_SCOPE_PHRASES: tuple[str, ...] = (
-    # Legal-advice family
-    "sue",
-    "lawyer",
-    "legal advice",
-    "attorney",
-    "lawsuit",
-    "small claims court",
     # General off-topic family
     "write me code",
     "write code",
@@ -91,6 +84,23 @@ def _compile_bounded_phrases(
 _OUT_OF_SCOPE_PATTERNS = _compile_bounded_phrases(_OUT_OF_SCOPE_PHRASES)
 _OUT_OF_SCOPE_PATTERNS_ES = _compile_bounded_phrases(_OUT_OF_SCOPE_PHRASES_ES)
 
+# Profession words are ordinary intake answers ("I work at a lawyer's
+# office"). Require an advice-seeking frame instead of refusing bare mentions.
+_LEGAL_ADVICE_PATTERNS: tuple[re.Pattern[str], ...] = (
+    # A standalone profession word is itself an off-topic legal request, while
+    # a profession embedded in an income answer is merely occupational context.
+    re.compile(r"^\s*(?:lawyer|attorney)\s*[.!?]?\s*$", re.IGNORECASE),
+    re.compile(r"\b(?:can|could|should|may)\s+i\s+sue\b", re.IGNORECASE),
+    re.compile(r"\b(?:can|could|would)\s+you\s+help\s+me\s+sue\b", re.IGNORECASE),
+    re.compile(r"\bi\s+(?:want|need|plan|intend|had)\s+(?:to\s+)?sue\b", re.IGNORECASE),
+    re.compile(r"\b(?:can|could|may)\s+i\s+(?:get|obtain)\s+legal\s+advice\b", re.IGNORECASE),
+    re.compile(r"\bhow\s+do\s+i\s+take\b.{0,30}\bsmall\s+claims\s+court\b", re.IGNORECASE),
+    re.compile(r"\b(?:do|will|would)\s+i\s+need\s+(?:an?\s+)?(?:lawyer|attorney)\b", re.IGNORECASE),
+    re.compile(r"\b(?:can|could|should|may)\s+i\s+(?:talk|speak)\s+to\s+(?:an?\s+)?(?:lawyer|attorney)\b", re.IGNORECASE),
+    re.compile(r"\b(?:give|need|want|seeking|provide)\b.{0,30}\b(?:legal\s+advice|lawyer|attorney)\b", re.IGNORECASE),
+    re.compile(r"\b(?:file|start|bring)\b.{0,20}\b(?:a\s+)?(?:lawsuit|small\s+claims\s+(?:court|case))\b", re.IGNORECASE),
+)
+
 
 def detect_out_of_scope(text: str) -> bool:
     """Return ``True`` if *text* is clearly outside NC FNS eligibility scope.
@@ -114,6 +124,8 @@ def detect_out_of_scope(text: str) -> bool:
     # Accent-insensitive variant for the Spanish list.
     accentless = normalized.translate(_SPANISH_ACCENTS)
 
+    if any(pattern.search(normalized) for pattern in _LEGAL_ADVICE_PATTERNS):
+        return True
     for pattern in _OUT_OF_SCOPE_PATTERNS:
         if pattern.search(normalized):
             return True

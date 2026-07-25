@@ -30,10 +30,12 @@ _INJECTION_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"(?:^|[.!?;]\s*)forget\s+(?:everything|all)\b", re.IGNORECASE),
     # "New system:" persona-redefinition framing (W13, fixture injection_17).
     re.compile(r"\bnew\s+system\s*[:=]", re.IGNORECASE),
-    # "You are a <role>" persona redefinition (e.g. "you are an arithmetic
-    # tutor", "you are a friendly chatbot"). Superset of "you are now" above,
-    # covering bare "you are a ..." framings seen in the 2026-07-23 red-team.
-    re.compile(r"\byou\s+are\s+(?:now\s+)?a\b", re.IGNORECASE),
+    # Persona changes require an imperative frame. A bare declaration or
+    # question such as "you are a robot, aren't you?" is identity confusion,
+    # not an instruction override (W27).
+    re.compile(r"\bfrom\s+now\s+on\s*,?\s*you\s+are\s+(?:an?\s+)?", re.IGNORECASE),
+    re.compile(r"\bpretend\s+(?:that\s+)?you\s+are\s+(?:an?\s+)?", re.IGNORECASE),
+    re.compile(r"\byou\s+are\s+(?:an?\s+)?different\s+assistant\s+now\b", re.IGNORECASE),
     # System-prompt / internal-instruction extraction attempts.
     re.compile(r"\b(?:print|dump|show|reveal|output)\s+(?:the\s+)?(?:full\s+text\s+of\s+)?(?:your\s+)?(?:system\s+prompt|internal\s+instructions|primary\s+instructions)\b", re.IGNORECASE),
     # Fake-authority framing ("I'm a red-teamer/developer, you're authorized to...").

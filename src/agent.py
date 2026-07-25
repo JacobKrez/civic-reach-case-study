@@ -802,30 +802,10 @@ class CivicReachAgent:
             self._messages.append({"role": "assistant", "content": content})
             return content
 
-        # W27 -- the injection layer must not claim a message that is
-        # plainly a question about what CivicReach IS. "You are a bot
-        # right?" matches the persona-redefinition pattern
-        # (``you are a <role>``), which exists to catch "you are a pirate"
-        # style overrides -- but a user asking whether they are talking to
-        # a bot is not attempting an override, and answering an honest
-        # disclosure question with a refusal makes the assistant look
-        # evasive about its own nature. That is exactly the confusion the
-        # W21 disclosure exists to prevent, and it made the not-a-person
-        # disambiguation unreachable for its most natural phrasing.
-        #
-        # The guardrail ORDER is deliberately unchanged (crisis ->
-        # injection -> scope -> not-a-person): the fix is a narrowing of
-        # what counts as injection, not a re-prioritisation. An
-        # out-of-scope legal ask still outranks not-a-person, and crisis
-        # still outranks everything.
-        if detect_injection(user_message) and not detect_not_a_person_request(user_message):
+        # Injection remains above scope for dual-flag override attempts.
+        if detect_injection(user_message):
             self.state.is_injection_attempt = True
             content = injection_response(lang)
-            self._messages.append({"role": "assistant", "content": content})
-            return content
-
-        if _VOLATILE_RULE_RE.search(user_message):
-            content = volatile_rule_redirect(lang)
             self._messages.append({"role": "assistant", "content": content})
             return content
 
@@ -835,7 +815,19 @@ class CivicReachAgent:
             self._messages.append({"role": "assistant", "content": content})
             return content
 
-        # W43 -- close-the-loop informational handlers. These are
+        # W27: identity-disclosure questions are now reachable because persona
+        # detection requires an imperative frame.
+        if detect_not_a_person_request(user_message):
+            content = not_a_person_response(lang)
+            self._messages.append({"role": "assistant", "content": content})
+            return content
+
+        if _VOLATILE_RULE_RE.search(user_message):
+            content = volatile_rule_redirect(lang)
+            self._messages.append({"role": "assistant", "content": content})
+            return content
+
+        # Close-the-loop informational handlers. These are
         # narrowly scoped, deterministic, code-templated responses for
         # specific administrative questions that the agent would
         # otherwise either improvise an answer to (worst case) or
@@ -867,17 +859,9 @@ class CivicReachAgent:
         # explicitly asks "are you a real person" / "are you calling
         # someone" / "is this 911" gets the deterministic disambiguation
         # block instead of a model-generated reply, so the framing cannot
-        # drift. The check happens here (after crisis/injection/scope,
-        # before the LLM call) so it can never delay or override a crisis
-        # response — a crisis disclosure returns crisis_response() before
-        # reaching this line.
-        if detect_not_a_person_request(user_message):
-            content = not_a_person_response(lang)
-            self._messages.append({"role": "assistant", "content": content})
-            return content
-
-        # W20: hostility is NON-BLOCKING and strictly lower priority than
-        # every guardrail above. If the message reached this point it is
+        # W20: hostility is NON-BLOCKING and lower priority than the blocking
+        # guardrails above. Identity disclosure already returned immediately
+        # after crisis handling (W27).
         # neither a crisis, nor an injection, nor out of scope, so flagging
         # it as hostile can never suppress the hardcoded crisis/injection/
         # scope responses. The detector runs HERE (not earlier) so the
