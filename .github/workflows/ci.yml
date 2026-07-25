@@ -6,8 +6,11 @@
 #   2. The red-team harness plumbing must run clean end-to-end in --dry-run
 #      mode. Dry-run validates fixtures, wiring, and per-category check logic
 #      WITHOUT calling a live LLM — a real run costs money and needs a
-#      provider key that CI does not have. Any Python traceback in dry-run
-#      output fails the build even if the process exits 0.
+#      provider key that CI does not have. The harness is exercised with
+#      --no-gate here so the plumbing check still passes; the threshold gate
+#      is enforced on live runs (manual or scheduled with secrets). Any
+#      Python traceback in dry-run output fails the build even if the
+#      process exits 0.
 #
 # Deliberately NOT here: a live (non-dry-run) red-team pass. That belongs to
 # a scheduled/manual workflow with secrets configured, not per-PR gating.
@@ -38,7 +41,14 @@ jobs:
 
       - name: Red-team harness dry-run (no LLM calls)
         run: |
-          python3 redteam/run_redteam.py --dry-run > redteam_dryrun.log 2>&1
+          # --no-gate: dry-run uses an in-process fake LLM that does NOT
+          # replicate the deterministic guardrails (see
+          # redteam/run_redteam.py:build_dry_run_agent). Checking thresholds
+          # here would always fail because the fake LLM's replies are
+          # calibrated for plumbing validation, not adversarial behaviour.
+          # The gate is enforced on live runs, where the real LLM fires
+          # the production guardrails.
+          python3 redteam/run_redteam.py --dry-run --no-gate > redteam_dryrun.log 2>&1
           status=$?
           tail -20 redteam_dryrun.log
           if [ $status -ne 0 ]; then

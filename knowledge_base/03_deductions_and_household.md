@@ -158,3 +158,43 @@ Household size drives the income limit column. Misclassifying a household
 (merging or splitting) can change eligibility significantly. When in doubt,
 the agent should ask the user whether people in the home buy and prepare
 food together.
+
+## Common household-composition questions (W43 close-the-loop KB addition)
+
+The intake form has a single household-size field. The following
+situations are common enough that the screen should answer them
+explicitly rather than asking the user to recall the rule from
+scratch:
+
+  - **Roommates.** A roommate who lives in the home but **buys and
+    prepares food separately** is a separate SNAP household and is
+    NOT counted in the applicant's household size. The roommate's
+    income is NOT counted in the applicant's gross income. If the
+    roommate shares groceries and meals, however, they are part of
+    the same SNAP household and DO count.
+  - **Adult children (18+).** An adult child living in the home is
+    part of the SNAP household if they buy and prepare food with the
+    applicant. If the adult child buys and prepares food separately,
+    they are their own SNAP household.
+  - **Boarders.** A boarder (someone who pays the applicant for
+    lodging/ meals) is generally NOT part of the SNAP household, and
+    payments received from the boarder for room/board are NOT counted
+    as household income. (Specific rules around "boarder" definitions
+    vary; DSS determines the actual classification.)
+  - **Foster children / foster adults.** A person in the household
+    solely because they are being fostered for pay is NOT counted in
+    the household size. The foster payment is NOT counted as income.
+  - **Children with shared custody.** A child who lives in the home
+    part of the time is counted in the household size of the home
+    they are in during the month. The two households cannot both
+    count the same child for the same month.
+  - **Temporarily absent members.** A household member who is away
+    for less than 2 months (school, travel, hospital) is still
+    counted in the household size, provided they intend to return.
+  - **Newborns.** A newborn is counted in the household size from
+    birth.
+
+If the user is unsure whether to count someone, the agent asks the
+canonical question: "Do you buy and prepare food together with this
+person?" DSS makes the final classification; the screen surfaces the
+rule in plain language to help the user self-check.

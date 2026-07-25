@@ -12,8 +12,17 @@ from pydantic import ValidationError
 
 from .calculator import calculate_eligibility, income_limits
 from .guardrails.ambiguity import normalize_income
+from .guardrails.application_status import (
+    application_status_response,
+    detect_application_status_question,
+)
+from .guardrails.benefit_amount import (
+    benefit_amount_response,
+    detect_benefit_amount_question,
+)
 from .guardrails.classifier import classify_intent
 from .guardrails.crisis import crisis_response, detect_crisis
+from .guardrails.expedited import detect_expedited_question, expedited_response
 from .guardrails.hostility import (
     HOSTILITY_CONTEXT_EN,
     HOSTILITY_CONTEXT_ES,
@@ -704,7 +713,30 @@ class CivicReachAgent:
             elif self._audit and self._audit[-1].get("turn") == self.state.turn_count and self._audit[-1].get("event") == "hostility_detected":
                 layer = "hostility"
             else:
-                layer = "llm"
+                # W46: telemetry describes the component that actually
+                # resolved the turn, not merely the fact that no safety
+                # guardrail fired. Intake extraction and calculator verdicts
+                # are deterministic application layers even though an LLM may
+                # assist parsing. Calling every ordinary turn ``llm`` hid that
+                # architecture and made the layer-skew signal meaningless.
+                changed_intake = any(
+                    before.get(field) != after.get(field)
+                    for field in (
+                        "household_size",
+                        "gross_monthly_income",
+                        "has_elderly_or_disabled_member",
+                        "earned_monthly_income",
+                        "dependent_care_monthly",
+                        "medical_expenses_monthly",
+                        "shelter_costs_monthly",
+                    )
+                )
+                if self._eligibility_result is not None:
+                    layer = "calculator"
+                elif changed_intake:
+                    layer = "intake"
+                else:
+                    layer = "llm"
             self.last_layer = layer
             event = {"session_id": self.session_id, "turn_index": self.state.turn_count,
                 "user_message": user_message, "layer": layer, "classifier_label": None,
@@ -770,7 +802,23 @@ class CivicReachAgent:
             self._messages.append({"role": "assistant", "content": content})
             return content
 
-        if detect_injection(user_message):
+        # W27 -- the injection layer must not claim a message that is
+        # plainly a question about what CivicReach IS. "You are a bot
+        # right?" matches the persona-redefinition pattern
+        # (``you are a <role>``), which exists to catch "you are a pirate"
+        # style overrides -- but a user asking whether they are talking to
+        # a bot is not attempting an override, and answering an honest
+        # disclosure question with a refusal makes the assistant look
+        # evasive about its own nature. That is exactly the confusion the
+        # W21 disclosure exists to prevent, and it made the not-a-person
+        # disambiguation unreachable for its most natural phrasing.
+        #
+        # The guardrail ORDER is deliberately unchanged (crisis ->
+        # injection -> scope -> not-a-person): the fix is a narrowing of
+        # what counts as injection, not a re-prioritisation. An
+        # out-of-scope legal ask still outranks not-a-person, and crisis
+        # still outranks everything.
+        if detect_injection(user_message) and not detect_not_a_person_request(user_message):
             self.state.is_injection_attempt = True
             content = injection_response(lang)
             self._messages.append({"role": "assistant", "content": content})
@@ -784,6 +832,32 @@ class CivicReachAgent:
         if detect_out_of_scope(user_message):
             self.state.is_out_of_scope = True
             content = scope_redirect_message(lang)
+            self._messages.append({"role": "assistant", "content": content})
+            return content
+
+        # W43 -- close-the-loop informational handlers. These are
+        # narrowly scoped, deterministic, code-templated responses for
+        # specific administrative questions that the agent would
+        # otherwise either improvise an answer to (worst case) or
+        # silently fail to address (the "I just asked about expedited
+        # SNAP and the assistant asked me about my household size
+        # again" failure). Each is informational, not safety-critical,
+        # so they sit AFTER the safety/contract guards (crisis,
+        # injection, scope, not-a-person) and BEFORE the LLM call. The
+        # intake is preserved -- the response explicitly invites the
+        # user to continue with the eligibility questions.
+        if detect_expedited_question(user_message):
+            content = expedited_response(lang)
+            self._messages.append({"role": "assistant", "content": content})
+            return content
+
+        if detect_benefit_amount_question(user_message):
+            content = benefit_amount_response(lang)
+            self._messages.append({"role": "assistant", "content": content})
+            return content
+
+        if detect_application_status_question(user_message):
+            content = application_status_response(lang)
             self._messages.append({"role": "assistant", "content": content})
             return content
 
