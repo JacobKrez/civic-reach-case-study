@@ -8,6 +8,10 @@
 #      at least 90%. The in-process fake LLM avoids provider keys/API spend,
 #      while production guardrails still execute before the fake client. Any
 #      non-zero harness exit or Python traceback fails the build.
+#   3. The W44 quality gate (scripts/gate.py + QUALITY_BAR.md) runs as the
+#      final step so the entire bar — KB provenance, KB/calculator consistency,
+#      README consistency, simulator invariants, cold-smoke verdict — is
+#      enforced in CI as well. A red gate blocks the build.
 #
 # A separate manual workflow may run the same corpus against a live provider
 # to produce model-specific evidence; CI itself remains deterministic.
@@ -49,5 +53,21 @@ jobs:
           fi
           if grep -q "Traceback" redteam_dryrun.log; then
             echo "::error::red-team dry-run produced a Python traceback"
+            exit 1
+          fi
+
+      - name: W44 quality gate (final step; see QUALITY_BAR.md)
+        run: |
+          set +e
+          python3 scripts/gate.py > gate.log 2>&1
+          status=$?
+          set -e
+          tail -40 gate.log
+          if [ $status -ne 0 ]; then
+            echo "::error::quality gate failed with status $status"
+            exit $status
+          fi
+          if grep -q "Traceback" gate.log; then
+            echo "::error::quality gate produced a Python traceback"
             exit 1
           fi
