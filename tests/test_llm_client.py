@@ -215,6 +215,61 @@ def test_minimax_requests_is_mocked(monkeypatch):
     post.assert_called_once()
 
 
+def test_minimax_falls_back_to_reasoning_content_when_content_empty(monkeypatch):
+    """When MiniMax's reasoning model returns empty content with a
+    reasoning_content field, the user-facing assistant text must not be
+    empty -- the agent loop's outcome-term backstop only fires after
+    extraction produces content, and a chat whose final reply is
+    just a single space triggers the universal_invariants failure
+    (no outcome term in any reply)."""
+    monkeypatch.setenv("LLM_MODEL", "minimax-test")
+    response = Mock()
+    response.json.return_value = {
+        "choices": [
+            {
+                "message": {
+                    "content": "",
+                    "reasoning_content": "Final answer: likely eligible.",
+                    "tool_calls": [],
+                }
+            }
+        ]
+    }
+    post = Mock(return_value=response)
+    monkeypatch.setattr("src.llm_client.requests.post", post)
+    result = LLMClient()._chat_minimax([], None, None)
+    assert result == {
+        "content": "Final answer: likely eligible.",
+        "tool_calls": [],
+    }
+
+
+def test_minimax_keeps_content_when_both_present(monkeypatch):
+    """If MiniMax returns both content and reasoning_content, content
+    wins -- reasoning_content is the model's internal chain-of-thought
+    and must NOT replace the user-facing text."""
+    monkeypatch.setenv("LLM_MODEL", "minimax-test")
+    response = Mock()
+    response.json.return_value = {
+        "choices": [
+            {
+                "message": {
+                    "content": "hello",
+                    "reasoning_content": "thinking...",
+                    "tool_calls": [],
+                }
+            }
+        ]
+    }
+    post = Mock(return_value=response)
+    monkeypatch.setattr("src.llm_client.requests.post", post)
+    result = LLMClient()._chat_minimax([], None, None)
+    assert result == {
+        "content": "hello",
+        "tool_calls": [],
+    }
+
+
 def test_openrouter_requests_is_mocked(monkeypatch):
     monkeypatch.setenv("LLM_MODEL", "openrouter-test")
     response = Mock()

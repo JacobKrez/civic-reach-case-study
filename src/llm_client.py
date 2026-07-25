@@ -242,6 +242,16 @@ class LLMClient:
         )
         response.raise_for_status()
         message = response.json()["choices"][0]["message"]
+        # MiniMax reasoning models can return an empty content field with
+        # the actual answer in reasoning_content. Without this fallback
+        # the agent loop's final reply is sometimes just a single space +
+        # (Sources: ...), which fails the universal_invariants check
+        # (no outcome term in any reply). Content always wins when
+        # present -- reasoning_content is the model's internal
+        # chain-of-thought and must NOT replace the user-facing text.
+        content = message.get("content") or ""
+        if not content.strip():
+            content = message.get("reasoning_content") or ""
         tool_calls = []
         for call in message.get("tool_calls") or []:
             function = call.get("function", {})
@@ -251,7 +261,7 @@ class LLMClient:
             except json.JSONDecodeError:
                 parsed = {"raw": arguments}
             tool_calls.append({"name": function.get("name", ""), "input": parsed or {}})
-        return {"content": message.get("content") or "", "tool_calls": tool_calls}
+        return {"content": content, "tool_calls": tool_calls}
 
     def _chat_openrouter(
         self, messages: list[dict], system: str | None, tools: list | None
