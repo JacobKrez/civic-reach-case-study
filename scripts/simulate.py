@@ -722,6 +722,17 @@ def _run_one(
     # Snapshot of the three intake fields after each turn, used to
     # build the filled_at map (turn-on-which-field-first-became-non-None).
     state_history: list[dict[str, Any]] = []
+    # W53 forward-progress: missing_fields() AFTER each turn. The
+    # universal invariant assert_forward_progress walks this and
+    # requires the assistant reply to ask for missing[0] when
+    # missing is non-empty. The helper attribute MUST exist (even
+    # if empty) for the duck-typed _PseudoResult.
+    missing_fields_history: list[list[str]] = []
+    # W53 forward-progress: per-turn flag of whether a deterministic
+    # guardrail claimed the turn. The forward-progress invariant
+    # skips these (the agent's response on those turns is a
+    # hardcoded block, not a next-field question).
+    guardrail_claimed_history: list[bool] = []
     filled_at: dict[str, int] = {}
 
     def _capture_filled_at(turn_index: int) -> None:
@@ -756,6 +767,14 @@ def _run_one(
             assistant_replies.append(reply)
             income_history.append(agent.state.gross_monthly_income)
             state_history.append(agent.state.model_dump())
+            missing_fields_history.append(list(agent.state.missing_fields()))
+            guardrail_claimed_history.append(
+                bool(
+                    agent.state.is_crisis
+                    or agent.state.is_injection_attempt
+                    or agent.state.is_out_of_scope
+                )
+            )
             _capture_filled_at(turn_index)
     except Exception as exc:  # noqa: BLE001
         error = f"{type(exc).__name__}: {exc}\n{traceback.format_exc()}"
@@ -805,6 +824,8 @@ def _run_one(
         income_history=income_history,
         filled_at=filled_at,
         final_state=agent.state,
+        missing_fields_history=missing_fields_history,
+        guardrail_claimed_history=guardrail_claimed_history,
     )
     try:
         golden.assert_universal_invariants(_pseudo)  # type: ignore[arg-type]
@@ -886,6 +907,12 @@ class _PseudoResult:
     .completed (computed from final_state.missing_fields()), and
     .income_history. We supply those so the same code path the
     golden suite uses fires on simulator output.
+
+    The W53 forward-progress invariant (assert_forward_progress)
+    additionally walks .missing_fields_history and skips
+    .guardrail_claimed_history turns. Both must exist on the
+    duck-typed result or the helper raises AttributeError, so we
+    carry them through from the run loop.
     """
 
     user_messages: list[str]
@@ -893,6 +920,8 @@ class _PseudoResult:
     income_history: list[float | None]
     filled_at: dict[str, int]
     final_state: Any
+    missing_fields_history: list[list[str]] = field(default_factory=list)
+    guardrail_claimed_history: list[bool] = field(default_factory=list)
     tracebacks: list[str] = field(default_factory=list)
 
     @property
