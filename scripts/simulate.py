@@ -1009,6 +1009,22 @@ def _run_one(
         ):
             if field_name not in filled_at and getattr(agent.state, field_name) is not None:
                 filled_at[field_name] = turn_index
+        # W60 — explicit ``intake_reset`` audit events clear the
+        # filled-at tracker for the three intake fields so the
+        # re-ask invariant lets the agent re-prompt a field the user
+        # just asked to start over (see the same patch in
+        # tests/golden/_helpers.py for the full rationale).
+        if (
+            agent._audit
+            and agent._audit[-1].get("event") == "intake_reset"
+            and agent._audit[-1].get("turn") == turn_index
+        ):
+            for field_name in (
+                "household_size",
+                "gross_monthly_income",
+                "has_elderly_or_disabled_member",
+            ):
+                filled_at.pop(field_name, None)
 
     # Run the conversation. Cap at max_turns to keep wall-clock bounded;
     # a stuck-in-intake persona after max_turns is itself a failure.

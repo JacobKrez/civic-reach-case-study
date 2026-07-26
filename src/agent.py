@@ -31,7 +31,18 @@ from .guardrails.hostility import (
 )
 from .guardrails.injection import detect_injection, injection_response
 from .guardrails.pii import redact_for_logging
+from .guardrails.drifter import (
+    detect_drifter_aside,
+    drifter_redirect_message,
+)
 from .guardrails.process import detect_process_question, process_question_response
+from .guardrails.restarter import (
+    apply_intake_reset,
+    detect_recap_request,
+    detect_restart_request,
+    recap_message,
+    reset_intake_message,
+)
 from .guardrails.scope import (
     detect_not_a_person_request,
     detect_out_of_scope,
@@ -1042,6 +1053,68 @@ class FoodPathAgent:
         process_category = detect_process_question(user_message)
         if process_category is not None:
             content = process_question_response(process_category, lang)
+            content = _w53_fold_ask(
+                content, self.state.language, list(self.state.missing_fields())
+            )
+            self._messages.append({"role": "assistant", "content": content})
+            return content
+
+        # W60 — restarter persona: explicit "start over" must CLEAR the
+        # recorded intake state, not just acknowledge the words. Wired
+        # through the same reset path the W50 ``/session/reset`` button
+        # uses (foodpath.web.reset_session, which constructs a fresh
+        # AssessmentState). The agent-level reset preserves language,
+        # guardrail bookkeeping, and the message history so the W53
+        # floor keeps a stable frame of reference.
+        if detect_restart_request(user_message):
+            apply_intake_reset(self.state)
+            self._audit.append(
+                {
+                    "turn": self.state.turn_count,
+                    "event": "intake_reset",
+                    "note": (
+                        "[FoodPath audit] User requested an explicit restart. "
+                        "AssessmentState intake fields have been cleared; "
+                        "language, guardrail flags, and message history are "
+                        "preserved."
+                    ),
+                }
+            )
+            self._guardrail_source = "keyword"
+            content = reset_intake_message(lang)
+            content = _w53_fold_ask(
+                content, self.state.language, list(self.state.missing_fields())
+            )
+            self._messages.append({"role": "assistant", "content": content})
+            return content
+
+        # W60 — restarter persona: recap request. The recap is
+        # code-templated from AssessmentState so the model cannot
+        # improvise and accidentally re-state a value the user has
+        # since changed. The W53 floor still appends the next-field
+        # question after the recap.
+        if detect_recap_request(user_message):
+            self._guardrail_source = "keyword"
+            content = recap_message(self.state, lang)
+            content = _w53_fold_ask(
+                content, self.state.language, list(self.state.missing_fields())
+            )
+            self._messages.append({"role": "assistant", "content": content})
+            return content
+
+        # W60 — drifter persona: off-topic asides mid-intake (rent
+        # gripes, bus-route complaints, food-bank hours, neighbour
+        # gossip, kids' sick days, plant-closure history, family /
+        # out-of-state comparisons). The trigger-aware redirect never
+        # uses the canned scope "I can't give legal advice" wording —
+        # that was the W53 bug class. State is preserved; intake
+        # stays in flight. The in-scope "is it true they're cutting
+        # benefits next year?" question is explicitly EXCLUDED by the
+        # detector (it anchors to the FNS topic via the in-scope
+        # token guard) so it reaches the LLM / informational path.
+        if detect_drifter_aside(user_message):
+            self._guardrail_source = "keyword"
+            content = drifter_redirect_message(user_message, lang)
             content = _w53_fold_ask(
                 content, self.state.language, list(self.state.missing_fields())
             )

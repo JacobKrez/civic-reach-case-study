@@ -218,6 +218,8 @@ def run_transcript(
     from src.guardrails.crisis import detect_crisis
     from src.guardrails.expedited import detect_expedited_question
     from src.guardrails.injection import detect_injection
+    from src.guardrails.drifter import detect_drifter_aside
+    from src.guardrails.restarter import detect_recap_request, detect_restart_request
     from src.guardrails.scope import detect_not_a_person_request, detect_out_of_scope
 
     llm = RecordingLLM(
@@ -251,6 +253,9 @@ def run_transcript(
             or detect_expedited_question(message)
             or detect_benefit_amount_question(message)
             or detect_application_status_question(message)
+            or detect_restart_request(message)
+            or detect_recap_request(message)
+            or detect_drifter_aside(message)
         )
 
     # Track WHEN each field was filled (the 1-indexed turn on which
@@ -326,6 +331,24 @@ def run_transcript(
                 ):
                     if field_name not in filled_at and getattr(agent.state, field_name) is not None:
                         filled_at[field_name] = turn_index
+                # W60 — explicit ``intake_reset`` audit events clear the
+                # filled-at tracker for the three intake fields so the
+                # re-ask invariant lets the agent re-prompt a field the
+                # user just asked to start over. Without this, the
+                # helper would still consider household_size "filled"
+                # from turn 1 even though the user just asked for a
+                # fresh intake on turn N -- the very W60 bug class.
+                if (
+                    agent._audit
+                    and agent._audit[-1].get("event") == "intake_reset"
+                    and agent._audit[-1].get("turn") == turn_index
+                ):
+                    for field_name in (
+                        "household_size",
+                        "gross_monthly_income",
+                        "has_elderly_or_disabled_member",
+                    ):
+                        filled_at.pop(field_name, None)
         finally:
             agent_module.calculate_eligibility = calculate_eligibility
 
@@ -368,6 +391,20 @@ def run_transcript(
             ):
                 if field_name not in filled_at and getattr(agent.state, field_name) is not None:
                     filled_at[field_name] = turn_index
+            # W60 — explicit ``intake_reset`` clears the filled-at
+            # tracker (see capture_calculator branch above for the
+            # full rationale).
+            if (
+                agent._audit
+                and agent._audit[-1].get("event") == "intake_reset"
+                and agent._audit[-1].get("turn") == turn_index
+            ):
+                for field_name in (
+                    "household_size",
+                    "gross_monthly_income",
+                    "has_elderly_or_disabled_member",
+                ):
+                    filled_at.pop(field_name, None)
 
     result.final_state = agent.state
     result.corrections = list(agent._corrections)
