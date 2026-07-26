@@ -295,9 +295,16 @@ def test_classifier_pass_through_when_disabled(monkeypatch):
     # With the classifier off, the agent must call the LLM for the
     # ordinary eligibility flow and never invoke the classifier.
     response = agent.turn("There are three of us in my household.")
-    assert response == "normal"
+    # The model's own text is preserved and leads the reply. It is not
+    # compared with `==` because the intake is still incomplete here, so the
+    # W53 forward-progress floor deterministically appends the next intake
+    # question -- that is required behavior, not noise: a turn that leaves the
+    # intake incomplete must never end without asking for the next field.
+    assert response.startswith("normal")
+    assert agent.state.missing_fields(), "precondition: intake still incomplete"
     # Exactly one LLM call — the agent's main call. The classifier
-    # was bypassed, so no CLASSIFIER_SYSTEM_PROMPT call was made.
+    # was bypassed, so no CLASSIFIER_SYSTEM_PROMPT call was made. This
+    # (not the reply text) is what the test is actually about.
     assert len(llm.calls) == 1
     assert llm.calls[0]["system"] == SYSTEM_PROMPT
 
@@ -373,7 +380,11 @@ def test_classifier_fail_open_in_agent():
     # In-scope message. Keyword layer passes; classifier raises; the
     # agent must fall through to the main LLM call and return its answer.
     response = agent.turn("There are three of us in my household.")
-    assert response == "main answer"
+    # Fail-open means the user still gets the agent's answer. Compared with
+    # startswith, not ==, because the intake is incomplete on this turn and the
+    # W53 forward-progress floor appends the next intake question -- a turn
+    # must never dead-end with fields still missing.
+    assert response.startswith("main answer")
     # The classifier DID try to run (proves the layer is wired).
     assert len(classifier_calls) == 1
     # And the agent's main LLM was called as the fallback.
