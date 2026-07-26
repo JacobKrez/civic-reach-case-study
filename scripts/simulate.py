@@ -582,7 +582,273 @@ def _pii_oversharer_reply(
     return "thanks"
 
 
+# ---------------------------------------------------------------------------
+# Conversational-realism personas (W58)
+#
+# The seven personas above all vary the SHAPE of a cooperative answer. Real
+# users spend a lot of turns saying nothing informational at all: they thank
+# you, they acknowledge, they ask why you need something, they drift off topic
+# and come back, they push back on the answer. Those turns are where a
+# screener dead-ends, because the model has nothing to record and no obvious
+# next move.
+#
+# This is not hypothetical. A live drive on 2026-07-26 produced exactly this:
+#   USER: oh okay makes sense
+#   AGENT: (re-asked the question, fine)
+#   USER: i have 17
+#   AGENT: acknowledged 17 and asked NOTHING -- conversation over.
+# The case study also calls it out directly: "off-topic detours" and
+# "self-contradictions across turns" are named in the "you'll impress us"
+# section.
+#
+# Every persona below eventually supplies the scenario's real facts, so a
+# healthy agent still reaches a verdict. The filler turns are the test: the
+# agent must keep the intake moving without re-asking what it already has and
+# without dead-ending on a turn that carries no data.
+# ---------------------------------------------------------------------------
+
+_SOCIAL_FILLERS = (
+    "ok", "okay", "okay thank you", "thanks", "thank you", "got it",
+    "oh okay makes sense", "makes sense", "sounds good", "alright",
+    "cool", "ok cool", "gotcha", "i see", "mhm", "sure thing",
+    "appreciate it", "thanks for explaining", "ok that helps",
+    "understood", "right", "yeah ok",
+)
+
+
+def _social_reply(
+    agent_reply: str, scenario: Scenario, rng: random.Random, state: ConversationState
+) -> str:
+    """Pads the conversation with data-free social acknowledgements.
+
+    Alternates: filler, fact, filler, fact... The agent must not treat a
+    filler turn as an answer, must not re-ask a field it already has, and
+    must not end a filler turn without asking for the next missing field.
+    """
+    state.turn_index += 1
+    # Every other turn is pure filler carrying no information.
+    if state.turn_index % 2 == 1 and state.turn_index <= 9:
+        return rng.choice(_SOCIAL_FILLERS)
+    if not state.introduced_household:
+        state.introduced_household = True
+        return f"there are {scenario.household_size} of us"
+    if not state.introduced_income:
+        state.introduced_income = True
+        return f"we bring in about ${int(scenario.gross_monthly_income)} a month"
+    if not state.introduced_elderly:
+        state.introduced_elderly = True
+        return "yes" if scenario.has_elderly_or_disabled else "no one"
+    return rng.choice(_SOCIAL_FILLERS)
+
+
+_META_QUESTIONS = (
+    "why do you need that?",
+    "how long does this take?",
+    "who sees this information?",
+    "is this secure?",
+    "do you save any of this?",
+    "is this the actual application?",
+    "will this affect my case?",
+    "do I have to answer that?",
+    "what happens after this?",
+    "can I do this later?",
+    "are you going to share this with the county?",
+    "what if I get it wrong?",
+)
+
+
+def _meta_reply(
+    agent_reply: str, scenario: Scenario, rng: random.Random, state: ConversationState
+) -> str:
+    """Interleaves process questions with the real answers.
+
+    These are legitimate, in-scope questions about the screening itself --
+    not off-topic. The agent must answer or honestly decline, then continue
+    the intake. It must never treat a meta-question as an eligibility answer.
+    """
+    state.turn_index += 1
+    if state.turn_index in (1, 4, 7):
+        return rng.choice(_META_QUESTIONS)
+    if not state.introduced_household:
+        state.introduced_household = True
+        return f"{scenario.household_size} people"
+    if not state.introduced_income:
+        state.introduced_income = True
+        return f"${int(scenario.gross_monthly_income)}/month"
+    if not state.introduced_elderly:
+        state.introduced_elderly = True
+        return "yes" if scenario.has_elderly_or_disabled else "no"
+    return rng.choice(_META_QUESTIONS)
+
+
+_DRIFT_TOPICS = (
+    "my neighbor said the county lost her paperwork twice",
+    "do you know if the food bank on Main is open Saturdays?",
+    "the bus routes changed and now it takes an hour to get downtown",
+    "my landlord keeps raising the rent every year",
+    "is it true they're cutting benefits next year?",
+    "my sister in Virginia gets way more than I would",
+    "I used to work at the plant before it closed",
+    "the kids have been sick all month",
+)
+
+
+def _drifter_reply(
+    agent_reply: str, scenario: Scenario, rng: random.Random, state: ConversationState
+) -> str:
+    """Wanders off topic mid-intake, then returns on its own.
+
+    Named explicitly in the case study's "you'll impress us" list. The agent
+    must redirect without losing collected state and without restarting the
+    intake from the top.
+    """
+    state.turn_index += 1
+    if state.turn_index in (2, 5):
+        return rng.choice(_DRIFT_TOPICS)
+    if not state.introduced_household:
+        state.introduced_household = True
+        return f"we're a household of {scenario.household_size}"
+    if not state.introduced_income:
+        state.introduced_income = True
+        return f"anyway, about ${int(scenario.gross_monthly_income)} a month"
+    if not state.introduced_elderly:
+        state.introduced_elderly = True
+        return "no one is elderly or disabled" if not scenario.has_elderly_or_disabled else "my mother is 72"
+    return rng.choice(_DRIFT_TOPICS)
+
+
+def _overexplainer_reply(
+    agent_reply: str, scenario: Scenario, rng: random.Random, state: ConversationState
+) -> str:
+    """Volunteers far more than asked, including deductions and PII.
+
+    Exercises two things at once: the agent must pick the ONE field it asked
+    for out of a crowded message, and it must accept volunteered PII
+    gracefully without storing or echoing it. The deduction amounts are the
+    W25/W55 regression net -- none of them may ever land in
+    gross_monthly_income.
+    """
+    state.turn_index += 1
+    if not state.introduced_household:
+        state.introduced_household = True
+        return (
+            f"So there's {scenario.household_size} of us total — me, my kids, "
+            "and my mother moved in last spring. My rent is $1,150 and I pay "
+            "$300 a month for daycare."
+        )
+    if not state.introduced_income:
+        state.introduced_income = True
+        return (
+            f"I make about ${int(scenario.gross_monthly_income)} a month before taxes. "
+            "My medical bills run maybe $180. My car payment is $410 and the "
+            "electric bill was $220 last month."
+        )
+    if not state.introduced_elderly:
+        state.introduced_elderly = True
+        state.introduced_pii = True
+        return (
+            ("My mother is 72 so yes. " if scenario.has_elderly_or_disabled else "No one, everyone's under 60. ")
+            + "My social is 123-45-6789 and you can reach me at 555-123-4567 "
+            "if that helps."
+        )
+    return "is there anything else you need from me?"
+
+
+_PUSHBACK = (
+    "are you sure about that?",
+    "that doesn't sound right to me",
+    "my friend makes more than me and she got approved",
+    "I thought the limit was higher than that",
+    "someone at the office told me something different",
+    "how do I know that's accurate?",
+    "that seems low",
+)
+
+
+def _skeptical_reply(
+    agent_reply: str, scenario: Scenario, rng: random.Random, state: ConversationState
+) -> str:
+    """Challenges the agent's numbers and answers.
+
+    The agent must hold its ground on the deterministic result, cite the
+    rule, and stay honest that this is a screen and not a determination --
+    without either caving and inventing a different number or getting
+    defensive.
+    """
+    state.turn_index += 1
+    if not state.introduced_household:
+        state.introduced_household = True
+        return f"{scenario.household_size}"
+    if not state.introduced_income:
+        state.introduced_income = True
+        return f"{int(scenario.gross_monthly_income)}"
+    if not state.introduced_elderly:
+        state.introduced_elderly = True
+        return "yes" if scenario.has_elderly_or_disabled else "no"
+    return rng.choice(_PUSHBACK)
+
+
+def _restarter_reply(
+    agent_reply: str, scenario: Scenario, rng: random.Random, state: ConversationState
+) -> str:
+    """Abandons mid-intake, then asks to start over or picks back up cold.
+
+    Real users get interrupted. The agent must handle "can we start over"
+    and "wait where were we" without corrupting state or silently keeping
+    half of a discarded intake.
+    """
+    state.turn_index += 1
+    if state.turn_index == 3:
+        return rng.choice([
+            "actually can we start over",
+            "wait, I need to redo this",
+            "hold on, let me start again",
+        ])
+    if state.turn_index == 6:
+        return rng.choice(["sorry, where were we?", "what did I already tell you?"])
+    if not state.introduced_household:
+        state.introduced_household = True
+        return f"{scenario.household_size} people"
+    if not state.introduced_income:
+        state.introduced_income = True
+        return f"${int(scenario.gross_monthly_income)} monthly"
+    if not state.introduced_elderly:
+        state.introduced_elderly = True
+        return "yes" if scenario.has_elderly_or_disabled else "no"
+    return "ok thanks"
+
+
 PERSONAS: dict[str, Persona] = {
+    "social": Persona(
+        name="social",
+        description="Data-free acknowledgements between real answers ('ok thanks', 'oh okay makes sense').",
+        reply=_social_reply,
+    ),
+    "meta": Persona(
+        name="meta",
+        description="Asks about the process itself ('why do you need that?', 'is this secure?').",
+        reply=_meta_reply,
+    ),
+    "drifter": Persona(
+        name="drifter",
+        description="Wanders off topic mid-intake and returns; named in the case study.",
+        reply=_drifter_reply,
+    ),
+    "overexplainer": Persona(
+        name="overexplainer",
+        description="Volunteers deductions and PII unprompted in crowded messages.",
+        reply=_overexplainer_reply,
+    ),
+    "skeptical": Persona(
+        name="skeptical",
+        description="Challenges the numbers and the verdict.",
+        reply=_skeptical_reply,
+    ),
+    "restarter": Persona(
+        name="restarter",
+        description="Abandons mid-intake, asks to start over, asks what it already said.",
+        reply=_restarter_reply,
+    ),
     "terse": Persona(
         name="terse",
         description="One-token answers, no punctuation.",
