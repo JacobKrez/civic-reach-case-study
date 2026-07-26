@@ -166,6 +166,23 @@ class TranscriptResult:
     # specific answer, not to advance the FNS intake. The
     # forward-progress invariant skips these turns.
     guardrail_claimed_history: list[bool] = field(default_factory=list)
+    # W60+ / bilingual simulator: per-turn snapshot of
+    # ``state.language`` AFTER the turn has run. The W53 forward
+    # progress invariant uses this to pick the canonical next-field
+    # question wording so a conversation that flips language
+    # mid-intake (the bilingual persona) is graded against the
+    # language the agent actually replied in, not the final
+    # language the transcript ends up in.
+    language_history: list[str] = field(default_factory=list)
+    # W60: per-turn flag set when the agent's audit log records an
+    # ``intake_reset`` event for this turn. The income-cue invariant
+    # skips these turns because the W60 restarter persona explicitly
+    # clears ``gross_monthly_income`` (and the other two intake
+    # fields) on "start over" — the state-change is intentional, not
+    # a regression. The W53 forward-progress invariant also reads
+    # this so an intake_reset turn can re-prompt the now-cleared
+    # fields.
+    intake_reset_history: list[bool] = field(default_factory=list)
 
     @property
     def completed(self) -> bool:
@@ -300,6 +317,16 @@ def run_transcript(
                     result.missing_fields_history.append(
                         list(agent.state.missing_fields())
                     )
+                    result.language_history.append(
+                        getattr(agent.state, "language", "en") or "en"
+                    )
+                    result.intake_reset_history.append(
+                        bool(
+                            agent._audit
+                            and agent._audit[-1].get("event") == "intake_reset"
+                            and agent._audit[-1].get("turn") == turn_index
+                        )
+                    )
                     result.guardrail_claimed_history.append(
                         _is_guardrail_claimed(message)
                     )
@@ -309,6 +336,16 @@ def run_transcript(
                 result.income_history.append(agent.state.gross_monthly_income)
                 result.missing_fields_history.append(
                     list(agent.state.missing_fields())
+                )
+                result.language_history.append(
+                    getattr(agent.state, "language", "en") or "en"
+                )
+                result.intake_reset_history.append(
+                    bool(
+                        agent._audit
+                        and agent._audit[-1].get("event") == "intake_reset"
+                        and agent._audit[-1].get("turn") == turn_index
+                    )
                 )
                 # Classifier-claimed turns: the keyword detector did
                 # not fire but the LLM classifier did. The reply is
@@ -374,6 +411,16 @@ def run_transcript(
             result.income_history.append(agent.state.gross_monthly_income)
             result.missing_fields_history.append(
                 list(agent.state.missing_fields())
+            )
+            result.language_history.append(
+                getattr(agent.state, "language", "en") or "en"
+            )
+            result.intake_reset_history.append(
+                bool(
+                    agent._audit
+                    and agent._audit[-1].get("event") == "intake_reset"
+                    and agent._audit[-1].get("turn") == turn_index
+                )
             )
             kw_claimed = _is_guardrail_claimed(message)
             classifier_claimed = (
@@ -623,9 +670,19 @@ def assert_income_changes_only_on_cue(result: TranscriptResult) -> None:
     # This preserves the golden helper's semantics while avoiding the old
     # off-by-one false finding that blamed the following turn.
     history = list(result.income_history)
+    reset_history = result.intake_reset_history
     for i in range(1, len(history)):
         prev, curr = history[i - 1], history[i]
         if prev == curr:
+            continue
+        # W60 — explicit ``intake_reset`` turns clear all three intake
+        # fields by design. The state-change is the documented
+        # restarter-persona behavior, not a regression in the income
+        # parser. Skip the cue check on those turns. ``i`` is 1-indexed
+        # over the income-history tail; ``reset_history`` is 0-indexed
+        # over the same turn list, so the turn that produced
+        # ``history[i]`` is at ``reset_history[i]``.
+        if reset_history and i < len(reset_history) and reset_history[i]:
             continue
         message = result.user_messages[i]
         assert message_carries_income_cue(message), (
@@ -727,8 +784,9 @@ def assert_forward_progress(result: TranscriptResult) -> None:
     if not result.missing_fields_history:
         return  # Runner predates W53; nothing to assert.
     final = result.final_state
-    language = getattr(final, "language", "en") or "en"
+    fallback_language = getattr(final, "language", "en") or "en"
     guardrail_history = result.guardrail_claimed_history
+    language_history = result.language_history
     for turn_index, (missing, reply) in enumerate(
         zip(result.missing_fields_history, result.assistant_replies),
         start=1,
@@ -739,6 +797,14 @@ def assert_forward_progress(result: TranscriptResult) -> None:
         if guardrail_history and turn_index - 1 < len(guardrail_history):
             if guardrail_history[turn_index - 1]:
                 continue
+        # Per-turn language: bilingual conversations flip language
+        # mid-intake, so the final-state language does not match the
+        # language the agent used on this turn. Use the per-turn
+        # snapshot when the helper captured it.
+        if language_history and turn_index - 1 < len(language_history):
+            language = language_history[turn_index - 1] or fallback_language
+        else:
+            language = fallback_language
         target = missing[0]
         assert _w53_asks_for_field(reply, target, language), (
             f"W53 forward-progress: turn {turn_index} left missing_fields={missing!r} "

@@ -999,6 +999,20 @@ def _run_one(
     # skips these (the agent's response on those turns is a
     # hardcoded block, not a next-field question).
     guardrail_claimed_history: list[bool] = []
+    # W60+ / bilingual simulator: per-turn snapshot of state.language
+    # AFTER each turn. The W53 forward-progress invariant uses this
+    # to pick the canonical next-field question wording so a
+    # conversation that flips language mid-intake (the bilingual
+    # persona) is graded against the language the agent actually
+    # replied in, not the final language the transcript ends up in.
+    language_history: list[str] = []
+    # W60: per-turn flag set when the agent's audit log records an
+    # ``intake_reset`` event for this turn. The income-cue invariant
+    # skips these turns because the W60 restarter persona explicitly
+    # clears ``gross_monthly_income`` (and the other two intake
+    # fields) on "start over" — the state-change is intentional, not
+    # a regression.
+    intake_reset_history: list[bool] = []
     filled_at: dict[str, int] = {}
 
     def _capture_filled_at(turn_index: int) -> None:
@@ -1057,6 +1071,14 @@ def _run_one(
                     or agent.state.is_out_of_scope
                 )
             )
+            language_history.append(getattr(agent.state, "language", "en") or "en")
+            intake_reset_history.append(
+                bool(
+                    agent._audit
+                    and agent._audit[-1].get("event") == "intake_reset"
+                    and agent._audit[-1].get("turn") == turn_index
+                )
+            )
             _capture_filled_at(turn_index)
     except Exception as exc:  # noqa: BLE001
         error = f"{type(exc).__name__}: {exc}\n{traceback.format_exc()}"
@@ -1108,6 +1130,8 @@ def _run_one(
         final_state=agent.state,
         missing_fields_history=missing_fields_history,
         guardrail_claimed_history=guardrail_claimed_history,
+        language_history=language_history,
+        intake_reset_history=intake_reset_history,
     )
     try:
         golden.assert_universal_invariants(_pseudo)  # type: ignore[arg-type]
@@ -1195,6 +1219,13 @@ class _PseudoResult:
     .guardrail_claimed_history turns. Both must exist on the
     duck-typed result or the helper raises AttributeError, so we
     carry them through from the run loop.
+
+    W60 / bilingual: ``language_history`` is per-turn language so
+    bilingual conversations are graded against the language the
+    agent actually replied in (not the final language). W60 restarter
+    persona: ``intake_reset_history`` is a per-turn flag the
+    income-cue invariant reads to skip ``intake_reset`` turns
+    (which clear income by design, not from a bad parser).
     """
 
     user_messages: list[str]
@@ -1204,6 +1235,8 @@ class _PseudoResult:
     final_state: Any
     missing_fields_history: list[list[str]] = field(default_factory=list)
     guardrail_claimed_history: list[bool] = field(default_factory=list)
+    language_history: list[str] = field(default_factory=list)
+    intake_reset_history: list[bool] = field(default_factory=list)
     tracebacks: list[str] = field(default_factory=list)
 
     @property
