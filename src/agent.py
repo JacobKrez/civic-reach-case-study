@@ -31,6 +31,7 @@ from .guardrails.hostility import (
 )
 from .guardrails.injection import detect_injection, injection_response
 from .guardrails.pii import redact_for_logging
+from .guardrails.process import detect_process_question, process_question_response
 from .guardrails.scope import (
     detect_not_a_person_request,
     detect_out_of_scope,
@@ -750,7 +751,7 @@ class FoodPathAgent:
     # Bare yes/no tokens for the elderly/disabled field fallback below.
     # English-only: Spanish-mode conversations rely on the LLM tool call
     # (the fallback is a narrow backstop, not a full parser).
-    _NEGATIVE_WORDS = frozenset({"no", "nope", "nah", "n", "none", "nobody"})
+    _NEGATIVE_WORDS = frozenset({"no", "nope", "nah", "n", "none", "nobody", "no one", "noone"})
     _POSITIVE_WORDS = frozenset({"yes", "yeah", "yep", "y", "sure"})
 
     @staticmethod
@@ -1030,6 +1031,20 @@ class FoodPathAgent:
 
         if detect_application_status_question(user_message):
             content = application_status_response(lang)
+            self._messages.append({"role": "assistant", "content": content})
+            return content
+
+        # W59 — in-scope process questions are legitimate user turns, not
+        # off-topic requests. Answer privacy/persistence/application claims
+        # deterministically so the model cannot improvise trust-critical
+        # assurances, then keep the intake moving with the same W53 question
+        # floor used by ordinary model replies.
+        process_category = detect_process_question(user_message)
+        if process_category is not None:
+            content = process_question_response(process_category, lang)
+            content = _w53_fold_ask(
+                content, self.state.language, list(self.state.missing_fields())
+            )
             self._messages.append({"role": "assistant", "content": content})
             return content
 
