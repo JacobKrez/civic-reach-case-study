@@ -1,6 +1,6 @@
 # Continuous red-team triage
 
-Updated: 2026-07-26T04:28:43.383471Z
+Updated: 2026-07-26T05:01:16.394004Z
 
 Rank = objective invariant violation before judge complaint, then frequency.
 Each entry includes the trigger and a complete reproducing transcript.
