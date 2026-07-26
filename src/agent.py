@@ -638,7 +638,29 @@ class FoodPathAgent:
         "shelter_costs_monthly",
     )
 
-    def _apply_tool_calls(self, calls: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    _INCOME_CUE_PATTERN = (
+        r"(?:\$\s*\d|\b(?:income|make|makes|earn|earned|paid|salary|salaries|"
+        r"wages?|paycheck|per\s+month|monthly|/\s*(?:hr|hour|mo|month)|"
+        r"ingresos?|ganamos?|sueldo)\b)"
+    )
+
+    @classmethod
+    def _message_has_intake_cue(cls, field: str, user_message: str) -> bool:
+        # W55 targets the consequential stale-income path. Other fields keep
+        # their established model/fallback behavior; applying a speculative
+        # vocabulary gate to all seven fields caused legitimate terse and
+        # multi-field answers to be dropped.
+        return field != "gross_monthly_income" or bool(
+            re.search(cls._INCOME_CUE_PATTERN, user_message, re.I)
+        )
+
+    def _apply_tool_calls(
+        self,
+        calls: list[dict[str, Any]],
+        *,
+        user_message: str | None = None,
+        asked_field: str | None = None,
+    ) -> list[dict[str, Any]]:
         """Apply every update_state tool call in ``calls``.
 
         Processes ALL update_state calls in the turn (a model may emit
@@ -658,6 +680,16 @@ class FoodPathAgent:
             if not isinstance(raw, dict):
                 raise ValueError("update_state input must be an object")
             updates = {key: value for key, value in raw.items() if key in _ALLOWED_UPDATES}
+            if user_message is not None:
+                updates = {
+                    field: value
+                    for field, value in updates.items()
+                    if self._message_has_intake_cue(field, user_message)
+                    or (
+                        field == asked_field
+                        and self._fallback_parse_terse_reply(field, user_message) is not None
+                    )
+                }
             if not updates:
                 continue
             # ``gross_monthly_income`` is the only intake field that can
@@ -1057,7 +1089,11 @@ class FoodPathAgent:
             )
             post_corrections: list[dict[str, Any]] = []
             try:
-                post_corrections = self._apply_tool_calls(response.get("tool_calls") or [])
+                post_corrections = self._apply_tool_calls(
+                    response.get("tool_calls") or [],
+                    user_message=user_message,
+                    asked_field=asked_field[0] if asked_field else None,
+                )
             except ValueError:
                 # Bad tool call from the model: drop it, keep the
                 # cached verdict, fall through to the explanation path.
@@ -1155,7 +1191,11 @@ class FoodPathAgent:
         )
         new_corrections: list[dict[str, Any]] = []
         try:
-            new_corrections = self._apply_tool_calls(extract_response.get("tool_calls") or [])
+            new_corrections = self._apply_tool_calls(
+                extract_response.get("tool_calls") or [],
+                user_message=user_message,
+                asked_field=asked_field[0] if asked_field else None,
+            )
         except ValueError:
             # A malformed/over-limit tool call from the model (e.g.
             # household_size above the schema cap) must not crash the
@@ -1213,7 +1253,11 @@ class FoodPathAgent:
                 if parsed is not None:
                     try:
                         new_corrections.extend(
-                            self._apply_tool_calls([{"name": "update_state", "input": {field: parsed}}])
+                            self._apply_tool_calls(
+                                [{"name": "update_state", "input": {field: parsed}}],
+                                user_message=user_message,
+                                asked_field=field,
+                            )
                         )
                         fallback_applied = True
                     except ValueError:
@@ -1247,9 +1291,11 @@ class FoodPathAgent:
             parsed_income = normalize_income(user_message)
             if parsed_income is not None and parsed_income != self.state.gross_monthly_income:
                 try:
-                    new_corrections.extend(self._apply_tool_calls([
-                        {"name": "update_state", "input": {"gross_monthly_income": parsed_income}}
-                    ]))
+                    new_corrections.extend(self._apply_tool_calls(
+                        [{"name": "update_state", "input": {"gross_monthly_income": parsed_income}}],
+                        user_message=user_message,
+                        asked_field=asked_field[0] if asked_field else None,
+                    ))
                     fallback_applied = True
                 except ValueError:
                     pass

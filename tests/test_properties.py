@@ -518,8 +518,13 @@ def _agent_result_for(
     ]
 
     agent = FoodPathAgent(llm_client=_ThreePlusDeductionsLLM(scripted_responses))
-    for _ in range(3):
-        agent.turn("placeholder")
+    messages = [
+        f"household of {household_size}",
+        f"gross income {gross_income} per month, earned wages {earned}, childcare {dep_care}",
+        f"{'yes' if has_elderly else 'no'} elderly or disabled; medical {medical}; rent {shelter}",
+    ]
+    for message in messages:
+        agent.turn(message)
     assert agent.eligibility_result is not None, (
         "agent did not produce an eligibility result after all required "
         "fields were submitted — state may be incomplete"

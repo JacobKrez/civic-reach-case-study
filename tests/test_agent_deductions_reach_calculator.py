@@ -123,8 +123,13 @@ def _run_agent_with_deductions(
         }}]},
     ]
     agent = FoodPathAgent(llm_client=ScriptedLLM(responses))
-    for _ in range(3):
-        agent.turn("placeholder")
+    messages = [
+        f"household of {household_size}",
+        f"gross income {gross_monthly_income} per month, earned wages {earned_monthly_income}, childcare {dependent_care_monthly}",
+        f"{'yes' if has_elderly_or_disabled else 'no'} elderly or disabled; medical {medical_expenses_monthly}; rent {shelter_costs_monthly}",
+    ]
+    for message in messages:
+        agent.turn(message)
     assert agent.eligibility_result is not None, "agent did not compute a result"
     return agent.eligibility_result
 
@@ -283,8 +288,8 @@ def test_deduction_disclosed_after_verdict_invalidates_cache():
         {"content": "ok", "tool_calls": [{"name": "update_state", "input": {"has_elderly_or_disabled_member": False}}]},
     ]
     agent = FoodPathAgent(llm_client=ScriptedLLM(responses))
-    for _ in range(3):
-        agent.turn("placeholder")
+    for message in ("household of 1", "gross income 1800 per month", "no elderly or disabled"):
+        agent.turn(message)
     # Sanity: the verdict was locked with no deductions: 1800.0 / True under
     # the current NC BBCE gross screen.
     assert agent.eligibility_result is not None
