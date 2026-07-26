@@ -772,11 +772,49 @@ class FoodPathAgent:
         """
         text = user_message.strip()
         if field == "household_size":
-            match = re.match(r"^\$?(\d{1,2})\b", text)
-            if not match:
+            # W56: extend the fallback so a plain-language reply the
+            # model fails to parse ("There are 3 of us.", "household of
+            # 4", "Just me, household of 2.", "actually it's 4 of us")
+            # still gets recorded. The previous regex required a leading
+            # digit, which the contradicting scenario's "There are 2 of
+            # us at home." sidestepped — the field stayed None, the
+            # next question never fired, and the simulator's
+            # contradiction_income_final / contradiction_household_final
+            # rules flagged the conversation as a missed contradiction.
+            # The script-style digit-leading form is still the first
+            # branch so the existing narrow path is unchanged.
+            leading = re.match(r"^\$?(\d{1,2})\b", text)
+            if leading:
+                value = int(leading.group(1))
+                if 1 <= value <= 20:
+                    return value
                 return None
-            value = int(match.group(1))
-            return value if 1 <= value <= 20 else None
+            # Phrase forms: "There are N of us", "household of N",
+            # "we are N", "just me, household of N", "actually it's N
+            # of us", "N people", "N of us", "N person" (singular).
+            phrase = re.search(
+                r"\b(?:there\s+are|we\s+are|we're|household\s+of|"
+                r"actually\s+it'?s|just\s+me,?\s+household\s+of)\s+"
+                r"(\d{1,2})(?:\s+(?:of|people|persons?|in\s+the\s+house))?\b",
+                text,
+                re.IGNORECASE,
+            )
+            if phrase:
+                value = int(phrase.group(1))
+                if 1 <= value <= 20:
+                    return value
+            # "N people in our household" / "N of us" / "N person" at
+            # the end of the reply.
+            trailing = re.search(
+                r"\b(\d{1,2})\s+(?:people|persons?|of\s+us)\b",
+                text,
+                re.IGNORECASE,
+            )
+            if trailing:
+                value = int(trailing.group(1))
+                if 1 <= value <= 20:
+                    return value
+            return None
         if field == "gross_monthly_income":
             return normalize_income(text)
         if field == "has_elderly_or_disabled_member":
