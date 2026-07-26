@@ -1165,7 +1165,13 @@ class FoodPathAgent:
         # the ordinary LLM call below. The classifier is disabled by
         # env var GUARDRAIL_CLASSIFIER=off so unit tests, offline runs,
         # and the model bake-off can opt out of the extra LLM call.
-        intent = classify_intent(user_message, self.llm_client)
+        #
+        # PII: the classifier is a SECOND LLM provider call on top of
+        # the agent's main call. The same ``safe_user_message`` that
+        # goes into conversation history goes to the classifier — the
+        # raw user input never leaves the local process. (Finding #20
+        # in PRODUCTION_READINESS_REVIEW.)
+        intent = classify_intent(safe_user_message, self.llm_client)
         if intent == "crisis":
             self.state.is_crisis = True
             # W48: classifier layer attribution.

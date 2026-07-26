@@ -428,3 +428,56 @@ def test_classifier_checkpoints_run_after_keyword_layer_in_messages():
     assert agent._messages[-2]["role"] == "user"
     assert agent._messages[-1]["role"] == "assistant"
     assert agent._messages[-1]["content"] == crisis_response()
+
+
+def test_classifier_receives_pii_redacted_user_message():
+    """Regression for PRODUCTION_READINESS_REVIEW finding #20: the
+    classifier is the second guardrail layer and its LLM call must NOT
+    see raw PII (SSNs, phone numbers). The redactor is already applied
+    to the conversation history at ``self._messages.append`` time; the
+    classifier must use the same redacted form so the two paths
+    cannot drift.
+
+    The fake LLM records every classifier-system call so we can assert
+    on what was actually sent to the provider.
+
+    Scope: this test focuses on the deterministic SSN and phone
+    patterns the redactor already handles. The address redactor has
+    a separate precision gap (trailing-punctuation boundary) that
+    is tracked under the same finding as a follow-up; mixing it
+    into this test would couple the classifier-fix to the
+    redactor-quality fix, which is the wrong coupling.
+    """
+    pii_message = (
+        "There are 3 of us in the house. My SSN is 123-45-6789 and "
+        "you can reach me at 704-555-0199."
+    )
+    classifier_calls: list[dict] = []
+
+    class RecordingLLM:
+        def chat(self, messages, system=None, tools=None):
+            if system == CLASSIFIER_SYSTEM_PROMPT:
+                classifier_calls.append(
+                    {"system": system, "messages": messages}
+                )
+                return {"content": "normal", "tool_calls": []}
+            return {"content": "ok", "tool_calls": []}
+
+    agent = FoodPathAgent(llm_client=RecordingLLM())
+    agent.turn(pii_message)
+
+    # The classifier ran.
+    assert len(classifier_calls) == 1
+    forwarded = classifier_calls[0]["messages"][0]["content"]
+    # The forwarded text is the redacted form, NOT the raw PII.
+    assert "123-45-6789" not in forwarded, (
+        f"Classifier saw raw SSN: {forwarded!r}"
+    )
+    assert "704-555-0199" not in forwarded, (
+        f"Classifier saw raw phone: {forwarded!r}"
+    )
+    # Positive control: the redacted placeholder is present and the
+    # rest of the message body is still forwarded (we are masking,
+    # not dropping the user's text).
+    assert "[REDACTED]" in forwarded
+    assert "There are 3 of us" in forwarded
