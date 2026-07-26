@@ -205,7 +205,7 @@ flowchart TD
 
 ## What we deliberately cut and why
 
-* **Fine-tuning.** Prompt + tools + a deterministic calculator already
+* **Fine-tuning / LoRA / RunPod training.** Prompt + tools + a deterministic calculator already
   outperforms a rushed LoRA on this problem. A small fine-tune on
   synthetic data risks degrading exactly the robustness being tested
   (crisis / injection / scope) and would consume most of the 20-hour
@@ -226,6 +226,8 @@ flowchart TD
   policy is a deliberate PoC-scoped safety bound—not persistence or
   multi-tenancy—and it matches the case study's "do not submit real
   applications, do not contact a real agency" guardrail.
+* **Real government scraping or application submission.** Explicitly forbidden by the case study; the prototype uses a small cited local corpus and never submits an application.
+* **Full Spanish KB translation.** Only the overview is translated for the demo; translating every rule document without domain review would create a larger, less trustworthy surface than the rubric requires.
 * **Real agency integration.** Explicitly forbidden by the case study
   prompt. We never call, scrape, or submit anywhere. This also rules
   out any outbound notification path on the case-worker handoff — the
