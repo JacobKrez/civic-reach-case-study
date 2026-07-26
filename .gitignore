@@ -25,3 +25,4 @@ redteam/reports/simulator_*.md
 redteam/findings/*.json
 redteam/failures_queue.jsonl
 redteam/fixtures_subset/
+redteam/findings/TOP.md
