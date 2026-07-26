@@ -13,3 +13,6 @@ ROADMAP.md
 # Review artifacts — keep local, never publish
 PRODUCTION_READINESS_REVIEW.md
 _review/
+
+# Stray Mission Control DB handle created by tooling run from the repo cwd
+mc.db
