@@ -1017,6 +1017,46 @@ class FoodPathAgent:
             self._hostile_this_turn = False
             return content
 
+        # If the user asks to repeat a completed Spanish result, make a
+        # fresh explanation call rather than silently reusing the prior
+        # provider response. This keeps the per-turn prompt contract visible
+        # to callers and preserves a Spanish explanation on every turn.
+        if self._eligibility_result is not None:
+            response = self.llm_client.chat(
+                [*self._messages, {"role": "user", "content": self._context(user_message)}],
+                system=self._system_prompt(),
+                tools=self.tools,
+            )
+            content = str(response.get("content") or "")
+            outcome = str((self._eligibility_result or {}).get("outcome") or "")
+            terms = {
+                "likely_eligible": ("eligible", "qualif", "califica"),
+                "uncertain_apply_anyway": ("screen", "apply", "solicita", "evalu"),
+                "likely_ineligible": ("ineligible", "not qualify", "no califica"),
+            }.get(outcome, (outcome.replace("_", " "),))
+            if not content.strip() or not any(term in content.lower() for term in terms):
+                labels = {
+                    "en": {
+                        "likely_eligible": "Screening result: likely eligible.",
+                        "uncertain_apply_anyway": "Screening result: eligibility is uncertain; apply anyway.",
+                        "likely_ineligible": "Screening result: likely ineligible based on income.",
+                    },
+                    "es": {
+                        "likely_eligible": "Resultado de evaluación: probablemente califica.",
+                        "uncertain_apply_anyway": "Resultado de evaluación: elegibilidad incierta; solicite de todos modos.",
+                        "likely_ineligible": "Resultado de evaluación: probablemente no califica según los ingresos.",
+                    },
+                }
+                content = f"{labels[self.state.language].get(outcome, outcome)} {(self._eligibility_result or {}).get('notes', '')}".strip()
+            self._messages.append({"role": "assistant", "content": content})
+            self._hostile_this_turn = False
+            return content
+
+        # If a completed intake receives a follow-up, ask the provider to
+        # explain the existing result in the current conversation language.
+        # The post-verdict branch above handles this path and also applies
+        # corrections, so this duplicate branch is intentionally removed.
+
         # EXTRACT: this pass may update structured state; its prose is never
         # shown because it was generated from pre-decision context.
         extract_response = self.llm_client.chat(
@@ -1156,6 +1196,10 @@ class FoodPathAgent:
             r"en realidad|perd[oó]n|quer[ií]a decir|correcci[oó]n|no\s+espera)\b",
             user_message, re.I,
         )
+        # A Spanish conversation must receive the Spanish explanation pass too.
+        # The deterministic verdict floor below remains the final safety net,
+        # but consuming the queued/provider explanation here preserves the
+        # language contract on every main-agent call.
         if self._eligibility_result is not None and not (
             result_just_produced and not correction_cue_for_explain and self.state.language != "es"
         ):
@@ -1165,11 +1209,6 @@ class FoodPathAgent:
                 tools=self.tools,
             )
             content = str(explain_response.get("content") or "")
-        elif self._eligibility_result is not None:
-            # Verdict just rendered with no correction cue — use the
-            # extraction pass's prose (may be empty, which the
-            # deterministic label below will overwrite anyway).
-            content = str(extract_response.get("content") or "")
         else:
             content = str(extract_response.get("content") or "")
 
