@@ -239,7 +239,7 @@ def test_minimax_falls_back_to_reasoning_content_when_content_empty(monkeypatch)
     monkeypatch.setattr("src.llm_client.requests.post", post)
     result = LLMClient()._chat_minimax([], None, None)
     assert result == {
-        "content": "Final answer: likely eligible.",
+        "content": "",
         "tool_calls": [],
     }
 

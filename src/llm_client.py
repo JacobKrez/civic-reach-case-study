@@ -278,7 +278,8 @@ class LLMClient:
         # chain-of-thought and must NOT replace the user-facing text.
         content = message.get("content") or ""
         if not content.strip():
-            content = message.get("reasoning_content") or ""
+            # Reasoning-only responses are not user-facing prose. Let the agent deterministic floor render the response.
+            content = ""
         tool_calls = []
         for call in message.get("tool_calls") or []:
             function = call.get("function", {})
