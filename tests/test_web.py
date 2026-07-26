@@ -121,10 +121,14 @@ def test_session_registry_expires_idle_entries(client, monkeypatch):
     client.post("/chat", json={"session_id": "stale", "message": "household 1"})
     with web._sessions_lock:
         last_accessed = web._sessions["stale"].last_accessed
+    # Add 1 second past TTL so the `now - last_accessed >= SESSION_TTL_SECONDS`
+    # boundary test is unambiguous -- `last_accessed + SESSION_TTL_SECONDS`
+    # exactly lands on the boundary and loses to float-rounding on some
+    # timing paths (the bug shadowed an unrelated pre-W51 test flake).
     monkeypatch.setattr(
         web.time,
         "monotonic",
-        lambda: last_accessed + web.SESSION_TTL_SECONDS,
+        lambda: last_accessed + web.SESSION_TTL_SECONDS + 1,
     )
     assert client.get("/health").json()["sessions"] == 0
     assert "stale" not in web._sessions
