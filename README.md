@@ -12,28 +12,47 @@ visible citations. It also layers deterministic guardrails (crisis,
 prompt-injection, out-of-scope, PII redaction) and a secondary LLM
 intent classifier in front of the main agent loop.
 
-This is a case-study deliverable: scope is deliberately narrow. It is not
-a real application, not connected to any agency, and the case study
-explicitly forbids that.
-
-## Why the name FoodPath
-
-Public-benefit chatbots tend to pair a short, approachable product name with
-an explicit description of the narrow job they do. mRelief calls its SNAP
-application chatbot **Johnnie**; Link Health calls its benefits-enrollment
-assistant **LEO**; and Arizona named its employee-facing SNAP policy chatbot
-**SEAN**. FoodPath follows that pattern while keeping the purpose visible:
+**FoodPath is named plainly on purpose.** It is an independent case-study
+prototype, not an NC DHHS or county DSS service; it does not determine
+eligibility or submit applications. The name keeps the narrow job visible:
 helping a resident find a path through an initial food-benefits screen.
 
-FoodPath is an independent case-study prototype. It is not an NC DHHS or
-county DSS service, it does not determine eligibility, and it does not submit
-applications.
+## What we cut, and why
 
-Naming references:
+The core deliverable is a three-field initial screen: a deterministic
+eligibility calculator wrapped in a layered guardrail chain. Everything beyond
+that — the simulator, telemetry, self-improvement loop, and evaluation
+harness — exists to prove the core is correct, not to add product surface. The
+evaluation apparatus is larger than the agent because failure-mode reasoning
+is a graded criterion; the harness is the evidence for those claims. That is a
+deliberate trade, not a second product.
 
-- mRelief, “Meet Johnnie”: https://ai.mrelief.com/
-- Link Health, “Meet LEO”: https://link-health.org/meet-leo/
-- Arizona DES / Microsoft, “SEAN”: https://www.microsoft.com/en-us/industry/blog/?p=31279
+The scope cuts are intentional:
+
+* **Outbound agency handoff:** removed. The case-worker handoff is a local,
+  print-ready summary; there is no email or other external-recipient path that
+  could contact an agency by mistake.
+* **Persistence, auth, and multi-tenancy:** cut. Web sessions live only in
+  process memory, with a bounded TTL/LRU registry to keep the unattended PoC
+  from growing without limit. There is no account system, durable user data,
+  or tenant isolation.
+* **Fine-tuning / LoRA / RunPod training:** cut. Prompting, tool use, and a
+  deterministic calculator are enough for this bounded workflow; rushed
+  synthetic-data tuning could regress the crisis, injection, and scope
+  behavior being tested.
+* **Multi-agent frameworks:** cut. A single explicit state machine is easier
+  to inspect and narrate than a planner/critic/verifier graph, and keeps the
+  guardrail ordering visible.
+* **Full Spanish translation:** cut for now. The overview, prompts, and
+  guardrail renderings support the demo, while the rule documents containing
+  limits and exceptions remain English-only pending domain review.
+* **The 165% separate-household standard:** deliberately not implemented in
+  the intake or calculator. The knowledge base documents it for traceability,
+  but the current flow does not collect the separate-household signal; it is a
+  roadmap item rather than a claimed capability.
+* **Government scraping, application submission, and agency integration:**
+  cut because the case study forbids them. FoodPath uses a small cited local
+  corpus and does not call, scrape, submit, or notify anywhere.
 
 ## Quickstart
 
@@ -203,60 +222,6 @@ flowchart TD
   the applicable income track. The model does not write this line — it
   cannot be hallucinated.
 
-## What we deliberately cut and why
-
-* **Fine-tuning / LoRA / RunPod training.** Prompt + tools + a deterministic calculator already
-  outperforms a rushed LoRA on this problem. A small fine-tune on
-  synthetic data risks degrading exactly the robustness being tested
-  (crisis / injection / scope) and would consume most of the 20-hour
-  budget before the first user turn. The trade is not worth it.
-* **Multi-agent frameworks.** An explicit state machine with a single
-  `update_state` tool is fully narratable in the review meeting —
-  reviewer asks "what happens if X", we can answer in one breath.
-  Replacing it with a planner / critic / verifier graph would buy us
-  nothing demonstrable and bury the guardrail ordering.
-* **Auth, persistence, multi-tenancy.** The case study asks for scope
-  discipline. Web sessions live in the process only; restarting the
-  server clears them. Users can explicitly discard one with **Start a new
-  screening** (or `new` / `restart` in the CLI). To prevent an unattended
-  PoC process from growing without limit, the in-memory registry expires a
-  session after **one hour without access** and keeps at most **100 live
-  sessions**, evicting the least recently used entry before admitting the
-  next one. `/health` exposes the current live-session count. This TTL/LRU
-  policy is a deliberate PoC-scoped safety bound—not persistence or
-  multi-tenancy—and it matches the case study's "do not submit real
-  applications, do not contact a real agency" guardrail.
-* **Real government scraping or application submission.** Explicitly forbidden by the case study; the prototype uses a small cited local corpus and never submits an application.
-* **Full Spanish KB translation.** Only the overview is translated for the demo; translating every rule document without domain review would create a larger, less trustworthy surface than the rubric requires.
-* **Real agency integration.** Explicitly forbidden by the case study
-  prompt. We never call, scrape, or submit anywhere. This also rules
-  out any outbound notification path on the case-worker handoff — the
-  print-ready summary is the entire deliverable, and the good part of
-  the handoff is exactly that it works with zero external dependencies.
-* **Outbound handoff email.** The case-worker handoff is a local,
-  print-ready summary block plus an on-screen banner. A prior revision
-  included a best-effort outbound-email notification gated behind four
-  env vars, but shipping any outbound-contact path in the repo is the
-  wrong signal even when disabled: it would let a careless operator
-  point it at a real recipient. Removed in W39; the local summary is
-  the deliverable.
-* **Full Spanish KB translation.** Only `01_program_overview.md` is
-  translated to Spanish (W19). The income-limits and deductions docs
-  carry numbers and exceptions that need a domain reviewer, not a
-  machine translation; a half-translated bilingual surface reads worse
-  than a clean EN/ES split where Spanish answers are grounded in the
-  English corpus and clearly labeled as such. A clean cut beats a
-  shoddy one — see the Spanish-coverage bullet in **Known limitations**.
-* **Expanded 165% track for separate elderly/disabled households.** The
-  FY2026 memo defines a third standard for households where an elderly
-  or disabled member buys and prepares food separately. The knowledge
-  base documents it (kb/03, "Separate Elderly/Disabled Households —
-  FY2026 165% standard") so a reviewer can trace the rules, but the
-  calculator and intake flow do not yet collect the "separate
-  household" signal. The W18/W31 work added the deduction chain for
-  the standard 100% net case; the 165% track is the next milestone in
-  the **Production roadmap**, not a current capability.
-
 ## Guardrails
 
 | Layer | What it catches | Why deterministic |
@@ -284,17 +249,6 @@ CI (``.github/workflows/ci.yml``) runs two pytest legs — one with the
 classifier on and one with it off — so a regression in either mode
 breaks the build rather than slipping through as a different test
 count on a different shell.
-
-## What we cut and why
-
-This case study deliberately optimizes for a narrow, defensible live demo rather than feature volume:
-
-- **Fine-tuning / LoRA / RunPod training:** cut because prompt engineering plus tool calling is sufficient for this bounded workflow; rushed synthetic-data tuning could regress novel-input and safety behavior.
-- **Multi-agent frameworks (LangGraph/AutoGen):** cut because the explicit state machine is easier to inspect and narrate live; framework opacity would work against the architectural-judgment rubric.
-- **Auth, persistence beyond one session, multi-tenancy, deployment infrastructure, and admin tooling:** cut because they do not improve the graded intake, guardrail, calculator, or failure-mode surface.
-- **Real government scraping and application submission:** cut because the case study forbids them. The prototype uses a small, cited local knowledge base and does not submit applications.
-
-We spent the saved effort on deterministic eligibility calculation, explicit state transitions, visible citations, guardrails, adversarial tests, and a real demo path. Those choices maximize reviewable correctness and keep the system's behavior explainable under unseen live inputs.
 
 ## Known limitations
 
@@ -334,8 +288,8 @@ We spent the saved effort on deterministic eligibility calculation, explicit sta
   topics are still grounded in the English corpus (the agent quotes
   the English source path in its citations). A clean EN/ES split is
   better than a half-translated bilingual surface that mixes the two
-  — see the "Full Spanish KB translation" bullet in **What we
-  deliberately cut and why**. A production deployment would translate
+  — see the "Full Spanish translation" bullet in **What we cut, and why**.
+  A production deployment would translate
   the rest of the KB with a domain reviewer and add a real language
   identifier.
 * **PII redactor is regex-only, by design.** It catches SSN-shaped,
