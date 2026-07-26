@@ -299,3 +299,89 @@ def test_openrouter_requests_is_mocked(monkeypatch):
     }
     response.raise_for_status.assert_called_once()
     post.assert_called_once()
+
+
+class TestStripThinkingBlocks:
+    """W37: inline ``<think>`` blocks in model content must be stripped.
+
+    MiniMax (and other reasoning models) return the chain-of-thought
+    inside the user-visible ``content`` field rather than in a separate
+    ``reasoning_content`` field. Leaving those blocks in caused the
+    ``pii_not_echoed`` simulator failure (the model echoed the user's
+    address in its ``<think>`` block while correctly avoiding it in the
+    visible reply). Stripping must be applied uniformly by every
+    provider path that goes through ``_normalize``.
+    """
+
+    def test_strips_single_block(self):
+        from src.llm_client import LLMClient
+
+        raw = "<think>user said address 1247 Oak Ridge</think>\nThanks — got it."
+        assert LLMClient._strip_thinking_blocks(raw) == "Thanks — got it."
+
+    def test_strips_multiple_blocks(self):
+        from src.llm_client import LLMClient
+
+        raw = (
+            "<think>first thought with SSN 123-45-6789</think>"
+            "Reply part one. "
+            "<think>second thought</think>"
+            "Reply part two."
+        )
+        assert (
+            LLMClient._strip_thinking_blocks(raw)
+            == "Reply part one. Reply part two."
+        )
+
+    def test_no_think_block_unchanged(self):
+        from src.llm_client import LLMClient
+
+        raw = "Plain answer, no reasoning trace."
+        assert LLMClient._strip_thinking_blocks(raw) == raw
+
+    def test_empty_content_unchanged(self):
+        from src.llm_client import LLMClient
+
+        assert LLMClient._strip_thinking_blocks("") == ""
+        assert LLMClient._strip_thinking_blocks("   ") == ""
+
+    def test_only_think_block_returns_empty(self):
+        from src.llm_client import LLMClient
+
+        assert LLMClient._strip_thinking_blocks("<think>all thinking, no answer</think>") == ""
+
+    def test_case_insensitive(self):
+        from src.llm_client import LLMClient
+
+        raw = "<THINK>loud</THINK>quiet"
+        assert LLMClient._strip_thinking_blocks(raw) == "quiet"
+
+    def test_normalize_strips_think_from_minimax(self, monkeypatch):
+        """End-to-end: a MiniMax response with inline ``<think>`` reaches
+        the agent loop without the reasoning trace."""
+        from src.llm_client import LLMClient
+
+        monkeypatch.setenv("LLM_PROVIDER", "minimax")
+        monkeypatch.setenv("LLM_MODEL", "minimax-test")
+        response = Mock()
+        response.json.return_value = {
+            "choices": [
+                {
+                    "message": {
+                        "content": (
+                            "<think>user said SSN 123-45-6789 — do not echo</think>"
+                            "Thanks — I won't store that."
+                        ),
+                        "tool_calls": [],
+                    }
+                }
+            ]
+        }
+        post = Mock(return_value=response)
+        monkeypatch.setattr("src.llm_client.requests.post", post)
+        result = LLMClient().chat([])
+        assert result == {
+            "content": "Thanks — I won't store that.",
+            "tool_calls": [],
+            "provider_used": "minimax",
+        }

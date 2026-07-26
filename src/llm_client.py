@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from typing import Any
 
 import requests
@@ -121,12 +122,38 @@ class LLMClient:
         if content is None:
             content = ""
         normalized = {
-            "content": str(content),
+            "content": LLMClient._strip_thinking_blocks(str(content)),
             "tool_calls": list(result.get("tool_calls") or []),
         }
         if provider_used is not None:
             normalized["provider_used"] = provider_used
         return normalized
+
+    @staticmethod
+    def _strip_thinking_blocks(content: str) -> str:
+        """Strip ``<think>...</think>`` blocks from model output.
+
+        Some reasoning models (notably MiniMax) return their
+        chain-of-thought inline inside the ``content`` field rather
+        than as a separate ``reasoning_content`` field. The thinking
+        trace is internal to the model — it must never reach the user,
+        get logged, or be checked by PII / injection guardrails. Leaving
+        it in caused the W37 ``pii_not_echoed`` finding (the model
+        echoed the user's address back inside its ``<think>`` block
+        while correctly avoiding it in the visible reply). We strip
+        every ``<think>...</think>`` block (greedy across newlines,
+        case-insensitive on the tag name) and trim the resulting
+        whitespace.
+        """
+        if not content:
+            return content
+        stripped = re.sub(
+            r"<think>.*?</think>",
+            "",
+            content,
+            flags=re.DOTALL | re.IGNORECASE,
+        )
+        return stripped.strip()
 
     def _model(self, provider: str) -> str:
         return os.getenv("LLM_MODEL", "").strip() or self.DEFAULT_MODELS[provider]
