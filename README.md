@@ -275,6 +275,27 @@ A `GUARDRAIL_CLASSIFIER=off` environment variable disables the classifier
 layer for tests, offline runs, and the model bake-off. The keyword
 layers cannot be disabled — they are the floor.
 
+The pytest suite is gated to pass under BOTH modes. ``tests/conftest.py``
+installs an autouse fixture that pins ``GUARDRAIL_CLASSIFIER=off`` (the
+documented offline mode) at the start of every test that does not opt
+out, and tests that encode "classifier layer is running" semantics opt
+in explicitly with ``monkeypatch.setenv("GUARDRAIL_CLASSIFIER", "on")``.
+CI (``.github/workflows/ci.yml``) runs two pytest legs — one with the
+classifier on and one with it off — so a regression in either mode
+breaks the build rather than slipping through as a different test
+count on a different shell.
+
+## What we cut and why
+
+This case study deliberately optimizes for a narrow, defensible live demo rather than feature volume:
+
+- **Fine-tuning / LoRA / RunPod training:** cut because prompt engineering plus tool calling is sufficient for this bounded workflow; rushed synthetic-data tuning could regress novel-input and safety behavior.
+- **Multi-agent frameworks (LangGraph/AutoGen):** cut because the explicit state machine is easier to inspect and narrate live; framework opacity would work against the architectural-judgment rubric.
+- **Auth, persistence beyond one session, multi-tenancy, deployment infrastructure, and admin tooling:** cut because they do not improve the graded intake, guardrail, calculator, or failure-mode surface.
+- **Real government scraping and application submission:** cut because the case study forbids them. The prototype uses a small, cited local knowledge base and does not submit applications.
+
+We spent the saved effort on deterministic eligibility calculation, explicit state transitions, visible citations, guardrails, adversarial tests, and a real demo path. Those choices maximize reviewable correctness and keep the system's behavior explainable under unseen live inputs.
+
 ## Known limitations
 
 * **Initial screen, not a determination.** The agent returns a likely /
