@@ -482,16 +482,19 @@ def assert_income_changes_only_on_cue(result: TranscriptResult) -> None:
     parsed a non-income token as income — exactly the failure mode
     that motivated this whole suite.
     """
-    history = [None] + list(result.income_history)  # align: history[i] is value AFTER turn i
+    # The history is aligned as: history[i] = value AFTER user turn i.
+    # The simulator's user_messages and income_history are both 0-based,
+    # so compare entry i against entry i-1 and blame message i (not i-1).
+    # This preserves the golden helper's semantics while avoiding the old
+    # off-by-one false finding that blamed the following turn.
+    history = list(result.income_history)
     for i in range(1, len(history)):
         prev, curr = history[i - 1], history[i]
         if prev == curr:
             continue
-        # Income changed between turn i-1 and turn i. The cue must be
-        # on turn i (the user message that just produced the change).
-        message = result.user_messages[i - 1]
+        message = result.user_messages[i]
         assert message_carries_income_cue(message), (
-            f"turn {i - 1} changed gross_monthly_income from {prev!r} to {curr!r} "
+            f"turn {i + 1} changed gross_monthly_income from {prev!r} to {curr!r} "
             f"but the user message {message!r} carries no income cue"
         )
 
