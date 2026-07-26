@@ -46,14 +46,34 @@ OLD_BRAND = "CivicReach"
 # ---------------------------------------------------------------------------
 
 def _tracked_src_files() -> list[str]:
-    out = subprocess.run(
-        ["git", "ls-files", "src"],
-        capture_output=True,
-        text=True,
-        check=True,
-        cwd=str(REPO),
-    )
-    return [line for line in out.stdout.splitlines() if line.strip()]
+    """Every Python file under src/, preferring git's view of tracked files.
+
+    Falls back to walking the filesystem when git is unavailable or this is
+    not a checkout. That happens more often than it sounds: a reviewer who
+    downloads the repo as a zip, or a CI job using a shallow export, has no
+    .git directory, and `git ls-files` exits 128. Hard-failing there would
+    mean the suite is red for a reason that has nothing to do with the code
+    — the exact class of environment-dependent failure this project already
+    got bitten by once (the GUARDRAIL_CLASSIFIER conftest incident).
+    """
+    try:
+        out = subprocess.run(
+            ["git", "ls-files", "src"],
+            capture_output=True,
+            text=True,
+            check=True,
+            cwd=str(REPO),
+        )
+        files = [line for line in out.stdout.splitlines() if line.strip()]
+        if files:
+            return files
+    except (subprocess.CalledProcessError, FileNotFoundError, OSError):
+        pass
+    return [
+        str(p.relative_to(REPO))
+        for p in sorted((REPO / "src").rglob("*.py"))
+        if "__pycache__" not in p.parts
+    ]
 
 
 def test_no_old_brand_in_tracked_src():
