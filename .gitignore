@@ -16,3 +16,12 @@ _review/
 
 # Stray Mission Control DB handle created by tooling run from the repo cwd
 mc.db
+
+# Simulator/red-team run artifacts. The dated EVIDENCE reports referenced by
+# EVALUATION.md are committed explicitly with `git add -f`; the per-run
+# timestamped churn (dozens of files per night) is not repo content.
+redteam/reports/simulator_*.json
+redteam/reports/simulator_*.md
+redteam/findings/*.json
+redteam/failures_queue.jsonl
+redteam/fixtures_subset/
