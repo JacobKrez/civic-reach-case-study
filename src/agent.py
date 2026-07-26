@@ -88,6 +88,22 @@ field you just asked about — call update_state with it immediately. Do
 NOT ask the user to restate it in a longer sentence, and do NOT wait for
 the field name to be repeated back to you.
 
+W53 — INTAKE FORWARD PROGRESS: once you successfully record a field
+with update_state, confirm it in ONE short clause and IMMEDIATELY ask
+the next field in missing_fields. Do NOT re-open, re-confirm, or
+re-ask a field you just accepted ("just to confirm, is that really
+17?"). Do NOT narrate internal constraints to the user ("the max I
+can record is 20", "the household size limit is 20", "the cap is 20
+people"). Those are implementation details — the user does not need
+to know them, and explaining them stops the conversation. Do NOT
+relitigate earlier turns ("since you mentioned earlier that 'zero'
+was the answer for something else, are you sure?"). Once a field
+is recorded, it is recorded. Do NOT end your reply with a rhetorical
+question ("were you just tossing out a number?", "is that right?")
+that does not advance the intake — the user's next message must have
+a real question to answer. While missing_fields is non-empty, the
+LAST sentence of your reply must be the next-field question.
+
 If the user asks for something outside the NC FNS eligibility scope,
 respond with a brief polite redirect back to the FNS questions and do
 not attempt to answer the off-topic ask. Do not abandon or reset any
@@ -171,6 +187,22 @@ update_state con ese valor de inmediato. NO le pidas al usuario que lo
 repita en una oración más larga, y no esperes a que repita el nombre del
 campo.
 
+W53 — PROGRESO DE LA RECOLECCIÓN: una vez que registres exitosamente un
+campo con update_state, confírmalo en UNA cláusula corta e INMEDIATAMENTE
+pregunta por el siguiente campo en missing_fields. NO vuelvas a abrir,
+re-confirmar ni re-preguntar un campo que acabas de aceptar ("sólo para
+confirmar, ¿de verdad son 17?"). NO narres restricciones internas al
+usuario ("el máximo que puedo registrar es 20", "el límite es 20
+personas"). Esos son detalles de implementación — el usuario no necesita
+saberlos, y explicarlos detiene la conversación. NO re-litigues turnos
+anteriores ("ya que antes mencionaste que 'cero' era la respuesta de
+otra cosa, ¿estás seguro?"). Una vez que un campo está registrado, está
+registrado. NO termines tu respuesta con una pregunta retórica
+("¿sólo estabas tirando un número?", "¿es correcto?") que no avance la
+recolección — el siguiente mensaje del usuario debe tener una pregunta
+real que responder. Mientras missing_fields no esté vacío, la ÚLTIMA
+oración de tu respuesta debe ser la pregunta del siguiente campo.
+
 Si el usuario pide algo fuera del alcance de la elegibilidad de NC FNS,
 responde con una redirección breve y cortés de vuelta a las preguntas de
 FNS y no intentes responder la solicitud fuera de tema. No abandones ni
@@ -221,6 +253,59 @@ _NEXT_FIELD_QUESTION: dict[str, dict[str, str]] = {
         ),
     },
 }
+
+# W53 — forward-progress floor. The signature is the substring of the
+# canonical next-field question that, if present in the model reply,
+# means the field is already being asked. We detect "already asked" on
+# the FIELD (a real question for that specific field), not on the
+# presence of a '?' -- the live failure transcript ended with a
+# question mark while asking nothing useful ("were you just tossing
+# out a number?"). The signature is normalized (lowercased, curly
+# apostrophes straightened) so the floor and the canonical question
+# use the same vocabulary.
+def _norm_for_match(text: str) -> str:
+    return text.lower().replace("\u2019", "'").replace("\u2018", "'")
+
+
+_W53_ALREADY_ASKED_SIGNATURE: dict[str, dict[str, str]] = {
+    lang: {
+        field: _norm_for_match(question)
+        for field, question in _NEXT_FIELD_QUESTION[lang].items()
+    }
+    for lang in _NEXT_FIELD_QUESTION
+}
+
+
+def _w53_fold_ask(content: str, lang: str, missing: list[str]) -> str:
+    """Append the canonical next-field question for ``missing[0]`` if
+    the reply does not already contain it.
+
+    W53 floor: the user reply must end with a real question for the
+    first missing field. The W24 backstop only fired when content was
+    empty; the live failure (and the chatty model behaviour Jacob hit
+    on 2026-07-26) was content with NO question for the next field.
+    The reply is acknowledged as-is (truthful about what the model did
+    say), and the code-templated next-field question is appended so
+    the user has something concrete to answer.
+
+    When ``missing`` is empty (intake complete) the function is a
+    no-op and the original reply is returned unchanged.
+    """
+    if not missing:
+        return content
+    field = missing[0]
+    signature = _W53_ALREADY_ASKED_SIGNATURE.get(lang, {}).get(field)
+    if signature and signature in _norm_for_match(content):
+        return content
+    question = _NEXT_FIELD_QUESTION.get(lang, _NEXT_FIELD_QUESTION["en"]).get(
+        field, ""
+    )
+    if not question:
+        return content
+    if content:
+        return f"{content} {question}"
+    return question
+
 
 UPDATE_STATE_TOOL = {
     "name": "update_state",
@@ -1296,8 +1381,22 @@ class FoodPathAgent:
         # the next missing field in code -- this mirrors exactly what the
         # system prompt already instructs the model to do; it only fires
         # as a safety net when the model didn't.
-        if not content and self.state.missing_fields():
-            content = _NEXT_FIELD_QUESTION[self.state.language][self.state.missing_fields()[0]]
+        #
+        # W53 — forward-progress floor: extend the W24 backstop so it
+        # fires on NON-EMPTY replies too, whenever the reply does not
+        # already contain the canonical next-field question. The
+        # W24 backstop only covered the "model returned nothing"
+        # case; the live failure (2026-07-26) was the chatty model
+        # recording the field and then ending with a question mark
+        # that asked nothing useful ("were you just tossing out a
+        # number?"). ``_w53_fold_ask`` is a no-op when intake is
+        # already complete (verdict explanation path keeps its own
+        # outcome-bearing floor) and a no-op when the model reply
+        # already asked for ``missing[0]``, so existing well-behaved
+        # transcripts are unaffected.
+        content = _w53_fold_ask(
+            content, self.state.language, list(self.state.missing_fields())
+        )
 
         self._messages.append({"role": "assistant", "content": content})
         # W20: the de-escalation context applied to this turn's LLM call

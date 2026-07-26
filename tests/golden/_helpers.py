@@ -151,6 +151,21 @@ class TranscriptResult:
     assistant_replies: list[str] = field(default_factory=list)
     user_messages: list[str] = field(default_factory=list)
     filled_at: dict[str, int] = field(default_factory=dict)
+    # W53: per-turn snapshot of the missing-fields list, aligned with
+    # ``user_messages`` / ``assistant_replies`` (i.e. entry i is the
+    # value of ``state.missing_fields()`` AFTER turn i has been
+    # processed). The forward-progress invariant asserts that when
+    # this list is non-empty, the assistant reply for that turn asks
+    # for the first entry.
+    missing_fields_history: list[list[str]] = field(default_factory=list)
+    # W53: per-turn flag of whether a deterministic guardrail
+    # (crisis, injection, scope, not-a-person, expedited, benefit
+    # amount, application status) claimed the turn. On these turns
+    # the agent's response is a hardcoded block and the intake
+    # floor does not apply — the guardrail's job is to deliver a
+    # specific answer, not to advance the FNS intake. The
+    # forward-progress invariant skips these turns.
+    guardrail_claimed_history: list[bool] = field(default_factory=list)
 
     @property
     def completed(self) -> bool:
@@ -198,6 +213,12 @@ def run_transcript(
     """
     from src.agent import FoodPathAgent  # local import to keep the helper free of side effects
     from src.calculator import calculate_eligibility
+    from src.guardrails.application_status import detect_application_status_question
+    from src.guardrails.benefit_amount import detect_benefit_amount_question
+    from src.guardrails.crisis import detect_crisis
+    from src.guardrails.expedited import detect_expedited_question
+    from src.guardrails.injection import detect_injection
+    from src.guardrails.scope import detect_not_a_person_request, detect_out_of_scope
 
     llm = RecordingLLM(
         main_responses=scripted_responses,
@@ -209,6 +230,28 @@ def run_transcript(
         agent = FoodPathAgent(llm_client=llm)
 
     result = TranscriptResult()
+
+    def _is_guardrail_claimed(message: str) -> bool:
+        # W53: deterministic guardrails (crisis, injection, scope,
+        # not-a-person, expedited, benefit amount, application
+        # status) own the turn — the reply is a hardcoded block and
+        # the forward-progress floor does not apply. Hostility is NOT
+        # in this set: it de-escalates and lets the LLM continue, so
+        # intake must still progress. Classifier-layer attribution
+        # ("crisis" / "injection" / "off_topic") is also handled by
+        # the keyword detectors above — if the keyword detector did
+        # not fire but the classifier does, the reply is still a
+        # hardcoded block; we cover that path below by checking the
+        # agent's state flags after the turn.
+        return (
+            detect_crisis(message)
+            or detect_injection(message)
+            or detect_out_of_scope(message)
+            or detect_not_a_person_request(message)
+            or detect_expedited_question(message)
+            or detect_benefit_amount_question(message)
+            or detect_application_status_question(message)
+        )
 
     # Track WHEN each field was filled (the 1-indexed turn on which
     # the user message first caused the field to become non-None).
@@ -249,10 +292,33 @@ def run_transcript(
                     result.tracebacks.append(traceback.format_exc())
                     result.turns.append(TranscriptTurn(message, ""))
                     result.assistant_replies.append("")
+                    result.missing_fields_history.append(
+                        list(agent.state.missing_fields())
+                    )
+                    result.guardrail_claimed_history.append(
+                        _is_guardrail_claimed(message)
+                    )
                     continue
                 result.assistant_replies.append(reply)
                 result.turns.append(TranscriptTurn(message, reply))
                 result.income_history.append(agent.state.gross_monthly_income)
+                result.missing_fields_history.append(
+                    list(agent.state.missing_fields())
+                )
+                # Classifier-claimed turns: the keyword detector did
+                # not fire but the LLM classifier did. The reply is
+                # still a hardcoded guardrail block; the W53 floor
+                # does not apply. Detect by state-flag transitions
+                # the agent's classifier path sets.
+                kw_claimed = _is_guardrail_claimed(message)
+                classifier_claimed = (
+                    bool(agent.state.is_crisis)
+                    or bool(agent.state.is_injection_attempt)
+                    or bool(agent.state.is_out_of_scope)
+                )
+                result.guardrail_claimed_history.append(
+                    kw_claimed or classifier_claimed
+                )
                 for field_name in (
                     "household_size",
                     "gross_monthly_income",
@@ -273,10 +339,28 @@ def run_transcript(
                 result.tracebacks.append(traceback.format_exc())
                 result.turns.append(TranscriptTurn(message, ""))
                 result.assistant_replies.append("")
+                result.missing_fields_history.append(
+                    list(agent.state.missing_fields())
+                )
+                result.guardrail_claimed_history.append(
+                    _is_guardrail_claimed(message)
+                )
                 continue
             result.assistant_replies.append(reply)
             result.turns.append(TranscriptTurn(message, reply))
             result.income_history.append(agent.state.gross_monthly_income)
+            result.missing_fields_history.append(
+                list(agent.state.missing_fields())
+            )
+            kw_claimed = _is_guardrail_claimed(message)
+            classifier_claimed = (
+                bool(agent.state.is_crisis)
+                or bool(agent.state.is_injection_attempt)
+                or bool(agent.state.is_out_of_scope)
+            )
+            result.guardrail_claimed_history.append(
+                kw_claimed or classifier_claimed
+            )
             for field_name in (
                 "household_size",
                 "gross_monthly_income",
@@ -398,6 +482,20 @@ def assert_universal_invariants(result: TranscriptResult, *, expect_completed: b
     #    ``income_cue_relaxed=True`` via ``assert_income_changes_only_on_cue``.
     assert_income_changes_only_on_cue(result)
 
+    # 6. W53 forward-progress invariant: when intake is incomplete
+    #    at the end of a turn, the assistant reply for that turn
+    #    must ask for the first missing field. This catches the
+    #    exact failure Jacob hit on 2026-07-26 — a chatty model
+    #    that records a field and then ends with a question mark
+    #    that asks nothing useful ("were you just tossing out a
+    #    number?") or with a rhetorical question that does not
+    #    advance the intake. The W24 backstop only fired on EMPTY
+    #    content; W53 extends the floor to non-empty replies too,
+    #    so this invariant fires on every future and existing
+    #    transcript. Per-turn progress checks live in
+    #    ``assert_forward_progress``.
+    assert_forward_progress(result)
+
 
 # Income keywords for the "income cue" check. Same vocabulary the
 # agent's correction-fallback uses, plus the obvious English and Spanish
@@ -496,6 +594,119 @@ def assert_income_changes_only_on_cue(result: TranscriptResult) -> None:
         assert message_carries_income_cue(message), (
             f"turn {i + 1} changed gross_monthly_income from {prev!r} to {curr!r} "
             f"but the user message {message!r} carries no income cue"
+        )
+
+
+# W53: canonical next-field questions, mirrored from
+# ``src.agent._NEXT_FIELD_QUESTION``. Used by the forward-progress
+# invariant to assert "if missing_fields is non-empty, the reply
+# asks for missing_fields[0]." We duplicate the source-of-truth
+# here rather than import from src.agent so the helper file stays
+# import-free of agent internals (it already does a local import of
+# FoodPathAgent inside run_transcript for the same reason).
+_W53_NEXT_FIELD_QUESTION: dict[str, dict[str, str]] = {
+    "en": {
+        "household_size": "How many people are in your household?",
+        "gross_monthly_income": "What is your household's gross monthly income?",
+        "has_elderly_or_disabled_member": (
+            "Does anyone in your household have an elderly (60+) or disabled member?"
+        ),
+    },
+    "es": {
+        "household_size": "¿Cuántas personas hay en su hogar?",
+        "gross_monthly_income": "¿Cuál es el ingreso mensual bruto de su hogar?",
+        "has_elderly_or_disabled_member": (
+            "¿Alguna persona en su hogar tiene 60 años o más, o tiene una discapacidad?"
+        ),
+    },
+}
+
+
+def _w53_norm_for_match(text: str) -> str:
+    """Normalize text for substring matching: lowercase, straight
+    apostrophes (curly -> straight). Mirrors the normalization the
+    agent's W53 floor uses so the invariant and the floor agree on
+    what "already asked" means."""
+    return text.lower().replace("\u2019", "'").replace("\u2018", "'")
+
+
+def _w53_asks_for_field(reply: str, field: str, language: str) -> bool:
+    """True when *reply* already contains a real question for *field*.
+
+    Detected by checking whether the canonical next-field question
+    for *field* (in *language*) appears in the reply. We compare
+    against the full canonical question (not a substring) so the
+    check fires only when the field is genuinely being asked — a
+    question mark alone, a rhetorical question, or a question for a
+    different field all fail. Curly apostrophes in either side are
+    normalized to straight so the curly-quote renderings pass.
+    """
+    table = _W53_NEXT_FIELD_QUESTION.get(language) or _W53_NEXT_FIELD_QUESTION["en"]
+    question = table.get(field)
+    if not question:
+        return False
+    return _w53_norm_for_match(question) in _w53_norm_for_match(reply)
+
+
+def assert_forward_progress(result: TranscriptResult) -> None:
+    """W53 universal invariant: every turn whose state still has
+    missing fields MUST end with a real question for the first
+    missing field.
+
+    This is the failure Jacob hit on 2026-07-26 in the live UI: a
+    chatty model recorded ``household_size=17`` and then ended the
+    turn with a question mark while asking nothing useful ("were
+    you just tossing out a number?"). The user was left staring at
+    an acknowledgement with no next question to answer. The W24
+    deterministic backstop only fired on empty content; W53 extends
+    the floor to non-empty replies, and this invariant enforces the
+    resulting contract on every existing and future transcript.
+
+    The check walks ``missing_fields_history`` (one entry per
+    processed turn) and asserts the corresponding assistant reply
+    contains a real question for the first missing field. Three
+    pathological model behaviours the brief calls out — and which
+    the helper now flags as regressions — are:
+
+      * acknowledge-without-asking: "Got it, 17 people." (no
+        question at all)
+      * acknowledge-and-ask-something-else: "Got it. What's your
+        ZIP code?" (asks the wrong field, or a non-FNS question)
+      * acknowledge-and-ask-a-rhetorical-question: "Got it, 17.
+        Were you just tossing out a number?" (a real '?' but no
+        forward progress)
+
+    The agent's W53 floor appends the canonical next-field question
+    in code when the model reply lacks one, so transcripts that
+    follow the spec pass without any test-side massaging.
+
+    Guardrail-claimed turns (crisis, injection, scope, not-a-person,
+    expedited, benefit-amount, application-status) are excluded:
+    the agent's response on those turns is a hardcoded block whose
+    job is to deliver a specific answer, not to advance the FNS
+    intake. The chunk brief scopes the floor to "the decide phase",
+    which guardrail turns never reach.
+    """
+    if not result.missing_fields_history:
+        return  # Runner predates W53; nothing to assert.
+    final = result.final_state
+    language = getattr(final, "language", "en") or "en"
+    guardrail_history = result.guardrail_claimed_history
+    for turn_index, (missing, reply) in enumerate(
+        zip(result.missing_fields_history, result.assistant_replies),
+        start=1,
+    ):
+        if not missing:
+            continue  # Intake is complete on this turn; no progress needed.
+        # Skip guardrail-claimed turns (the W53 floor does not apply).
+        if guardrail_history and turn_index - 1 < len(guardrail_history):
+            if guardrail_history[turn_index - 1]:
+                continue
+        target = missing[0]
+        assert _w53_asks_for_field(reply, target, language), (
+            f"W53 forward-progress: turn {turn_index} left missing_fields={missing!r} "
+            f"but the reply does not ask for the next field ({target!r}). "
+            f"reply={reply!r}"
         )
 
 

@@ -107,5 +107,9 @@ def test_invalid_tool_call_does_not_crash_turn():
     agent = FoodPathAgent(llm_client=llm)
     reply = agent.turn("we have a huge household")
     # The reply flows through; the invalid value is dropped, not applied.
-    assert reply == "recording that"
+    # W53 forward-progress floor: intake is still incomplete
+    # (household_size never recorded), so the canonical next-field
+    # question is appended to the model content.
+    assert reply.startswith("recording that")
+    assert "How many people are in your household?" in reply
     assert agent.state.household_size is None
