@@ -8,6 +8,7 @@ redteam/report_latest.json
 # Private planning notes — keep local, never publish
 LOOP_PLAN.md
 ROADMAP.md
+CONVERSATION_OVERHAUL.md
 *.txt
 
 # Review artifacts — keep local, never publish
