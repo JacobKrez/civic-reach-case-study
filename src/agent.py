@@ -627,35 +627,40 @@ def volatile_rule_redirect(lang: str = "en") -> str:
     )
 
 
-# Compact code-templated introduction. The web UI combines these two
-# fragments into one conversational bubble inside the transcript. The
-# persistent notice/footer only covers "not an application / nothing is
-# saved" — it does NOT carry the 911/988 emergency pointer or the
-# can't-see/call/dispatch capability limits, so both must stay in this
-# disclosure itself. This was dropped in the W60-era "compact intro" pass
-# and is restored per CA SB 243 / WA HB 2225 / FTC AI-disclosure guidance
-# (see README.md's guardrail table). Crisis keywords still get the fuller
-# hardcoded ``crisis_response()`` on top of this.
+# Two separate first-turn bubbles, not one combined message (restored
+# 2026-07-27 per live human review: the W60-era "compact intro" pass fused
+# these into a single bubble, which read as a wall of text that buried the
+# actual first question). The disclosure carries ONLY the safety/identity
+# content required regardless of tone -- the persistent notice/footer only
+# covers "not an application / nothing is saved", not the 911/988 emergency
+# pointer or the can't-see/call/dispatch capability limits, so both stay
+# here (CA SB 243 / WA HB 2225 / FTC AI-disclosure guidance; see README.md's
+# guardrail table). The friendly "Hi, I'm FoodPath" name-greeting lives in
+# the SECOND bubble instead of being said twice -- crisis keywords still get
+# the fuller hardcoded ``crisis_response()`` on top of all of this.
 FIRST_TURN_DISCLOSURE_EN = (
-    f"Hi! I'm {PRODUCT_NAME}, an automated guide for a quick NC FNS / SNAP eligibility estimate. "
-    "I can't see you, call anyone, or dispatch help. If this is a life-threatening emergency, "
-    "call 911. If you're in a mental-health crisis, call or text 988."
+    f"{PRODUCT_NAME} is an automated guide for a quick NC FNS / SNAP eligibility estimate — "
+    "not a live person and not a DSS caseworker. It can't see you, call anyone, or dispatch "
+    "help. If this is a life-threatening emergency, call 911. If you're in a mental-health "
+    "crisis, call or text 988."
 )
 
 FIRST_TURN_DISCLOSURE_ES = (
-    f"¡Hola! Soy {PRODUCT_NAME}, una guía automatizada para una evaluación rápida de elegibilidad de FNS / SNAP. "
-    "No puedo verte, llamar a nadie ni despachar ayuda. Si es una emergencia que pone en peligro tu vida, "
+    f"{PRODUCT_NAME} es una guía automatizada para una evaluación rápida de elegibilidad de "
+    "FNS / SNAP — no es una persona real ni un trabajador social del DSS. No puede verte, "
+    "llamar a nadie ni despachar ayuda. Si es una emergencia que pone en peligro tu vida, "
     "llama al 911. Si estás en una crisis de salud mental, llama o envía un mensaje de texto al 988."
 )
 
 FIRST_TURN_GREETING_EN = (
-    "To start, how many people, including you, usually buy and prepare food together? "
-    "If you usually buy and cook just for yourself, answer 1."
+    f"Hi! I'm {PRODUCT_NAME}, here to help. To start, how many people, including you, "
+    "usually buy and prepare food together? If you usually buy and cook just for yourself, answer 1."
 )
 
 FIRST_TURN_GREETING_ES = (
-    "Para empezar, ¿cuántas personas, incluyéndote, compran y preparan comida juntas? "
-    "Si normalmente compras y cocinas solo para ti, responde 1."
+    f"¡Hola! Soy {PRODUCT_NAME}, aquí para ayudarte. Para empezar, ¿cuántas personas, "
+    "incluyéndote, compran y preparan comida juntas? Si normalmente compras y cocinas solo "
+    "para ti, responde 1."
 )
 
 

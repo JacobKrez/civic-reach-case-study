@@ -417,19 +417,28 @@ def test_web_index_page_first_bubble_is_first_turn_disclosure_en():
     )
 
 
-def test_web_index_page_has_one_compact_intro_inside_chat():
-    """The intro belongs in the chat log, never as duplicate bubbles above it."""
+def test_web_index_page_has_two_separate_first_bubbles():
+    """Feedback from a live human review (2026-07-27): one long combined
+    disclosure+question block read as unfriendly and buried the actual
+    first question. The page must render the safety disclosure and the
+    friendly greeting as TWO distinct bubbles inside the chat log, never
+    concatenated into one and never as duplicate bubbles above it."""
     from src.agent import first_turn_greeting
     from src.web import PAGE
 
     assert first_turn_greeting("en") in PAGE
-    assert PAGE.count('<div class="bubble assistant" data-role="intro">') == 1
-    assert 'data-role="disclosure"' not in PAGE
-    assert 'data-role="greeting"' not in PAGE
+    assert PAGE.count('<div class="bubble assistant" data-role="disclosure">') == 1
+    assert PAGE.count('data-role="greeting">') == 1
+    assert '<div class="bubble assistant" data-role="intro">' not in PAGE
+    # The disclosure bubble's closing tag must appear before the greeting
+    # bubble starts -- two separate divs, not one combined block.
+    disclosure_idx = PAGE.index('<div class="bubble assistant" data-role="disclosure">')
+    greeting_idx = PAGE.index('data-role="greeting">')
+    closing_div_between = PAGE.index("</div>", disclosure_idx)
+    assert disclosure_idx < closing_div_between < greeting_idx
     messages_idx = PAGE.index('id="messages"')
-    intro_idx = PAGE.index('data-role="intro"')
     composer_idx = PAGE.index('id="form"')
-    assert messages_idx < intro_idx < composer_idx
+    assert messages_idx < disclosure_idx < greeting_idx < composer_idx
 
 
 # ---------------------------------------------------------------------------

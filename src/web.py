@@ -301,11 +301,15 @@ def _escape(text: str) -> str:
 
 
 def _first_bubble_html(lang: str) -> str:
-    """One compact introduction inside the conversation log."""
+    """Two separate bubbles, not one combined message: the safety
+    disclosure first, then a short friendly opener with the first intake
+    question. Restores the pre-W60 split (feedback from a live human
+    review on 2026-07-27: one long combined disclosure+question bubble
+    read as unfriendly and buried the actual first question)."""
     return (
-        '<div class="bubble assistant" data-role="intro">'
+        '<div class="bubble assistant" data-role="disclosure">'
         + _escape(first_turn_disclosure(lang))
-        + " "
+        + '</div><div class="bubble assistant" data-role="greeting">'
         + _escape(first_turn_greeting(lang))
         + "</div>"
     )
@@ -1377,9 +1381,11 @@ def _client_script(lang: str) -> str:
   });
   if(navigator.onLine === false){ setNetBanner('offline'); toast(t.offline, 'error'); }
 
-  // The server renders one compact intro inside the conversation log.
-  // Keep its text for a client-side reset without maintaining a duplicate.
-  const firstBubbleIntro = messages.querySelector('[data-role="intro"]').textContent;
+  // The server renders two intro bubbles (disclosure, then greeting) inside
+  // the conversation log. Keep their text for a client-side reset without
+  // maintaining a duplicate copy of the strings in JS.
+  const firstBubbleDisclosure = messages.querySelector('[data-role="disclosure"]').textContent;
+  const firstBubbleGreeting = messages.querySelector('[data-role="greeting"]').textContent;
 
   form.addEventListener('submit', async function(e){
     e.preventDefault();
@@ -1511,8 +1517,10 @@ def _client_script(lang: str) -> str:
       if(!r.ok || !data.session_id) throw new Error((data && data.detail) || ('Request failed ('+r.status+')'));
       sid = data.session_id;
       messages.replaceChildren();
-      const intro = appendAssistant(firstBubbleIntro, false);
-      intro.dataset.role = 'intro';
+      const disclosure = appendAssistant(firstBubbleDisclosure, false);
+      disclosure.dataset.role = 'disclosure';
+      const greeting = appendAssistant(firstBubbleGreeting, false);
+      greeting.dataset.role = 'greeting';
       const empty = {
         state:{household_size:null,gross_monthly_income:null,has_elderly_or_disabled_member:null},
         missing_fields:['household_size','gross_monthly_income','has_elderly_or_disabled_member'],

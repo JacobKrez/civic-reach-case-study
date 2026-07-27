@@ -49,9 +49,12 @@ def test_reported_large_household_transcript_moves_forward(monkeypatch):
     assert income_limits(17)["net"] == 4513 + (17 - 8) * 459
 
 
-def test_initial_intro_is_single_and_inside_conversation_log():
-    intro_markup = '<div class="bubble assistant" data-role="intro">'
-    assert PAGE.count(intro_markup) == 1
-    assert 'data-role="disclosure"' not in PAGE
-    assert 'data-role="greeting"' not in PAGE
-    assert PAGE.index('id="messages"') < PAGE.index('data-role="intro"') < PAGE.index('id="form"')
+def test_initial_intro_is_two_bubbles_inside_conversation_log():
+    """Restored 2026-07-27: disclosure and greeting are two separate
+    bubbles (see tests/test_disclosure_and_not_a_person.py for the full
+    content/ordering contract); this just confirms both live inside the
+    conversation log, not as an ``intro``-role duplicate above it."""
+    assert '<div class="bubble assistant" data-role="intro">' not in PAGE
+    assert PAGE.count('<div class="bubble assistant" data-role="disclosure">') == 1
+    assert PAGE.count('data-role="greeting">') == 1
+    assert PAGE.index('id="messages"') < PAGE.index('data-role="disclosure"') < PAGE.index('id="form"')
