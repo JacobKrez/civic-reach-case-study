@@ -46,6 +46,12 @@ def export_head(destination: Path) -> None:
 
 
 def _tracked_contract() -> None:
+    if not (REPO / ".git").exists():
+        missing = [path for path in REQUIRED_TRACKED if not (REPO / path).is_file()]
+        if missing:
+            raise RuntimeError(f"required reviewer artifacts are missing: {missing}")
+        return
+
     proc = _run(["git", "ls-tree", "-r", "--name-only", "HEAD"], REPO)
     if proc.returncode:
         raise RuntimeError(proc.stderr)
@@ -57,13 +63,16 @@ def _tracked_contract() -> None:
 
 def run_clean_export(*, only: str | None = None, all_checks: bool = False) -> tuple[int, str]:
     _tracked_contract()
-    with tempfile.TemporaryDirectory(prefix="foodpath-release-") as raw:
-        checkout = Path(raw)
-        export_head(checkout)
+
+    def run_checks(checkout: Path, *, already_exported: bool = False) -> tuple[int, str]:
         commands: list[list[str]]
         if all_checks:
+            pytest_command = [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider"]
+            if already_exported:
+                # Avoid recursively asking an already Git-free tree to export itself.
+                pytest_command += ["--ignore=tests/test_clean_export_gate.py"]
             commands = [
-                [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider"],
+                pytest_command,
                 [sys.executable, "scripts/gate.py"],
             ]
         else:
@@ -80,6 +89,14 @@ def run_clean_export(*, only: str | None = None, all_checks: bool = False) -> tu
             if proc.returncode:
                 return proc.returncode, "\n".join(output)
         return 0, "\n".join(output)
+
+    if not (REPO / ".git").exists():
+        return run_checks(REPO, already_exported=True)
+
+    with tempfile.TemporaryDirectory(prefix="foodpath-release-") as raw:
+        checkout = Path(raw)
+        export_head(checkout)
+        return run_checks(checkout)
 
 
 def main(argv: list[str] | None = None) -> int:
