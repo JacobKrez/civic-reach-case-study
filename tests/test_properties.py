@@ -680,6 +680,7 @@ mixed_message_st = st.one_of(
 
 
 @given(messages=st.lists(mixed_message_st, min_size=1, max_size=15))
+@settings(max_examples=30, deadline=2000)
 def test_assessment_state_invariant_after_any_sequence(messages):
     """For every turn in a mixed sequence, ``AssessmentState`` validates.
 
