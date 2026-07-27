@@ -319,6 +319,166 @@ def _w53_fold_ask(content: str, lang: str, missing: list[str]) -> str:
     return question
 
 
+# ---------------------------------------------------------------------------
+# W62 — outcome-label floor (single source of truth)
+# ---------------------------------------------------------------------------
+# The post-verdict branch (cached _eligibility_result is not None) and the
+# fresh-decide branch (verdict produced this turn) BOTH need to defend the
+# user-visible reply against model prose that omits the outcome term --
+# "eligible" / "qualif" / "screening" / etc. Before W62 this same
+# terms-dict + label-dict + render block was duplicated near-verbatim
+# three times in agent.py. The duplication made the canonical phrases
+# drift over time (one block dropped the bilingual ``es`` labels, one
+# silently substituted the outcome key, one forgot the notes), which
+# in turn let the post-verdict re-ask bug slip through unobserved: a
+# refactor to one of the three copies did not propagate to the others.
+#
+# Collapsing them into one helper means:
+#   * a future tweak to the terms / labels is automatically applied to
+#     both branches (no risk of drift);
+#   * the post-verdict branch and the fresh-decide branch stay byte-
+#     identical for the same ``(content, result, language)`` triple;
+#   * the helper has one obvious place to add new languages.
+_OUTCOME_TERMS: dict[str, tuple[str, ...]] = {
+    "likely_eligible": ("eligible", "qualif", "califica"),
+    "uncertain_apply_anyway": ("screen", "apply", "solicita", "evalu"),
+    "likely_ineligible": ("ineligible", "not qualify", "no califica"),
+}
+
+_OUTCOME_LABELS: dict[str, dict[str, str]] = {
+    "en": {
+        "likely_eligible": "Screening result: likely eligible.",
+        "uncertain_apply_anyway": "Screening result: eligibility is uncertain; apply anyway.",
+        "likely_ineligible": "Screening result: likely ineligible based on income.",
+    },
+    "es": {
+        "likely_eligible": "Resultado de evaluación: probablemente califica.",
+        "uncertain_apply_anyway": "Resultado de evaluación: elegibilidad incierta; solicite de todos modos.",
+        "likely_ineligible": "Resultado de evaluación: probablemente no califica según los ingresos.",
+    },
+}
+
+
+def _outcome_label_floor(
+    content: str,
+    result: dict[str, Any] | None,
+    language: str,
+    _purpose: str = "verdict",
+) -> str:
+    """Return ``content`` unless it is empty or omits the outcome
+    term; in that case return a deterministic, code-templated
+    rendering of the eligibility result.
+
+    Both branches (post-verdict explain and fresh-decide result)
+    route their user-visible reply through this function so the
+    outcome-bearing sentence the user sees is a single source of
+    truth across the agent. The fallback uses bilingual
+    ``_OUTCOME_LABELS`` and appends the calculator's notes so the
+    user always sees the reason alongside the outcome.
+
+    The ``_purpose`` argument is reserved for future per-branch
+    debugging and is intentionally unused today; it lets callers
+    tag a branch ("verdict", "explain", "explain_repeat") without
+    the helper changing behavior.
+    """
+    del _purpose  # reserved for future per-branch tagging
+    if result is None:
+        return content
+    outcome = str(result.get("outcome") or "")
+    notes = str(result.get("notes") or "")
+    terms = _OUTCOME_TERMS.get(outcome, (outcome.replace("_", " "),))
+    if content.strip() and any(term in content.lower() for term in terms):
+        return content
+    label_table = _OUTCOME_LABELS.get(language, _OUTCOME_LABELS["en"])
+    label = label_table.get(outcome, outcome)
+    return f"{label} {notes}".strip()
+
+
+# ---------------------------------------------------------------------------
+# W62 — strip re-asking sentences from a completed-intake reply
+# ---------------------------------------------------------------------------
+# Phrase vocabulary for "the model just re-asked a field that was
+# already collected." Mirrors ``tests/golden/_helpers._REASK_PHRASES_*``
+# because the bug surface is the user-visible sentence shape, not the
+# data model.
+_REASK_PHRASES_BY_LANG: dict[str, tuple[str, ...]] = {
+    "en": (
+        "how many people are in your household",
+        "what is your household's gross monthly income",
+        "what is your household\ufffds gross monthly income",
+        "does anyone in your household have an elderly",
+        "does anyone in your household have a disabled",
+        "anyone in your household have an elderly",
+        "anyone in your household have a disabled",
+        # Live failure transcript (2026-07-27): the broken model
+        # paraphrased the household-size question instead of using
+        # the canonical phrasing, but the agent still has to
+        # recognize it as a re-ask.
+        "how many people in your household",
+        "how many people in your household are you looking at",
+    ),
+    "es": (
+        "cuantas personas hay en su hogar",
+        "\u00bfcuantas personas hay en su hogar",
+        "cuantas personas son en su hogar",
+        "cual es el ingreso mensual bruto",
+        "\u00bfcual es el ingreso mensual bruto",
+        "alguna persona en su hogar tiene",
+        "alguien en su hogar tiene",
+        "tiene alguien en su hogar",
+    ),
+}
+
+
+def _strip_completed_intake_re_asks(content: str, language: str) -> str:
+    """Remove interrogative sentences that re-ask a filled intake field.
+
+    The live failure on 2026-07-27 was the model, on a post-verdict
+    turn, replying with: "That covers all three required fields ...
+    One moment while I check that. **How many people in your household
+    are you looking at?** **Does anyone in your household have an
+    elderly (60+) or disabled member?**" The state had all three
+    fields set, the calculator had already produced a verdict, and
+    the broken prose leaked straight to the user because no
+    deterministic filter recognized re-asking sentences in a
+    context where intake was complete.
+
+    Behavior:
+
+    * only fires when called on completed-intake content (callers
+      gate the call on ``state.missing_fields() == []``; this helper
+      does no gating itself so it stays trivially unit-testable);
+    * splits on sentence boundaries (``.``, ``?``, ``!``) and drops
+      any sentence that ends in ``?`` AND whose lowered form
+      contains one of the canonical re-ask phrases;
+    * returns the input unchanged if every sentence would be
+      stripped (we never want an empty reply on a completed intake
+      because the user's first signal of completion should not be
+      silence);
+    * is a no-op when ``content`` is empty.
+    """
+    if not content:
+        return content
+    phrases = _REASK_PHRASES_BY_LANG.get(language, _REASK_PHRASES_BY_LANG["en"])
+    # Split on sentence boundaries while keeping the delimiters attached
+    # so we can detect "?". A trailing sentence without "?.!/" still
+    # counts.
+    parts = re.split(r"(?<=[.!?])\s+", content)
+    kept: list[str] = []
+    for sentence in parts:
+        lowered = sentence.lower().rstrip()
+        if lowered.endswith("?") and any(phrase in lowered for phrase in phrases):
+            continue
+        kept.append(sentence)
+    stripped = " ".join(kept).strip()
+    # If every sentence would be stripped, fall back to the original
+    # content rather than returning "": an empty reply on a completed
+    # intake would erase the verdict from the user's view. The post-
+    # verdict outcome-label floor (called right after this helper)
+    # handles the "content has no outcome term" case.
+    return stripped or content
+
+
 def _intake_progress_reply(
     state: AssessmentState, newly_recorded: list[str], lang: str
 ) -> str:
@@ -356,7 +516,15 @@ def _intake_progress_reply(
 
 UPDATE_STATE_TOOL = {
     "name": "update_state",
-    "description": "Record explicitly supplied assessment fields.",
+    "description": (
+        "Record explicitly supplied assessment fields. "
+        "W61 contract: for gross_monthly_income, do NOT call update_state "
+        "with a value latched from a comma- or 'and'-joined list of bare "
+        "numbers ('27, 0, and 100' is NOT $27). When the user's reply to "
+        "the income question carries multiple bare numbers and no income "
+        "cue, omit this call and re-ask the income question instead. "
+        "The deterministic fallback enforces the same rule."
+    ),
     "input_schema": {
         "type": "object",
         "properties": {
@@ -376,6 +544,64 @@ UPDATE_STATE_TOOL = {
 }
 
 _ALLOWED_UPDATES = set(UPDATE_STATE_TOOL["input_schema"]["properties"])
+
+# W61: tolerant pattern that matches integer tokens OR money-shaped tokens
+# WITHOUT consuming thousands separators as list separators. Used to count
+# how many distinct bare numbers a terse reply contains -- "27, 0, and 100"
+# matches three times, "$2,100" matches once, "2100 a month" matches once.
+# The pattern explicitly DOES NOT match the comma inside a thousands group,
+# because we only fire findall() on the original text and let Python's
+# re engine consume characters left-to-right; "2,100" -> match "2" first,
+# then "100" (because the comma was already consumed as the thousands
+# separator of the FIRST match's group). That would falsely inflate the
+# count, so we instead use a NEGATIVE LOOKBEHIND that refuses to match
+# a digit preceded by a comma: ``(?<!\d,)\d+``. This keeps "$2,100" at one
+# match and "27, 0, and 100" at three.
+_MULTI_NUMBER_TOKEN_RE = re.compile(
+    r"(?<![,\d])\d+(?:\.\d+)?(?!\d)"
+)
+
+# W61: role-bearing tokens that, when adjacent to a bare number in a
+# terse reply, signal that the number has a clear semantic role --
+# income vs expense, gross vs deduction. The presence of any of these
+# tokens attached to ANY number in a multi-number reply distinguishes
+# "structured" multi-number input ("1800 and I pay 400 for daycare")
+# from "unstructured" multi-number input ("27, 0, and 100"). Only the
+# unstructured case is a misassignment hazard; the structured case
+# the LLM (and the deterministic fallback's normalized leading
+# number) can both read correctly.
+#
+# English-only. Spanish terse-reply paths route through the LLM tool
+# call, not the deterministic fallback, so adding Spanish vocabulary
+# here is unnecessary and would risk a false-positive on common
+# Spanish words like "para" (for) or "pago" (payment/I pay).
+_ROLE_BEARING_NUMBER_PATTERN = re.compile(
+    r"\b\d[\d,.]*\s*(?:dollars?|bucks?)\b"           # "1800 dollars"
+    r"|\$\s*\d[\d,.]*"                                # "$1800"
+    r"|\b\d[\d,.]*(?:\s*[kK])\b"                      # "1.5k"
+    r"|\b(?:income|make|makes|earn|earned|earned|pay|pays|paid|"
+    r"wages?|salary|salaries|paycheck)\b[^.\n]{0,30}?\b\d"  # "I pay 400", "earn 1800"
+    r"|\b\d[^.\n]{0,30}?\b(?:daycare|childcare|child\s*care|"
+    r"rent|shelter|medical|medication|utilities|bills?)\b"   # "400 for daycare"
+    r"|\b(?:daycare|childcare|child\s*care|rent|shelter|"
+    r"medical|medication|utilities|bills?)\b[^.\n]{0,30}?\b\d"
+    r"|\b\d[^.\n]{0,15}?\b(?:a|per)\s+(?:month|week|hour|mo|wk|hr)\b"
+    r"|\b(?:a|per)\s+(?:month|week|hour|mo|wk|hr)\b[^.\n]{0,15}?\b\d",
+    re.IGNORECASE,
+)
+
+
+def _has_role_bearing_number(text: str) -> bool:
+    """True if *text* contains a number adjacent to a role-bearing token.
+
+    W61 discriminator between structured multi-number input ("1800 and
+    I pay 400 for daycare" -- the LLM can read both numbers correctly)
+    and unstructured multi-number input ("27, 0, and 100" -- reducing
+    to "the first number" is a misassignment). Only unstructured input
+    triggers the W61 decline-to-guess branch.
+    """
+    return bool(_ROLE_BEARING_NUMBER_PATTERN.search(text))
+
 
 _VOLATILE_RULE_RE = re.compile(
     r"\b(?:immigration|immigrant|non[- ]?citizen|citizenship|visa|green card|"
@@ -498,6 +724,16 @@ class FoodPathAgent:
         # surfaced via ``_context()`` so the model can reference past
         # corrections naturally without re-deriving them.
         self._corrections: list[dict[str, Any]] = []
+        # W61: per-turn audit of terse-income replies the deterministic
+        # fallback declined to guess on. Entries are the raw user-message
+        # strings that hit the "multiple bare numbers + no income cue"
+        # branch (see ``_fallback_parse_terse_reply``). Visible in the
+        # transcript log so a regression that re-introduces the
+        # leading-number misassignment is debuggable from one place.
+        # Resetting this between turns is NOT desirable -- the goal is
+        # exactly to be able to look back across the conversation and
+        # see every ambiguous multi-number reply.
+        self._terse_income_ambiguous_log: list[str] = []
         # Retrieval hits (list of {doc, snippet, score}) behind the most
         # recent eligibility result. Populated when a result is first
         # produced (see turn()). Exposed for the web UI's citation panel
@@ -686,9 +922,18 @@ class FoodPathAgent:
         # their established model/fallback behavior; applying a speculative
         # vocabulary gate to all seven fields caused legitimate terse and
         # multi-field answers to be dropped.
-        return field != "gross_monthly_income" or bool(
-            re.search(cls._INCOME_CUE_PATTERN, user_message, re.I)
-        )
+        if field != "gross_monthly_income":
+            return True
+        if re.search(cls._INCOME_CUE_PATTERN, user_message, re.I):
+            return True
+        # W61: a structured multi-number reply (one number adjacent to
+        # a role-bearing verb or noun) is also a valid income cue. The
+        # classic example is "1800 and I pay 400 for daycare" -- the
+        # message is plainly about income AND a deduction, but neither
+        # number is adjacent to the income cue vocabulary. The
+        # role-bearing check is the W61 discriminator between
+        # structured and unstructured multi-number input.
+        return _has_role_bearing_number(user_message)
 
     def _apply_tool_calls(
         self,
@@ -789,8 +1034,7 @@ class FoodPathAgent:
     _NEGATIVE_WORDS = frozenset({"no", "nope", "nah", "n", "none", "nobody", "no one", "noone"})
     _POSITIVE_WORDS = frozenset({"yes", "yeah", "yep", "y", "sure"})
 
-    @staticmethod
-    def _fallback_parse_terse_reply(field: str, user_message: str) -> Any | None:
+    def _fallback_parse_terse_reply(self, field: str, user_message: str) -> Any | None:
         """Deterministic backstop for a terse reply the model failed to
         turn into an update_state call for the ONE field it just asked
         about.
@@ -855,20 +1099,51 @@ class FoodPathAgent:
             # A bare numeric/currency reply is a valid answer to the income
             # question. Text containing an unrelated number ("she's 72")
             # must carry an explicit income cue before it can be normalized.
+            #
+            # W61: a comma-joined list of bare numbers ("27, 0, and 100")
+            # used to slip through the previous ``leading_amount_with_details``
+            # gate -- ``leading_amount_with_details`` matched "27," as a
+            # leading amount-with-details, the whole string then went through
+            # ``normalize_income`` which returned the LEADING number (27) as
+            # income. That is the exact shape that landed a wrong $27 figure
+            # in the final eligibility explanation during 2026-07-27 human
+            # review. The fallback's docstring promises "a parse failure just
+            # leaves the field unset for the LLM to re-ask, never misfiles
+            # into the wrong slot" -- this block delivers on that promise
+            # for the multi-number case.
             bare_amount = re.fullmatch(
                 r"\s*\$?\s*\d[\d,.]*(?:\s*[kK])?(?:\s*(?:dollars?|bucks?))?\s*",
                 text,
             )
-            leading_amount_with_details = re.match(
-                r"^\s*\$?\s*\d[\d,.]*(?:\s*[kK])?\s*(?:,|and\b)",
-                text,
-                re.I,
+            has_income_cue = bool(
+                re.search(FoodPathAgent._INCOME_CUE_PATTERN, text, re.I)
             )
-            if (
-                not bare_amount
-                and not leading_amount_with_details
-                and not re.search(FoodPathAgent._INCOME_CUE_PATTERN, text, re.I)
-            ):
+            # W61 discriminator: when the reply has 2+ bare numbers AND
+            # no income cue, count the multi-number case as "ambiguous"
+            # ONLY when NONE of the numbers has a clear adjacent role.
+            # "1800 and I pay 400 for daycare" has 2 numbers but the
+            # second one is anchored to "I pay ... for daycare" -- a
+            # structured role separation the LLM's update_state call
+            # can read. We only want to decline when the multi-number
+            # reply is unstructured (no role-bearing verb/noun adjacent
+            # to any number), e.g. "27, 0, and 100".
+            numbers = _MULTI_NUMBER_TOKEN_RE.findall(text)
+            single_thousands_form = re.fullmatch(
+                r"\s*\$?\s*\d{1,3}(?:,\d{3})+(?:\.\d+)?(?:\s*[kK])?\s*",
+                text,
+            )
+            is_unstructured_multi_number = (
+                len(numbers) >= 2
+                and not has_income_cue
+                and not _has_role_bearing_number(text)
+            )
+            if is_unstructured_multi_number:
+                # W61 audit: this case must be observable in the turn log
+                # so a regression (or a user reporting "the agent took
+                # the wrong number") is debuggable from the transcript.
+                self._terse_income_ambiguous_log.append(text)
+                return None
+            if not bare_amount and not has_income_cue and not single_thousands_form:
                 return None
             return normalize_income(text)
         if field == "has_elderly_or_disabled_member":
@@ -1367,27 +1642,22 @@ class FoodPathAgent:
                         "new": entry["new"],
                     })
             content = str(response.get("content") or "")
-            outcome = str((self._eligibility_result or {}).get("outcome") or "")
-            terms = {
-                "likely_eligible": ("eligible", "qualif", "califica"),
-                "uncertain_apply_anyway": ("screen", "apply", "solicita", "evalu"),
-                "likely_ineligible": ("ineligible", "not qualify", "no califica"),
-            }.get(outcome, (outcome.replace("_", " "),))
-            if not content.strip() or not any(term in content.lower() for term in terms):
-                label = {
-                    "en": {
-                        "likely_eligible": "Screening result: likely eligible.",
-                        "uncertain_apply_anyway": "Screening result: eligibility is uncertain; apply anyway.",
-                        "likely_ineligible": "Screening result: likely ineligible based on income.",
-                    },
-                    "es": {
-                        "likely_eligible": "Resultado de evaluación: probablemente califica.",
-                        "uncertain_apply_anyway": "Resultado de evaluación: elegibilidad incierta; solicite de todos modos.",
-                        "likely_ineligible": "Resultado de evaluación: probablemente no califica según los ingresos.",
-                    },
-                }[self.state.language].get(outcome, outcome)
-                _notes = (self._eligibility_result or {}).get("notes", "")
-                content = f"{label} {_notes}".strip()
+            # W62: strip any re-asking sentences the post-verdict
+            # model may have emitted for a filled intake field. State
+            # had all three fields set going into this turn, so a
+            # re-ask is always wrong here (and the live failure on
+            # 2026-07-27 was exactly this: a model that said "How
+            # many people in your household are you looking at?"
+            # after we already had it). The stripper is gated by
+            # ``state.missing_fields() == []`` so it never runs
+            # mid-intake.
+            if not self.state.missing_fields():
+                content = _strip_completed_intake_re_asks(
+                    content, self.state.language
+                )
+            content = _outcome_label_floor(
+                content, self._eligibility_result, self.state.language, _purpose="verdict_with_corrections"
+            )
             self._messages.append({"role": "assistant", "content": content})
             self._hostile_this_turn = False
             return content
@@ -1403,26 +1673,17 @@ class FoodPathAgent:
                 tools=self.tools,
             )
             content = str(response.get("content") or "")
-            outcome = str((self._eligibility_result or {}).get("outcome") or "")
-            terms = {
-                "likely_eligible": ("eligible", "qualif", "califica"),
-                "uncertain_apply_anyway": ("screen", "apply", "solicita", "evalu"),
-                "likely_ineligible": ("ineligible", "not qualify", "no califica"),
-            }.get(outcome, (outcome.replace("_", " "),))
-            if not content.strip() or not any(term in content.lower() for term in terms):
-                labels = {
-                    "en": {
-                        "likely_eligible": "Screening result: likely eligible.",
-                        "uncertain_apply_anyway": "Screening result: eligibility is uncertain; apply anyway.",
-                        "likely_ineligible": "Screening result: likely ineligible based on income.",
-                    },
-                    "es": {
-                        "likely_eligible": "Resultado de evaluación: probablemente califica.",
-                        "uncertain_apply_anyway": "Resultado de evaluación: elegibilidad incierta; solicite de todos modos.",
-                        "likely_ineligible": "Resultado de evaluación: probablemente no califica según los ingresos.",
-                    },
-                }
-                content = f"{labels[self.state.language].get(outcome, outcome)} {(self._eligibility_result or {}).get('notes', '')}".strip()
+            # W62: same re-ask stripper as the branch above. This
+            # is the alternate post-verdict path (``Spanish repeat``
+            # and any future code that takes the same early-return
+            # shape); running it here keeps both branches honest.
+            if not self.state.missing_fields():
+                content = _strip_completed_intake_re_asks(
+                    content, self.state.language
+                )
+            content = _outcome_label_floor(
+                content, self._eligibility_result, self.state.language, _purpose="explain_repeat"
+            )
             self._messages.append({"role": "assistant", "content": content})
             self._hostile_this_turn = False
             return content
@@ -1632,7 +1893,7 @@ class FoodPathAgent:
                 and correction_cue
                 and household_phrase_cue
             ):
-                parsed_household = FoodPathAgent._fallback_parse_terse_reply(
+                parsed_household = self._fallback_parse_terse_reply(
                     "household_size", user_message
                 )
                 if (
@@ -1710,27 +1971,18 @@ class FoodPathAgent:
         # Provider-independent floor: a verdict can never be blank or omit
         # the outcome. Arithmetic remains exclusively in the calculator.
         if self._eligibility_result is not None:
-            outcome = str(self._eligibility_result.get("outcome") or "")
-            outcome_terms = {
-                "likely_eligible": ("eligible", "qualif", "califica"),
-                "uncertain_apply_anyway": ("screen", "apply", "solicita", "evalu"),
-                "likely_ineligible": ("ineligible", "not qualify", "no califica"),
-            }.get(outcome, (outcome.replace("_", " "),))
-            if not content.strip() or not any(term in content.lower() for term in outcome_terms):
-                notes = str(self._eligibility_result.get("notes") or "")
-                labels = {
-                    "en": {
-                        "likely_eligible": "Screening result: likely eligible.",
-                        "uncertain_apply_anyway": "Screening result: eligibility is uncertain; apply anyway.",
-                        "likely_ineligible": "Screening result: likely ineligible based on income.",
-                    },
-                    "es": {
-                        "likely_eligible": "Resultado de evaluación: probablemente califica.",
-                        "uncertain_apply_anyway": "Resultado de evaluación: elegibilidad incierta; solicite de todos modos.",
-                        "likely_ineligible": "Resultado de evaluación: probablemente no califica según los ingresos.",
-                    },
-                }
-                content = f"{labels[self.state.language].get(outcome, outcome)} {notes}".strip()
+            # W62: also strip re-asking sentences the fresh-decide
+            # model may have emitted for a field already recorded
+            # THIS turn (the third-fill turn). Mirrors the post-
+            # verdict branch above so the user-visible rendering
+            # uses the same invariants everywhere.
+            if not self.state.missing_fields():
+                content = _strip_completed_intake_re_asks(
+                    content, self.state.language
+                )
+            content = _outcome_label_floor(
+                content, self._eligibility_result, self.state.language, _purpose="fresh_decide"
+            )
 
         # When an eligibility result is first produced, ground it visibly:
         # capture the retrieval hits for the applicable track and append a
