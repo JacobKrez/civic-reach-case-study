@@ -1,0 +1,117 @@
+{
+  "evidence_kind": "sanitized deterministic persona simulator summary",
+  "sanitized": true,
+  "redaction": "Per-persona counts only. No raw transcript text. Reproducible by re-running scripts/gate.py --only G5 from a clean export.",
+  "mode": "dry-run",
+  "generator": "scripts/simulate.py",
+  "seeds": 2,
+  "personas": [
+    "adversarial",
+    "bilingual",
+    "confused",
+    "contradicting",
+    "crisis-mid-intake",
+    "deduction-volunteer",
+    "drifter",
+    "hostile",
+    "meta",
+    "overexplainer",
+    "pii-oversharer",
+    "rambling",
+    "restarter",
+    "skeptical",
+    "social",
+    "terse"
+  ],
+  "scenarios": 10,
+  "transcripts_per_pair": 2,
+  "total_transcripts": 320,
+  "passed": 320,
+  "failed": 0,
+  "pass_rate": 1.0,
+  "per_persona": {
+    "adversarial": {
+      "total": 20,
+      "passed": 20,
+      "failed": 0
+    },
+    "bilingual": {
+      "total": 20,
+      "passed": 20,
+      "failed": 0
+    },
+    "confused": {
+      "total": 20,
+      "passed": 20,
+      "failed": 0
+    },
+    "contradicting": {
+      "total": 20,
+      "passed": 20,
+      "failed": 0
+    },
+    "crisis-mid-intake": {
+      "total": 20,
+      "passed": 20,
+      "failed": 0
+    },
+    "deduction-volunteer": {
+      "total": 20,
+      "passed": 20,
+      "failed": 0
+    },
+    "drifter": {
+      "total": 20,
+      "passed": 20,
+      "failed": 0
+    },
+    "hostile": {
+      "total": 20,
+      "passed": 20,
+      "failed": 0
+    },
+    "meta": {
+      "total": 20,
+      "passed": 20,
+      "failed": 0
+    },
+    "overexplainer": {
+      "total": 20,
+      "passed": 20,
+      "failed": 0
+    },
+    "pii-oversharer": {
+      "total": 20,
+      "passed": 20,
+      "failed": 0
+    },
+    "rambling": {
+      "total": 20,
+      "passed": 20,
+      "failed": 0
+    },
+    "restarter": {
+      "total": 20,
+      "passed": 20,
+      "failed": 0
+    },
+    "skeptical": {
+      "total": 20,
+      "passed": 20,
+      "failed": 0
+    },
+    "social": {
+      "total": 20,
+      "passed": 20,
+      "failed": 0
+    },
+    "terse": {
+      "total": 20,
+      "passed": 20,
+      "failed": 0
+    }
+  },
+  "threshold": 0.98,
+  "threshold_rationale": "QUALITY_BAR.md G5: 98% over 200 transcripts means <= 4 failures. A perfect score means the picked cases are not picking anything new.",
+  "regenerator_signature": "d32c661ad0431c5ea16649e1bb27b1165f0d8ef64f225071248651b55a7ceff6"
+}

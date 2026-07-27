@@ -90,11 +90,34 @@ reproducing transcript. The corresponding machine-readable records live in
 `redteam/findings/<dedupe-key>.json`; repeated occurrences increment `count`
 instead of creating duplicate findings.
 
-The daemon auto-files the current top findings through
-`redteam/file_failures.py` into `redteam/attack_cases.jsonl`. That queue is
-append-only and deduplicated by finding id. The daemon also writes only under
-`redteam/findings/` and `logs/` apart from this intentional regression-queue
-update; it never edits `src/` or commits.
+### Local triage vs committed reviewer evidence (the W47/W65 split)
+
+Per the W47 footgun, the daemon does **not** write to the human-curated
+corpus file `redteam/attack_cases.jsonl` (the canonical fixture the
+`run_redteam.load_cases()` schema validator reads). Auto-filing into that
+file can silently corrupt the corpus and brick every subsequent
+`run_redteam.py` invocation. Instead, the daemon routes findings through
+`redteam/file_failures.py` into `redteam/failures_queue.jsonl`, the local
+append-only queue:
+
+| Path | Role | Source | In repo? |
+|---|---|---|---|
+| `redteam/failures_queue.jsonl` | Local triage queue (auto-filed by sim_daemon and by `file_failures.py`) | Simulator runs / red-team runs | No (gitignored) |
+| `redteam/findings/TOP.md`, `redteam/findings/*.json` | Rolling triage report, regenerated every conversation | `scripts/sim_daemon.py` | No (gitignored) |
+| `logs/sim_daemon.jsonl` | Per-run audit log (one line per conversation) | `scripts/sim_daemon.py` | No (gitignored) |
+| `redteam/attack_cases.jsonl` | Human-curated attack corpus (the regression test file) | Hand-edited / promoted from the queue | Yes (committed) |
+| `redteam/reports/report_live_*.json` | Live red-team reviewer evidence (with classifier attribution) | `python3 -m redteam.run_redteam` | Yes (committed) |
+| `redteam/reports/report_sanitized_w38_*.json` | Sanitized W38 deterministic run (per-case pass/fail only) | `redteam/run_redteam.py --dry-run` | Yes (committed) |
+| `redteam/reports/simulator_sanitized_*.json` | Sanitized W65 simulator per-persona summary (G5 evidence) | `scripts/simulate.py` + W65 sanitizer | Yes (committed) |
+
+A local finding that is promoted to the corpus by a developer must be
+copied from `failures_queue.jsonl` into `attack_cases.jsonl` by hand, with
+the schema fields the harness expects (`id`, `category`, `turns`,
+`expected_behavior`). The auto-filer never does this promotion — that
+human gate is what keeps the corpus curatable.
+
+The daemon writes only under `redteam/findings/`, `redteam/failures_queue.jsonl`,
+and `logs/`. It never edits `src/` and never commits.
 
 ## W48 — Live adversarial evidence run (classifier ON)
 

@@ -1393,6 +1393,7 @@ def _client_script(lang: str) -> str:
     input.value = '';
     send.disabled = true;
     showTyping();
+    let responseWasCrisis = false;
     if(navigator.onLine === false){
       setNetBanner('offline');
       hideTyping();
@@ -1411,6 +1412,7 @@ def _client_script(lang: str) -> str:
       if(!r.ok) throw new Error((data && data.detail) || ('Request failed ('+r.status+')'));
       hideTyping();
       const crisis = data.layer === 'crisis';
+      responseWasCrisis = crisis;
       appendAssistant(data.reply, crisis);
       if(!crisis){ renderResultCard(data); }
       renderInspector(data);
@@ -1427,7 +1429,9 @@ def _client_script(lang: str) -> str:
       setNetBanner('reconnecting');
     } finally {
       send.disabled = false;
-      input.focus();
+      // Keep focus on a high-stakes alert long enough for assistive
+      // technology to announce it. Ordinary replies return to the composer.
+      if(!responseWasCrisis) input.focus();
     }
   });
 

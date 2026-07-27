@@ -270,9 +270,16 @@ count on a different shell.
   faked to compensate.
 * **Keyword + classifier is still not exhaustive.** New injection or
   crisis phrasings will keep arriving. The red-team suite (`redteam/`)
-  is the regression net; new failure modes must be filed into
-  `redteam/file_failures.py` and added to `attack_cases.jsonl` before the
-  next iteration.
+  is the regression net; new failure modes captured by the continuous
+  simulator land in `redteam/failures_queue.jsonl` (the local
+  append-only triage queue, populated by `redteam/file_failures.py`
+  and by `scripts/sim_daemon.py`). Promoting a local finding into
+  `redteam/attack_cases.jsonl` (the committed human-curated corpus
+  that `run_redteam.load_cases()` reads) is a manual triage step:
+  copy the record out, fill in `expected_behavior`, append, commit.
+  The auto-filer never writes to `attack_cases.jsonl` — that
+  separation is the W47 footgun guard, so a bad auto-filer can't
+  silently corrupt the corpus.
 * **Income limits need an annual refresh.** HHS publishes new poverty
   guidelines late January / early February. The 2025 figures are in
   `src/calculator.py`; the calculator has a "see also" comment naming
@@ -354,7 +361,7 @@ src/
     ambiguity.py      # normalize_income ("$2,500", "$600/week" -> monthly float)
 
 knowledge_base/       # FY2026 NC FNS rules (English); 01 is also translated to Spanish
-redteam/              # attack_cases.jsonl + run_redteam + failure file
+redteam/              # attack_cases.jsonl (corpus) + failures_queue.jsonl (local triage) + run_redteam + file_failures + findings/ (gitignored)
 tests/                # pytest suite (calculator, guardrails, agent, web, golden transcripts, red-team signatures)
 scripts/              # KB table generator, simulator daemon, live red-team runner, self-improve queue
 static/               # web UI static assets (manifest + service worker)

@@ -650,10 +650,30 @@ class FoodPathAgent:
         "shelter_costs_monthly",
     )
 
+    # W64: broaden the income cue so a number paired with a month/week/hour
+    # token ("2100 a month", "around 2k monthly", "2100 bucks/month") also
+    # counts. The previous pattern required a $ or income verb, which
+    # silently dropped the contradicting_income correction ("Oh wait, ...
+    # closer to 2100 a month."). Adding ``a\s+month``, ``monthly``, ``a\s+week``,
+    # ``weekly``, ``hourly`` etc. so the model's update_state path and the
+    # deterministic fallback agree on the same vocabulary.
+    #
+    # IMPORTANT: the numeric alternative requires a literal ``$`` followed by
+    # digits. Without that anchor, the previous ``\$?\s*\d`` alternative
+    # matched ANY digit anywhere in the message -- so an age ("she's 72")
+    # or a household count ("there are 4 of us") got counted as an income
+    # cue, which routed both into the income-correction path. The bare
+    # verb/month-keyword alternatives below are sufficient for the
+    # number-only income lines ("we make about 1800", "closer to 2100 a
+    # month") because the terse-fallback path does NOT need an income
+    # cue to extract a number -- only the model's tool-call path and the
+    # out-of-order income-correction block do.
     _INCOME_CUE_PATTERN = (
-        r"(?:\$\s*\d|\b(?:income|make|makes|earn|earned|paid|salary|salaries|"
-        r"wages?|paycheck|per\s+month|monthly|/\s*(?:hr|hour|mo|month)|"
-        r"ingresos?|ganamos?|sueldo)\b)"
+        r"(?:\$[\s\d,.]+|\b(?:income|make|makes|earn|earned|paid|salary|salaries|"
+        r"wages?|paycheck|per\s+month|per\s+week|per\s+hour|a\s+month|a\s+week|"
+        r"a\s+hour|an\s+hour|monthly|weekly|hourly|biweekly|bimonthly|"
+        r"/\s*(?:hr|hour|mo|month|wk|week)|"
+        r"ingresos?|ganamos?|sueldo|bucks?|dollars?)\b)"
     )
 
     @classmethod
@@ -1380,6 +1400,17 @@ class FoodPathAgent:
                 correction_cue_for_fallback
                 and not (field == "gross_monthly_income" and income_cue_for_fallback)
             )
+            # W64: gate the terse-income fallback by the income cue.
+            # Without this, a bare number adjacent to an unrelated
+            # noun ("she's 72", "we have 2 kids", "the apartment is
+            # 72") gets misfiled as gross_monthly_income. The LLM
+            # tool-call path already enforces this via
+            # ``_message_has_intake_cue``; the deterministic fallback
+            # must mirror that gate so the dry-run simulator (which
+            # uses no LLM tool calls) honors the same rule.
+            if not suppress_fallback and field == "gross_monthly_income":
+                if not self._message_has_intake_cue("gross_monthly_income", user_message):
+                    suppress_fallback = True
             if not suppress_fallback:
                 parsed = self._fallback_parse_terse_reply(field, user_message)
                 if parsed is not None:
@@ -1393,44 +1424,126 @@ class FoodPathAgent:
                         )
                         fallback_applied = True
                     except ValueError:
+                        # A malformed/over-limit tool call from the deterministic
+                        # fallback (e.g. household_size above the schema cap)
+                        # must not crash the turn. Drop the bad update; state
+                        # stays valid and the loop re-asks on the next turn.
                         pass
 
-        # Out-of-order income correction is intentionally narrow: require an
-        # explicit correction cue and an income-related noun in the same message.
-        # Deduction terms take precedence so ordinary expenses cannot overwrite income.
-        correction_cue = re.search(
-            r"\b(?:actually|sorry|i\s+meant|correction|no\s+wait|that(?:s|\s+is)\s+wrong|"
-            r"en realidad|perd[oó]n|quer[ií]a decir|correcci[oó]n|no\s+espera)\b",
-            user_message, re.I,
-        )
-        income_cue = re.search(
-            r"\b(?:income|make|makes|earn|paid|pay\s+me|salary|salaries|wages|"
-            r"per\s+month)\b", user_message, re.I,
-        )
-        deduction_cue = re.search(
-            r"\b(?:rent|mortgage|childcare|daycare|medical|car|utilities?|insurance|bills?|"
-            r"gas|electric)\b", user_message, re.I,
-        )
-        if (
-            not fallback_applied
-            and income_set_before_this_turn
-            and not model_updated_income_this_turn
-            and (not asked_field or asked_field[0] != "gross_monthly_income")
-            and correction_cue
-            and income_cue
-            and not deduction_cue
-        ):
-            parsed_income = normalize_income(user_message)
-            if parsed_income is not None and parsed_income != self.state.gross_monthly_income:
-                try:
-                    new_corrections.extend(self._apply_tool_calls(
-                        [{"name": "update_state", "input": {"gross_monthly_income": parsed_income}}],
-                        user_message=user_message,
-                        asked_field=asked_field[0] if asked_field else None,
-                    ))
-                    fallback_applied = True
-                except ValueError:
-                    pass
+        # ------------------------------------------------------------------
+        # Out-of-order corrections (W64)
+        # ------------------------------------------------------------------
+        # Two correction paths the simulator exercises that the field-fallback
+        # loop above cannot catch on its own:
+        #
+        # 1. Income correction: the agent has moved on to a different field,
+        #    the user expresses a correction to gross_monthly_income
+        #    ("Oh wait, ... closer to 2100 a month."). Requires an explicit
+        #    correction cue AND an income/period cue AND no deduction term
+        #    (so ordinary expenses cannot overwrite income).
+        #
+        # 2. Household-size correction: the agent has moved on to a different
+        #    field, the user expresses a correction to household_size
+        #    ("Sorry, I forgot to mention ... actually it's 4 of us.").
+        #    Requires an explicit correction cue AND a household phrase.
+        #
+        # Both run UNCONDITIONALLY on every turn (the previous attempt
+        # nested them inside ``except ValueError:`` for the terse fallback,
+        # which meant they never fired because that except is only entered
+        # when the terse fallback threw). They are gated by
+        # ``fallback_applied`` so the field loop's own corrections win.
+        if not fallback_applied:
+            correction_cue = re.search(
+                r"\b(?:actually|sorry|i\s+meant|correction|no\s+wait|that(?:s|\s+is)\s+wrong|"
+                r"en realidad|perd[oó]n|quer[ií]a decir|correcci[oó]n|no\s+espera)\b",
+                user_message, re.I,
+            )
+            # W64: broaden the income cue so a number paired with a
+            # month/week/hourly token counts ("2100 a month", "around 2k
+            # monthly", "I'll say 2100 bucks/month"). The previous regex
+            # only matched "per month", which silently dropped the
+            # contradicting_income correction ("Oh wait, ... closer to 2100
+            # a month.") because the cue regex did not fire on "a month".
+            income_cue = re.search(
+                r"\b(?:income|make|makes|earn|earned|paid|pay\s+me|salary|salaries|"
+                r"wages?|per\s+month|a\s+month|monthly|month|"
+                r"biweekly|per\s+week|a\s+week|per\s+hour|an\s+hour|a\s+hour|hourly|"
+                r"hr\b|hour\b|bucks?|dollars?)\b",
+                user_message, re.I,
+            )
+            # Number-adjacent month/week/hour cue: a $-prefix or multi-digit
+            # number within a few tokens of a month/week/hour word. Catches
+            # sentence-level corrections that do not include one of the
+            # dedicated keywords above.
+            number_adjacent_period_cue = bool(
+                re.search(
+                    r"\$?\s*[\d,]+(?:\.\d+)?\s*(?:/|per\s+|a\s+|an\s+)?(?:month|mo|wk|week|hour|hr)\b",
+                    user_message, re.I,
+                )
+                or re.search(
+                    r"\b(?:month|mo|wk|week|hour|hr)\b[^.\n]{0,12}\$?\s*[\d,]+",
+                    user_message, re.I,
+                )
+            )
+            deduction_cue = re.search(
+                r"\b(?:rent|mortgage|childcare|daycare|medical|car|utilities?|insurance|bills?|"
+                r"gas|electric)\b",
+                user_message, re.I,
+            )
+            # Income correction branch.
+            if (
+                income_set_before_this_turn
+                and not model_updated_income_this_turn
+                and (not asked_field or asked_field[0] != "gross_monthly_income")
+                and correction_cue
+                and (income_cue or number_adjacent_period_cue)
+                and not deduction_cue
+            ):
+                parsed_income = normalize_income(user_message)
+                if parsed_income is not None and parsed_income != self.state.gross_monthly_income:
+                    try:
+                        new_corrections.extend(self._apply_tool_calls(
+                            [{"name": "update_state", "input": {"gross_monthly_income": parsed_income}}],
+                            user_message=user_message,
+                            asked_field=asked_field[0] if asked_field else None,
+                        ))
+                        fallback_applied = True
+                    except ValueError:
+                        pass
+
+            # Household-size correction branch.
+            household_size_set_before_this_turn = self.state.household_size is not None
+            household_phrase_cue = re.search(
+                r"\b(?:there\s+are|we\s+are|we're|household\s+of|"
+                r"actually\s+it'?s|just\s+me,?\s+household\s+of|of\s+us|"
+                r"people\s+in\s+(?:our|the)\s+household|persons?\s+in\s+(?:our|the)\s+household)\b",
+                user_message, re.I,
+            )
+            if (
+                not fallback_applied
+                and household_size_set_before_this_turn
+                and not model_updated_income_this_turn
+                and (not asked_field or asked_field[0] != "household_size")
+                and correction_cue
+                and household_phrase_cue
+            ):
+                parsed_household = FoodPathAgent._fallback_parse_terse_reply(
+                    "household_size", user_message
+                )
+                if (
+                    parsed_household is not None
+                    and parsed_household != self.state.household_size
+                    and 1 <= int(parsed_household) <= 20
+                ):
+                    try:
+                        new_corrections.extend(self._apply_tool_calls(
+                            [{"name": "update_state", "input": {"household_size": int(parsed_household)}}],
+                            user_message=user_message,
+                            asked_field=asked_field[0] if asked_field else None,
+                        ))
+                        fallback_applied = True
+                    except ValueError:
+                        pass
 
         had_result = self._eligibility_result is not None
         self._calculate_once()
