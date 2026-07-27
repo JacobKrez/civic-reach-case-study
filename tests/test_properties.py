@@ -32,7 +32,7 @@ reviewer pokes hardest:
   5. State invariant: after any sequence of turns, including adversarial
      inputs, ``AssessmentState.model_validate(agent.state.model_dump())``
      passes — the state object remains a legal Pydantic model at every
-     step. Pydantic-level field constraints (household_size 1..20,
+     step. Pydantic-level field constraints (household_size 1..100,
      income >= 0, etc.) therefore cannot have been violated silently.
 
 A live reviewer is most likely to poke at exactly these five things. The
@@ -76,6 +76,7 @@ def calculate_eligibility(*args, **kwargs):
 # plenty of headroom and keeps the test fast.
 HOUSEHOLD_SIZE_MIN = 1
 HOUSEHOLD_SIZE_MAX = max_household_size()  # 20 in the FY2026 table
+HOUSEHOLD_SIZE_STATE_MAX = 100
 
 household_size_st = st.integers(
     min_value=HOUSEHOLD_SIZE_MIN, max_value=HOUSEHOLD_SIZE_MAX
@@ -686,7 +687,7 @@ def test_assessment_state_invariant_after_any_sequence(messages):
     We drive ``agent.turn()`` with a mix of ordinary intake text and
     adversarial payloads, re-validating state on every turn. The final
     turn_count must equal the number of user turns seen, and every
-    documented field constraint (household_size 1..20, income >= 0,
+    documented field constraint (household_size 1..100, income >= 0,
     language in {"en","es"}, guardrail flags are bools) must hold.
     """
     agent = FoodPathAgent(llm_client=ScriptedIdleLLM())
@@ -708,7 +709,7 @@ def test_assessment_state_invariant_after_any_sequence(messages):
     )
     # Field-level constraints per the schema.
     if agent.state.household_size is not None:
-        assert HOUSEHOLD_SIZE_MIN <= agent.state.household_size <= HOUSEHOLD_SIZE_MAX
+        assert HOUSEHOLD_SIZE_MIN <= agent.state.household_size <= HOUSEHOLD_SIZE_STATE_MAX
     if agent.state.gross_monthly_income is not None:
         assert agent.state.gross_monthly_income >= 0.0
     # Optional deduction fields are always >= 0 (validated by Pydantic;

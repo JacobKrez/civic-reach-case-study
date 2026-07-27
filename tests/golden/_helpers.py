@@ -700,14 +700,20 @@ def assert_income_changes_only_on_cue(result: TranscriptResult) -> None:
 # FoodPathAgent inside run_transcript for the same reason).
 _W53_NEXT_FIELD_QUESTION: dict[str, dict[str, str]] = {
     "en": {
-        "household_size": "How many people are in your household?",
+        "household_size": (
+            "How many people, including you, usually buy and prepare food together? "
+            "If you usually buy and cook just for yourself, answer 1."
+        ),
         "gross_monthly_income": "What is your household's gross monthly income?",
         "has_elderly_or_disabled_member": (
             "Does anyone in your household have an elderly (60+) or disabled member?"
         ),
     },
     "es": {
-        "household_size": "¿Cuántas personas hay en su hogar?",
+        "household_size": (
+            "¿Cuántas personas, incluyéndote, compran y preparan comida juntas? "
+            "Si normalmente compras y cocinas solo para ti, responde 1."
+        ),
         "gross_monthly_income": "¿Cuál es el ingreso mensual bruto de su hogar?",
         "has_elderly_or_disabled_member": (
             "¿Alguna persona en su hogar tiene 60 años o más, o tiene una discapacidad?"

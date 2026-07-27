@@ -81,11 +81,12 @@ def test_turn_count_defaults_to_zero_and_increments():
 
 
 def test_invalid_household_size_rejected():
-    """Validator should reject household_size < 1 or > 20."""
+    """Zero is invalid; large real SNAP households remain valid."""
     with pytest.raises(Exception):
         AssessmentState(household_size=0)
+    assert AssessmentState(household_size=27).household_size == 27
     with pytest.raises(Exception):
-        AssessmentState(household_size=21)
+        AssessmentState(household_size=101)
 
 
 def test_invalid_income_rejected():

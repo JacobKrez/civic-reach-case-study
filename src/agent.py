@@ -104,9 +104,8 @@ W53 — INTAKE FORWARD PROGRESS: once you successfully record a field
 with update_state, confirm it in ONE short clause and IMMEDIATELY ask
 the next field in missing_fields. Do NOT re-open, re-confirm, or
 re-ask a field you just accepted ("just to confirm, is that really
-17?"). Do NOT narrate internal constraints to the user ("the max I
-can record is 20", "the household size limit is 20", "the cap is 20
-people"). Those are implementation details — the user does not need
+17?"). Do NOT narrate internal schema constraints to the user. Those
+are implementation details — the user does not need
 to know them, and explaining them stops the conversation. Do NOT
 relitigate earlier turns ("since you mentioned earlier that 'zero'
 was the answer for something else, are you sure?"). Once a field
@@ -121,22 +120,14 @@ respond with a brief polite redirect back to the FNS questions and do
 not attempt to answer the off-topic ask. Do not abandon or reset any
 state that has already been collected.
 
-W21 — DISCLOSURE INTEGRITY: FoodPath is an automated AI assistant
-(not a live person, not an NC DSS caseworker, not 911, not 988's live
-counselors, and not the EBT card-services line). The first two
-assistant messages of every conversation are code-templated and
-produced by ``first_turn_disclosure(lang)`` (the safety disclosure) and
-``first_turn_greeting(lang)`` (a short friendly opener plus the first
-intake question) in this module. Do NOT replace, soften, paraphrase,
-omit, or contradict either one. Do
-NOT claim to be a real person, a caseworker, a hotline operator, or
-someone who can dispatch help, call the user, or take any real-world
-action. If the user asks whether you are a real person or whether you
-are going to call someone, the response is produced by
-``not_a_person_response(lang)`` — also code-templated, never rewritten
-by you. The only crisis override that takes precedence over the
-disclosure is the hardcoded ``crisis_response()`` for an active
-disclosure; in that case the crisis response replaces the disclosure.
+DISCLOSURE INTEGRITY: the UI has already shown a compact, code-templated
+introduction identifying FoodPath as an automated eligibility guide and
+not an application or official decision. Do NOT repeat that introduction
+on the first user turn or add a wall of disclaimers. Do not claim to be a
+person, caseworker, hotline, or someone who can take real-world action.
+If the user explicitly asks who or what you are, the response is produced
+by ``not_a_person_response(lang)``. Active crisis disclosures are handled
+separately by the hardcoded ``crisis_response()``.
 """
 
 # Spanish full-conversation system prompt (W19). A 1:1 rendering of the
@@ -203,9 +194,8 @@ W53 — PROGRESO DE LA RECOLECCIÓN: una vez que registres exitosamente un
 campo con update_state, confírmalo en UNA cláusula corta e INMEDIATAMENTE
 pregunta por el siguiente campo en missing_fields. NO vuelvas a abrir,
 re-confirmar ni re-preguntar un campo que acabas de aceptar ("sólo para
-confirmar, ¿de verdad son 17?"). NO narres restricciones internas al
-usuario ("el máximo que puedo registrar es 20", "el límite es 20
-personas"). Esos son detalles de implementación — el usuario no necesita
+confirmar, ¿de verdad son 17?"). NO narres restricciones internas del
+esquema. Esos son detalles de implementación — el usuario no necesita
 saberlos, y explicarlos detiene la conversación. NO re-litigues turnos
 anteriores ("ya que antes mencionaste que 'cero' era la respuesta de
 otra cosa, ¿estás seguro?"). Una vez que un campo está registrado, está
@@ -220,23 +210,14 @@ responde con una redirección breve y cortés de vuelta a las preguntas de
 FNS y no intentes responder la solicitud fuera de tema. No abandones ni
 reinicies ningún estado que ya se haya recolectado.
 
-W21 — INTEGRIDAD DEL AVISO: FoodPath es un asistente automatizado de
-inteligencia artificial (no es una persona real, no es un trabajador
-social del DSS de Carolina del Norte, no es 911, no es los consejeros
-en vivo del 988, y no es la línea de servicios de la tarjeta EBT). Los
-primeros dos mensajes del asistente en cada conversación son generados
-por código: ``first_turn_disclosure(lang)`` (el aviso de seguridad) y
-``first_turn_greeting(lang)`` (una bienvenida breve más la primera
-pregunta) en este módulo. NO reemplaces, suavices, parafrasees, omitas
-ni contradigas ninguno de los dos. NO
-afirmes ser una persona real, un trabajador social, un operador de una
-línea directa, ni alguien que pueda despachar ayuda, llamar al usuario
-o tomar cualquier acción en el mundo real. Si el usuario pregunta si
-eres una persona real o si vas a llamar a alguien, la respuesta es
-producida por ``not_a_person_response(lang)`` — también generada por
-código, nunca reescrita por ti. La única anulación de crisis que
-tiene precedencia sobre el aviso es ``crisis_response()`` para una
-crisis activa; en ese caso la respuesta de crisis reemplaza al aviso.
+INTEGRIDAD DEL AVISO: la interfaz ya mostró una introducción breve,
+generada por código, que identifica a FoodPath como una guía automatizada
+de elegibilidad y aclara que no es una solicitud ni una decisión oficial.
+NO repitas esa introducción en el primer turno ni agregues un muro de
+avisos. No afirmes ser una persona, trabajador social, línea de ayuda ni
+alguien que pueda actuar en el mundo real. Si el usuario pregunta
+explícitamente quién o qué eres, usa ``not_a_person_response(lang)``. Las
+crisis activas se manejan por separado con ``crisis_response()``.
 
 IMPORTANTE: Conduce TODA la conversación en español — todas tus preguntas,
 aclaraciones y la explicación final de elegibilidad deben estar en español.
@@ -251,14 +232,20 @@ ni traducirlas tú mismo).
 # Phrasing matches what the system prompt already asks the model to do.
 _NEXT_FIELD_QUESTION: dict[str, dict[str, str]] = {
     "en": {
-        "household_size": "How many people are in your household?",
+        "household_size": (
+            "How many people, including you, usually buy and prepare food together? "
+            "If you usually buy and cook just for yourself, answer 1."
+        ),
         "gross_monthly_income": "What is your household's gross monthly income?",
         "has_elderly_or_disabled_member": (
             "Does anyone in your household have an elderly (60+) or disabled member?"
         ),
     },
     "es": {
-        "household_size": "¿Cuántas personas hay en su hogar?",
+        "household_size": (
+            "¿Cuántas personas, incluyéndote, compran y preparan comida juntas? "
+            "Si normalmente compras y cocinas solo para ti, responde 1."
+        ),
         "gross_monthly_income": "¿Cuál es el ingreso mensual bruto de su hogar?",
         "has_elderly_or_disabled_member": (
             "¿Alguna persona en su hogar tiene 60 años o más, o tiene una discapacidad?"
@@ -287,6 +274,15 @@ _W53_ALREADY_ASKED_SIGNATURE: dict[str, dict[str, str]] = {
     for lang in _NEXT_FIELD_QUESTION
 }
 
+_LEGACY_FIELD_QUESTION_SIGNATURES: dict[str, dict[str, tuple[str, ...]]] = {
+    "en": {
+        "household_size": ("how many people are in your household?",),
+    },
+    "es": {
+        "household_size": ("¿cuántas personas hay en su hogar?",),
+    },
+}
+
 
 def _w53_fold_ask(content: str, lang: str, missing: list[str]) -> str:
     """Append the canonical next-field question for ``missing[0]`` if
@@ -306,8 +302,12 @@ def _w53_fold_ask(content: str, lang: str, missing: list[str]) -> str:
     if not missing:
         return content
     field = missing[0]
+    normalized = _norm_for_match(content)
     signature = _W53_ALREADY_ASKED_SIGNATURE.get(lang, {}).get(field)
-    if signature and signature in _norm_for_match(content):
+    legacy = _LEGACY_FIELD_QUESTION_SIGNATURES.get(lang, {}).get(field, ())
+    if (signature and signature in normalized) or any(
+        _norm_for_match(item) in normalized for item in legacy
+    ):
         return content
     question = _NEXT_FIELD_QUESTION.get(lang, _NEXT_FIELD_QUESTION["en"]).get(
         field, ""
@@ -319,13 +319,48 @@ def _w53_fold_ask(content: str, lang: str, missing: list[str]) -> str:
     return question
 
 
+def _intake_progress_reply(
+    state: AssessmentState, newly_recorded: list[str], lang: str
+) -> str:
+    """Render a truthful transition from stored state, never model prose."""
+    missing = state.missing_fields()
+    if not newly_recorded or not missing:
+        return ""
+    if len(newly_recorded) > 1:
+        confirmation = "Got it — I recorded those details." if lang == "en" else "Entendido — registré esos datos."
+    else:
+        field = newly_recorded[0]
+        value = getattr(state, field)
+        if lang == "es":
+            confirmation = {
+                "household_size": f"Entendido — {value} personas compran y preparan comida juntas.",
+                "gross_monthly_income": f"Entendido — ${float(value):,.0f} al mes.",
+                "has_elderly_or_disabled_member": (
+                    "Entendido — hay una persona de 60 años o más, o con discapacidad."
+                    if value else
+                    "Entendido — no hay una persona de 60 años o más, ni con discapacidad."
+                ),
+            }.get(field, "Entendido — dato registrado.")
+        else:
+            confirmation = {
+                "household_size": f"Got it — {value} people buy and prepare food together.",
+                "gross_monthly_income": f"Got it — ${float(value):,.0f} per month.",
+                "has_elderly_or_disabled_member": (
+                    "Got it — someone is age 60 or older or disabled."
+                    if value else
+                    "Got it — no one is age 60 or older or disabled."
+                ),
+            }.get(field, "Got it — I recorded that.")
+    return f"{confirmation} {_NEXT_FIELD_QUESTION[lang][missing[0]]}"
+
+
 UPDATE_STATE_TOOL = {
     "name": "update_state",
     "description": "Record explicitly supplied assessment fields.",
     "input_schema": {
         "type": "object",
         "properties": {
-            "household_size": {"type": "integer", "minimum": 1, "maximum": 20},
+            "household_size": {"type": "integer", "minimum": 1, "maximum": 100},
             "gross_monthly_income": {"type": "number", "minimum": 0},
             "has_elderly_or_disabled_member": {"type": "boolean"},
             "earned_monthly_income": {"type": "number", "minimum": 0},
@@ -366,62 +401,26 @@ def volatile_rule_redirect(lang: str = "en") -> str:
     )
 
 
-# W21 — explicit first-turn AI / not-a-person disclosure.
-#
-# Researched failure mode (2026-07-23): a user could reasonably not realize
-# they are talking to an unmonitored AI text tool that cannot see them,
-# dispatch anyone, or take any real-world action. Trained 911 / 988
-# operators always explicitly triage before offering resources, and EBT
-# card-services hotlines explicitly disambiguate themselves from
-# adjacent, easily-confused real services ("we only handle card issues;
-# for eligibility you need your state SNAP agency, not this line"). CA
-# SB 243 / WA HB 2225 require clear AI disclosure for conversational
-# bots; the FTC treats non-disclosure of AI-vs-human as potentially
-# deceptive. None of this was previously explicit anywhere in
-# FoodPath's first message.
-#
-# The disclosure is code-templated, not LLM-generated, so the framing
-# cannot drift. The very first assistant message in a conversation is
-# the literal string returned by ``first_turn_disclosure(lang)``. The
-# system prompt below tells the model to NEVER replace, soften, or
-# contradict that disclosure; the disclosure exists precisely to make
-# confusion impossible before it happens.
-# Split into two messages (the safety card, then a short friendly
-# opener) rather than one long combined block: user feedback from a
-# live test was that a single wall of disclaimers-then-question read as
-# unfriendly and slow to get to the point. Both pieces are still
-# hard-coded / code-templated; splitting is presentation only, nothing
-# in the underlying safety content changed.
+# Compact code-templated introduction. The web UI combines these two
+# fragments into one conversational bubble inside the transcript. Trust
+# limitations live in the persistent notice/footer; crisis resources appear
+# only when the deterministic crisis layer is actually needed.
 FIRST_TURN_DISCLOSURE_EN = (
-    f"{PRODUCT_NAME} is an independent automated AI assistant — not a live person and "
-    "not a DSS caseworker. It performs an initial NC FNS / SNAP "
-    "eligibility SCREEN only: it can't see you, can't call anyone, "
-    "can't dispatch help, and can't take any real-world action on your "
-    "behalf. If this is a life-threatening emergency, call 911. If "
-    "you're in a mental-health crisis, call or text 988."
+    f"Hi! I'm {PRODUCT_NAME}, an automated guide for a quick NC FNS / SNAP eligibility estimate."
 )
 
 FIRST_TURN_DISCLOSURE_ES = (
-    f"{PRODUCT_NAME} es un asistente automatizado e independiente de inteligencia artificial "
-    "— no es una persona real ni un trabajador social del DSS. Solo "
-    "realiza una evaluación inicial de elegibilidad para FNS / SNAP de "
-    "Carolina del Norte: no puede verte, no puede llamar a nadie, no "
-    "puede despachar ayuda y no puede tomar ninguna acción en el mundo "
-    "real. Si es una emergencia que pone en peligro tu vida, llama al "
-    "911. Si estás en una crisis de salud mental, llama o envía un "
-    "mensaje de texto al 988."
+    f"¡Hola! Soy {PRODUCT_NAME}, una guía automatizada para una evaluación rápida de elegibilidad de FNS / SNAP."
 )
 
 FIRST_TURN_GREETING_EN = (
-    "Hi! I'm here to help you check your eligibility for NC FNS / SNAP "
-    "food assistance. Let's get started — how many people are in your "
-    "household?"
+    "To start, how many people, including you, usually buy and prepare food together? "
+    "If you usually buy and cook just for yourself, answer 1."
 )
 
 FIRST_TURN_GREETING_ES = (
-    "¡Hola! Estoy aquí para ayudarte a evaluar tu elegibilidad para FNS "
-    "/ SNAP de Carolina del Norte. Empecemos — ¿cuántas personas hay en "
-    "tu hogar?"
+    "Para empezar, ¿cuántas personas, incluyéndote, compran y preparan comida juntas? "
+    "Si normalmente compras y cocinas solo para ti, responde 1."
 )
 
 
@@ -446,11 +445,7 @@ def first_turn_disclosure(lang: str = "en") -> str:
 
 
 def first_turn_greeting(lang: str = "en") -> str:
-    """Return the second first-turn message: a short, friendly opener
-    plus the first intake question. Hard-coded, same rule as
-    ``first_turn_disclosure`` — shown as the SECOND assistant bubble,
-    right after the safety disclosure, never combined into one message.
-    """
+    """Return the first intake question fragment for the compact intro."""
     if lang == "es":
         return FIRST_TURN_GREETING_ES
     return FIRST_TURN_GREETING_EN
@@ -815,10 +810,10 @@ class FoodPathAgent:
             # rules flagged the conversation as a missed contradiction.
             # The script-style digit-leading form is still the first
             # branch so the existing narrow path is unchanged.
-            leading = re.match(r"^\$?(\d{1,2})\b", text)
+            leading = re.match(r"^\$?(\d{1,4})\b", text)
             if leading:
                 value = int(leading.group(1))
-                if 1 <= value <= 20:
+                if 1 <= value <= 100:
                     return value
                 return None
             # Phrase forms: "There are N of us", "household of N",
@@ -827,27 +822,45 @@ class FoodPathAgent:
             phrase = re.search(
                 r"\b(?:there\s+are|we\s+are|we're|household\s+of|"
                 r"actually\s+it'?s|just\s+me,?\s+household\s+of)\s+"
-                r"(\d{1,2})(?:\s+(?:of|people|persons?|in\s+the\s+house))?\b",
+                r"(\d{1,4})(?:\s+(?:of|people|persons?|in\s+the\s+house))?\b",
                 text,
                 re.IGNORECASE,
             )
             if phrase:
                 value = int(phrase.group(1))
-                if 1 <= value <= 20:
+                if 1 <= value <= 100:
                     return value
             # "N people in our household" / "N of us" / "N person" at
             # the end of the reply.
             trailing = re.search(
-                r"\b(\d{1,2})\s+(?:people|persons?|of\s+us)\b",
+                r"\b(\d{1,4})\s+(?:people|persons?|of\s+us)\b",
                 text,
                 re.IGNORECASE,
             )
             if trailing:
                 value = int(trailing.group(1))
-                if 1 <= value <= 20:
+                if 1 <= value <= 100:
                     return value
             return None
         if field == "gross_monthly_income":
+            # A bare numeric/currency reply is a valid answer to the income
+            # question. Text containing an unrelated number ("she's 72")
+            # must carry an explicit income cue before it can be normalized.
+            bare_amount = re.fullmatch(
+                r"\s*\$?\s*\d[\d,.]*(?:\s*[kK])?(?:\s*(?:dollars?|bucks?))?\s*",
+                text,
+            )
+            leading_amount_with_details = re.match(
+                r"^\s*\$?\s*\d[\d,.]*(?:\s*[kK])?\s*(?:,|and\b)",
+                text,
+                re.I,
+            )
+            if (
+                not bare_amount
+                and not leading_amount_with_details
+                and not re.search(FoodPathAgent._INCOME_CUE_PATTERN, text, re.I)
+            ):
+                return None
             return normalize_income(text)
         if field == "has_elderly_or_disabled_member":
             token = text.lower().strip(".! ")
@@ -1122,6 +1135,62 @@ class FoodPathAgent:
             self._messages.append({"role": "assistant", "content": content})
             return content
 
+        # High-frequency orientation questions should be useful even if the
+        # provider is unavailable or verbose. Answer first, then resume only
+        # the one missing intake question.
+        if re.search(
+            r"\b(?:what\s+is\s+(?:snap|fns)|what\s+does\s+snap\s+(?:mean|stand\s+for))\b",
+            user_message,
+            re.I,
+        ):
+            if lang == "es":
+                content = (
+                    "SNAP es un programa que ayuda a hogares con ingresos bajos a comprar comida; "
+                    "en Carolina del Norte se llama FNS y los beneficios se reciben en una tarjeta EBT."
+                )
+            else:
+                content = (
+                    "SNAP helps households with low incomes buy food. In North Carolina it is "
+                    "called FNS, and approved benefits are provided on an EBT card."
+                )
+            content = _w53_fold_ask(content, lang, self.state.missing_fields())
+            self._messages.append({"role": "assistant", "content": content})
+            return content
+
+        if (
+            self.state.missing_fields()
+            and re.search(
+                r"\b(?:do\s+i\s+get\s+it|am\s+i\s+eligible|do\s+i\s+qualify|will\s+i\s+qualify)\b",
+                user_message,
+                re.I,
+            )
+        ):
+            content = (
+                "Puedo darte una estimación después de tres datos breves."
+                if lang == "es"
+                else "I can give you an estimate after three short details."
+            )
+            content = _w53_fold_ask(content, lang, self.state.missing_fields())
+            self._messages.append({"role": "assistant", "content": content})
+            return content
+
+        if (
+            self.state.household_size is None
+            and re.search(
+                r"\b(?:(?:don't|dont|do\s+not)\s+own\s+(?:a\s+)?house|no\s+house|homeless|unhoused)\b",
+                user_message,
+                re.I,
+            )
+        ):
+            content = (
+                "No necesitas ser dueño de una vivienda. Para SNAP, cuenta a las personas que normalmente compran y preparan comida juntas."
+                if lang == "es"
+                else "You do not need to own a home. For SNAP, count the people who usually buy and prepare food together."
+            )
+            content = _w53_fold_ask(content, lang, self.state.missing_fields())
+            self._messages.append({"role": "assistant", "content": content})
+            return content
+
         # W60 — drifter persona: off-topic asides mid-intake (rent
         # gripes, bus-route complaints, food-bank hours, neighbour
         # gossip, kids' sick days, plant-closure history, family /
@@ -1138,6 +1207,22 @@ class FoodPathAgent:
             content = _w53_fold_ask(
                 content, self.state.language, list(self.state.missing_fields())
             )
+            self._messages.append({"role": "assistant", "content": content})
+            return content
+
+        # A plain greeting does not need a provider round-trip and must never
+        # trigger a second disclosure. The UI already introduced FoodPath.
+        if re.fullmatch(r"\s*(?:hi|hello|hey|hola|buenas)[!.?\s]*", user_message, re.I):
+            missing = self.state.missing_fields()
+            if missing:
+                prefix = "¡Hola!" if lang == "es" else "Hi!"
+                content = f"{prefix} {_NEXT_FIELD_QUESTION[lang][missing[0]]}"
+            else:
+                content = (
+                    "¡Hola! Tu evaluación ya está completa."
+                    if lang == "es"
+                    else "Hi! Your screening is already complete."
+                )
             self._messages.append({"role": "assistant", "content": content})
             return content
 
@@ -1225,6 +1310,14 @@ class FoodPathAgent:
         # LLM call would also be true for a plain first-time fill THIS
         # turn, which is not a correction and must not be re-parsed.
         asked_field = self.state.missing_fields()[:1]
+        intake_before = {
+            field: getattr(self.state, field)
+            for field in (
+                "household_size",
+                "gross_monthly_income",
+                "has_elderly_or_disabled_member",
+            )
+        }
         income_set_before_this_turn = self.state.gross_monthly_income is not None
 
         # Once DECIDE has already produced a result, later turns are
@@ -1409,7 +1502,10 @@ class FoodPathAgent:
             # must mirror that gate so the dry-run simulator (which
             # uses no LLM tool calls) honors the same rule.
             if not suppress_fallback and field == "gross_monthly_income":
-                if not self._message_has_intake_cue("gross_monthly_income", user_message):
+                if (
+                    not self._message_has_intake_cue("gross_monthly_income", user_message)
+                    and self._fallback_parse_terse_reply(field, user_message) is None
+                ):
                     suppress_fallback = True
             if not suppress_fallback:
                 parsed = self._fallback_parse_terse_reply(field, user_message)
@@ -1533,7 +1629,7 @@ class FoodPathAgent:
                 if (
                     parsed_household is not None
                     and parsed_household != self.state.household_size
-                    and 1 <= int(parsed_household) <= 20
+                    and 1 <= int(parsed_household) <= 100
                 ):
                     try:
                         new_corrections.extend(self._apply_tool_calls(
@@ -1587,6 +1683,20 @@ class FoodPathAgent:
             content = str(explain_response.get("content") or "")
         else:
             content = str(extract_response.get("content") or "")
+
+        # If this turn filled intake state, the reply comes from that stored
+        # state—not from provider prose generated before validation. This
+        # prevents impossible acknowledgements such as "household size 27
+        # saved" followed by a silent rejection and another household prompt.
+        newly_recorded = [
+            field
+            for field, before_value in intake_before.items()
+            if before_value is None and getattr(self.state, field) is not None
+        ]
+        if self.state.missing_fields() and newly_recorded:
+            content = _intake_progress_reply(
+                self.state, newly_recorded, self.state.language
+            )
 
         # Provider-independent floor: a verdict can never be blank or omit
         # the outcome. Arithmetic remains exclusively in the calculator.

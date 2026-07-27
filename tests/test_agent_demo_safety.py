@@ -111,5 +111,5 @@ def test_invalid_tool_call_does_not_crash_turn():
     # (household_size never recorded), so the canonical next-field
     # question is appended to the model content.
     assert reply.startswith("recording that")
-    assert "How many people are in your household?" in reply
+    assert "buy and prepare food together?" in reply
     assert agent.state.household_size is None

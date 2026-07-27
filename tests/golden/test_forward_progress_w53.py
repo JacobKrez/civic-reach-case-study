@@ -210,8 +210,8 @@ def test_w53_acknowledge_without_asking_appends_next_field():
     assert "what is your household's gross monthly income" in lowered, (
         f"reply does not ask for the next field: {reply!r}"
     )
-    # The acknowledgement was preserved.
-    assert "got it, 17 people" in lowered
+    # The acknowledgement is rendered from stored state, not provider prose.
+    assert "17 people" in lowered
 
 
 def test_w53_acknowledge_without_asking_full_transcript_passes_universal():
@@ -305,9 +305,8 @@ def test_w53_ask_something_else_appends_next_field():
     assert "what is your household's gross monthly income" in lowered, (
         f"reply does not ask for the next field: {reply!r}"
     )
-    # The off-topic "ZIP code" question is preserved (we do not
-    # rewrite the model), and the floor appended the right thing.
-    assert "zip code" in lowered
+    # Provider-written PII questions are discarded once state advances.
+    assert "zip code" not in lowered
 
 
 # ---------------------------------------------------------------------------
@@ -343,9 +342,9 @@ def test_w53_rhetorical_question_appends_next_field():
         f"tossing out a number?' was NOT followed by a real next "
         f"question. reply={reply!r}"
     )
-    # The model's original (broken) reply is preserved so the
-    # user can still see it.
-    assert "tossing out a number" in lowered
+    # The provider's broken rhetorical question is replaced by a truthful
+    # state-derived transition.
+    assert "tossing out a number" not in lowered
 
 
 def test_w53_rhetorical_question_acceptance_repro():

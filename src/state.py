@@ -35,7 +35,7 @@ class AssessmentState(BaseModel):
     household_size: Optional[int] = Field(
         default=None,
         ge=1,
-        le=20,
+        le=100,
         description="Number of people in the SNAP household. Required.",
     )
     gross_monthly_income: Optional[float] = Field(

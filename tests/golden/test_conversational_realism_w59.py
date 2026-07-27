@@ -34,7 +34,7 @@ def test_privacy_question_is_answered_and_intake_continues():
     assert "persistent" in reply
     assert "application" in reply
     assert "agency" in reply
-    assert "how many people are in your household?" in reply
+    assert "buy and prepare food together?" in reply
     assert result.calculator_calls == []
     assert_universal_invariants(result)
 
@@ -44,7 +44,7 @@ def test_application_question_is_answered_and_intake_continues():
     reply = result.last_assistant_reply.lower()
     assert "not" in reply and "application" in reply
     assert "does not submit" in reply
-    assert "how many people are in your household?" in reply
+    assert "buy and prepare food together?" in reply
     assert_universal_invariants(result)
 
 
@@ -85,6 +85,6 @@ def test_all_named_meta_prompts_have_a_deterministic_route(question):
     result = run_transcript([question])
     reply = result.last_assistant_reply.lower()
     assert reply.strip()
-    assert "how many people are in your household?" in reply
+    assert "buy and prepare food together?" in reply
     assert result.calculator_calls == []
     assert_universal_invariants(result)

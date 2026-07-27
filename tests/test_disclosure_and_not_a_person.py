@@ -1,13 +1,10 @@
-"""W21 — first-turn AI / not-a-person disclosure + real-service disambiguation.
+"""First-turn automation disclosure + real-service disambiguation.
 
 Three layers are exercised here, all code-templated:
 
-1. ``first_turn_disclosure(lang)`` is the very first assistant message of
-   every conversation. It names FoodPath as an automated AI assistant,
-   states the FNS eligibility SCREEN scope, lists what it CANNOT do
-   (see, call, dispatch, take real-world action), and points to 911 /
-   988 for emergencies. It is hard-coded — not LLM-generated — so the
-   framing cannot drift.
+1. ``first_turn_disclosure(lang)`` identifies FoodPath as automated in a
+   compact, hard-coded introduction. The web UI combines it with the first
+   question in one bubble inside the transcript.
 
 2. ``detect_not_a_person_request(text)`` / ``not_a_person_response(lang)``
    answer a user who explicitly asks "are you a real person" / "are
@@ -72,35 +69,19 @@ class RecordingLLM:
 
 
 def test_first_turn_disclosure_english_contains_required_signals():
-    """English disclosure names the AI, the scope, and the emergency channels."""
+    """The compact English intro identifies automation and scope."""
     text = first_turn_disclosure("en")
-    # Explicit AI / not-a-person identification.
     assert "AI assistant" in text or "automated" in text.lower()
-    assert "not a live person" in text.lower() or "not a real person" in text.lower()
-    assert "DSS caseworker" in text or "DSS" in text
-    # Scope: initial screen, not a determination.
-    assert "initial" in text.lower()
-    assert "screen" in text.lower()
-    assert "eligibility" in text.lower()
-    # Cannot-act list.
-    assert "can't see you" in text.lower() or "cannot see you" in text.lower()
-    assert "can't call anyone" in text.lower() or "cannot call anyone" in text.lower()
-    assert "can't dispatch" in text.lower() or "cannot dispatch" in text.lower()
-    # Emergency channels named.
-    assert CRISIS_RESOURCES["emergency_services"] in text  # 911
-    assert CRISIS_RESOURCES["suicide_crisis_lifeline"] in text  # 988
+    assert "eligibility estimate" in text.lower()
+    assert len(text) < 120
 
 
 def test_first_turn_disclosure_spanish_contains_required_signals():
-    """Spanish disclosure names the AI, the scope, and the emergency channels."""
+    """The compact Spanish intro identifies automation and scope."""
     text = first_turn_disclosure("es")
-    assert "inteligencia artificial" in text or "automatizado" in text
-    assert "persona real" in text
-    # Spanish 911 line is the same numeric string the English version uses;
-    # 988 is the same numeric string as well — both are hotline numbers
-    # that must survive verbatim across languages.
-    assert CRISIS_RESOURCES["emergency_services"] in text  # 911
-    assert CRISIS_RESOURCES["suicide_crisis_lifeline"] in text  # 988
+    assert "automatizada" in text
+    assert "FNS" in text or "SNAP" in text
+    assert "elegibilidad" in text.lower()
 
 
 def test_first_turn_disclosure_is_not_llm_generated():
@@ -429,21 +410,19 @@ def test_web_index_page_first_bubble_is_first_turn_disclosure_en():
     )
 
 
-def test_web_index_page_has_two_separate_first_bubbles():
-    """Feedback from a live test: one long combined disclosure+question
-    block read as unfriendly and slow to get to the point. The page must
-    render the safety disclosure and the friendly greeting as TWO
-    distinct bubbles, not concatenated into one."""
+def test_web_index_page_has_one_compact_intro_inside_chat():
+    """The intro belongs in the chat log, never as duplicate bubbles above it."""
     from src.agent import first_turn_greeting
     from src.web import PAGE
 
     assert first_turn_greeting("en") in PAGE
-    # Two separate bubble divs, not one combined block: the disclosure
-    # bubble's closing tag must appear before the greeting text starts.
-    disclosure_idx = PAGE.index(FIRST_TURN_DISCLOSURE_EN)
-    greeting_idx = PAGE.index(first_turn_greeting("en"))
-    closing_div_between = PAGE.index("</div>", disclosure_idx)
-    assert disclosure_idx < closing_div_between < greeting_idx
+    assert PAGE.count('<div class="bubble assistant" data-role="intro">') == 1
+    assert 'data-role="disclosure"' not in PAGE
+    assert 'data-role="greeting"' not in PAGE
+    messages_idx = PAGE.index('id="messages"')
+    intro_idx = PAGE.index('data-role="intro"')
+    composer_idx = PAGE.index('id="form"')
+    assert messages_idx < intro_idx < composer_idx
 
 
 # ---------------------------------------------------------------------------
@@ -485,12 +464,11 @@ def test_first_turn_greeting_is_short_friendly_and_asks_household_size():
 
     en = first_turn_greeting("en")
     assert en == FIRST_TURN_GREETING_EN
-    assert "household" in en.lower()
-    assert len(en) < len(FIRST_TURN_DISCLOSURE_EN)
+    assert "buy and prepare food together" in en.lower()
 
     es = first_turn_greeting("es")
     assert es == FIRST_TURN_GREETING_ES
-    assert "hogar" in es.lower()
+    assert "compran y preparan comida juntas" in es.lower()
 
 
 def test_first_turn_greeting_unknown_lang_falls_back_to_english():
@@ -511,11 +489,10 @@ def test_system_prompt_carries_disclosure_integrity_clause():
     so it stays in effect across a mid-conversation language switch."""
     from src.agent import SYSTEM_PROMPT, SYSTEM_PROMPT_ES
 
-    assert "W21" in SYSTEM_PROMPT
-    assert "W21" in SYSTEM_PROMPT_ES
-    # The reminder names the things the disclosure covers.
-    assert "not a live person" in SYSTEM_PROMPT.lower() or "not a real person" in SYSTEM_PROMPT.lower()
-    assert "caseworker" in SYSTEM_PROMPT.lower() or "911" in SYSTEM_PROMPT
+    assert "DISCLOSURE INTEGRITY" in SYSTEM_PROMPT
+    assert "INTEGRIDAD DEL AVISO" in SYSTEM_PROMPT_ES
+    assert "do not repeat" in SYSTEM_PROMPT.lower()
+    assert "no repitas" in SYSTEM_PROMPT_ES.lower()
 
 
 # ---------------------------------------------------------------------------

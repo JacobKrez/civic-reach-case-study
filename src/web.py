@@ -301,16 +301,11 @@ def _escape(text: str) -> str:
 
 
 def _first_bubble_html(lang: str) -> str:
-    """Two separate bubbles, not one combined message: the safety disclosure
-    first, then a short friendly opener with the first intake question.
-
-    Each bubble gets a stable ``data-role`` attribute and an
-    ``aria-live`` wrapper so screen readers announce them in order.
-    """
+    """One compact introduction inside the conversation log."""
     return (
-        '<div class="bubble assistant" data-role="disclosure">'
+        '<div class="bubble assistant" data-role="intro">'
         + _escape(first_turn_disclosure(lang))
-        + '</div><div class="bubble assistant" data-role="greeting">'
+        + " "
         + _escape(first_turn_greeting(lang))
         + "</div>"
     )
@@ -786,11 +781,11 @@ def _status_line(lang: str) -> str:
     """Persistent trust banner — single source of truth for the
     'not an application' / 'nothing is saved' reassurance."""
     if lang == "es":
-        text = ("Esto <b>no es una solicitud</b>. Nada se envía a ninguna agencia. "
-                "Esta conversación se guarda solo en este navegador y se borra al cerrar la pestaña.")
+        text = ("Nada se envía a ninguna agencia. "
+                "Tus respuestas permanecen en esta sesión y se borran al cerrar la pestaña.")
     else:
-        text = ("This is <b>not an application</b>. Nothing is submitted to any agency. "
-                "This conversation is kept only in this browser and is cleared when you close the tab.")
+        text = ("Nothing is submitted to any agency. "
+                "Your answers stay in this session and are cleared when you close the tab.")
     return (
         '<div class="trust-banner" role="region" aria-label="'
         + ("Aviso importante" if lang == "es" else "Important notice")
@@ -821,7 +816,7 @@ def _assemble_page(lang: str) -> str:
 <link rel="apple-touch-icon" sizes="192x192" href="/static/icons/icon-192.png">
 <style>__CSS__</style>
 </head>
-<body>__SKIP_LINK__<header class="top" role="banner"><div class="header-copy"><b>FoodPath</b><span>__TAGLINE__</span></div><button id="new-screening" class="new-screening" type="button">__NEW_SCREENING__</button></header>__TRUST____PROGRESS__<main class="layout" id="main-content" role="main" tabindex="-1">__FIRST_BUBBLES____FORM_SECTION____DETAILS_PANEL__</main>__RESET_DIALOG____TOASTS____FOOTER____SCRIPT__</body></html>"""
+<body>__SKIP_LINK__<header class="top" role="banner"><div class="header-copy"><b>FoodPath</b><span>__TAGLINE__</span></div><button id="new-screening" class="new-screening" type="button">__NEW_SCREENING__</button></header>__TRUST____PROGRESS__<main class="layout" id="main-content" role="main" tabindex="-1">__FORM_SECTION____DETAILS_PANEL__</main>__RESET_DIALOG____TOASTS____FOOTER____SCRIPT__</body></html>"""
 
     title = (
         "FoodPath — Guía de elegibilidad para FNS de Carolina del Norte"
@@ -854,7 +849,6 @@ def _assemble_page(lang: str) -> str:
     page = page.replace("__SKIP_LINK__", _skip_link(lang))
     page = page.replace("__TRUST__", _status_line(lang))
     page = page.replace("__PROGRESS__", placeholder_progress)
-    page = page.replace("__FIRST_BUBBLES__", _first_bubble_html(lang))
     page = page.replace("__FORM_SECTION__", _form_section_html(lang))
     page = page.replace("__DETAILS_PANEL__", placeholder_panel)
     page = page.replace("__RESET_DIALOG__", _reset_dialog_html(lang))
@@ -922,7 +916,7 @@ def _form_section_html(lang: str) -> str:
         + '<div id="crisis-alert-template" role="alert" aria-live="assertive" hidden></div>'
         + '<div id="messages" class="messages" aria-live="polite" aria-relevant="additions" aria-label="'
         + ("Registro de la conversación" if lang == "es" else "Conversation log")
-        + '"></div>'
+        + '">' + _first_bubble_html(lang) + '</div>'
         + '<form id="form" class="composer" autocomplete="off" aria-label="'
         + ("Enviar una respuesta" if lang == "es" else "Send a reply")
         + '">'
@@ -1373,17 +1367,9 @@ def _client_script(lang: str) -> str:
   });
   if(navigator.onLine === false){ setNetBanner('offline'); toast(t.offline, 'error'); }
 
-  // The very first assistant turn: two templated bubbles (disclosure + greeting).
-  // These are code-templated so the disclosure framing cannot drift; we
-  // render them only when the server has confirmed the session is empty.
-  const firstBubbleDisclosure = (lang==='es')
-    ? "Soy un asistente automático de IA (no soy una persona, ni un trabajador social de NC DSS, ni el 911, ni los consejeros en vivo del 988, ni la línea de servicios de la tarjeta EBT). Las respuestas son orientativas y no decisiones oficiales. Esta no es una solicitud. Si estás en peligro inmediato, llama al 911."
-    : "I'm an automated AI assistant (not a person, not an NC DSS caseworker, not 911, not 988's live counselors, not the EBT card-services line). Replies are guidance, not official decisions. This is not an application. If you are in immediate danger, call 911.";
-  const firstBubbleGreeting = (lang==='es')
-    ? '¡Hola! Estoy aquí para ayudarte a evaluar tu elegibilidad para FNS / SNAP de Carolina del Norte. Empecemos — ¿cuántas personas hay en tu hogar?'
-    : "Hi! I'm here to help you check your eligibility for North Carolina FNS / SNAP. To start — how many people are in your household?";
-  appendAssistant(firstBubbleDisclosure, false);
-  appendAssistant(firstBubbleGreeting, false);
+  // The server renders one compact intro inside the conversation log.
+  // Keep its text for a client-side reset without maintaining a duplicate.
+  const firstBubbleIntro = messages.querySelector('[data-role="intro"]').textContent;
 
   form.addEventListener('submit', async function(e){
     e.preventDefault();
@@ -1515,8 +1501,8 @@ def _client_script(lang: str) -> str:
       if(!r.ok || !data.session_id) throw new Error((data && data.detail) || ('Request failed ('+r.status+')'));
       sid = data.session_id;
       messages.replaceChildren();
-      appendAssistant(firstBubbleDisclosure, false);
-      appendAssistant(firstBubbleGreeting, false);
+      const intro = appendAssistant(firstBubbleIntro, false);
+      intro.dataset.role = 'intro';
       const empty = {
         state:{household_size:null,gross_monthly_income:null,has_elderly_or_disabled_member:null},
         missing_fields:['household_size','gross_monthly_income','has_elderly_or_disabled_member'],

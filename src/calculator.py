@@ -181,7 +181,7 @@ _NET_LIMITS_2026: Dict[int, float] = {
 }
 _GROSS_ADDITIONAL_2026: float = 596.0
 _NET_ADDITIONAL_2026: float = 459.0
-_MAX_HOUSEHOLD_SIZE: int = 20  # hard cap for table size; SNAP has no upper bound but this is plenty.
+_MAX_HOUSEHOLD_SIZE: int = 20  # precomputed table size; larger households extrapolate.
 
 
 def _build_limits() -> Dict[int, Dict[str, float]]:
@@ -281,12 +281,15 @@ def separate_household_limits(household_size: int) -> float:
     tables (separate-elderly/disabled household row) and re-sourced annually
     alongside the poverty guidelines.
     """
-    if household_size < 1 or household_size > _MAX_HOUSEHOLD_SIZE:
-        raise ValueError(
-            f"household_size must be between 1 and {_MAX_HOUSEHOLD_SIZE}; "
-            f"got {household_size}"
-        )
-    return _SEPARATE_HOUSEHOLD_LIMITS[household_size]
+    if household_size < 1:
+        raise ValueError(f"household_size must be >= 1; got {household_size}")
+    if household_size in _SEPARATE_HOUSEHOLD_LIMITS:
+        return _SEPARATE_HOUSEHOLD_LIMITS[household_size]
+    return round(
+        _SEPARATE_HOUSEHOLD_LIMITS_2026[8]
+        + (household_size - 8) * _SEPARATE_HOUSEHOLD_ADDITIONAL_PERSON,
+        2,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -451,12 +454,13 @@ def compute_net_monthly_income(
 
 
 def _limit_for(household_size: int, test: str) -> float:
-    if household_size < 1 or household_size > _MAX_HOUSEHOLD_SIZE:
-        raise ValueError(
-            f"household_size must be between 1 and {_MAX_HOUSEHOLD_SIZE}; "
-            f"got {household_size}"
-        )
-    return _LIMITS[household_size][test]
+    if household_size < 1:
+        raise ValueError(f"household_size must be >= 1; got {household_size}")
+    if household_size in _LIMITS:
+        return _LIMITS[household_size][test]
+    gross = _GROSS_LIMITS_2026[8] + (household_size - 8) * _GROSS_ADDITIONAL_2026
+    net = _NET_LIMITS_2026[8] + (household_size - 8) * _NET_ADDITIONAL_2026
+    return {"gross": gross, "net": net, "expanded": round(net * 2.0, 2)}[test]
 
 
 def income_limits(household_size: int) -> Dict[str, float]:
@@ -469,16 +473,14 @@ def income_limits(household_size: int) -> Dict[str, float]:
     from this so the agent's cited numbers can never drift from the
     numbers it actually computes with. See ``scripts/generate_kb_table.py``.
     """
-    if household_size < 1 or household_size > _MAX_HOUSEHOLD_SIZE:
-        raise ValueError(
-            f"household_size must be between 1 and {_MAX_HOUSEHOLD_SIZE}; "
-            f"got {household_size}"
-        )
-    return dict(_LIMITS[household_size])
+    return {
+        test: _limit_for(household_size, test)
+        for test in ("gross", "net", "expanded")
+    }
 
 
 def max_household_size() -> int:
-    """The largest household size the limit table covers."""
+    """Largest precomputed table row (larger sizes are extrapolated)."""
     return _MAX_HOUSEHOLD_SIZE
 
 
