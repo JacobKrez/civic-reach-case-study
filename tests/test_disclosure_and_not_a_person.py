@@ -69,19 +69,26 @@ class RecordingLLM:
 
 
 def test_first_turn_disclosure_english_contains_required_signals():
-    """The compact English intro identifies automation and scope."""
+    """The English intro identifies automation, scope, and the 911/988
+    emergency pointer -- CA SB 243 / WA HB 2225 / FTC AI-disclosure
+    guidance requires this on the very first assistant message, not
+    gated behind the user explicitly asking "are you a real person"."""
     text = first_turn_disclosure("en")
     assert "AI assistant" in text or "automated" in text.lower()
     assert "eligibility estimate" in text.lower()
-    assert len(text) < 120
+    assert "911" in text
+    assert "988" in text
+    assert len(text) < 320
 
 
 def test_first_turn_disclosure_spanish_contains_required_signals():
-    """The compact Spanish intro identifies automation and scope."""
+    """The Spanish intro identifies automation, scope, and 911/988."""
     text = first_turn_disclosure("es")
     assert "automatizada" in text
     assert "FNS" in text or "SNAP" in text
     assert "elegibilidad" in text.lower()
+    assert "911" in text
+    assert "988" in text
 
 
 def test_first_turn_disclosure_is_not_llm_generated():

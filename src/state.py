@@ -11,6 +11,8 @@ from typing import List, Optional
 
 from pydantic import BaseModel, Field
 
+from .calculator import max_household_size
+
 
 class AssessmentState(BaseModel):
     """State for a single eligibility-assessment conversation.
@@ -35,7 +37,7 @@ class AssessmentState(BaseModel):
     household_size: Optional[int] = Field(
         default=None,
         ge=1,
-        le=100,
+        le=max_household_size(),
         description="Number of people in the SNAP household. Required.",
     )
     gross_monthly_income: Optional[float] = Field(

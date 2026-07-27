@@ -11,7 +11,7 @@ from typing import Any, Callable
 from pydantic import ValidationError
 
 from .branding import PRODUCT_NAME
-from .calculator import calculate_eligibility, income_limits
+from .calculator import calculate_eligibility, income_limits, max_household_size
 from .guardrails.ambiguity import normalize_income
 from .guardrails.application_status import (
     application_status_response,
@@ -360,7 +360,7 @@ UPDATE_STATE_TOOL = {
     "input_schema": {
         "type": "object",
         "properties": {
-            "household_size": {"type": "integer", "minimum": 1, "maximum": 100},
+            "household_size": {"type": "integer", "minimum": 1, "maximum": max_household_size()},
             "gross_monthly_income": {"type": "number", "minimum": 0},
             "has_elderly_or_disabled_member": {"type": "boolean"},
             "earned_monthly_income": {"type": "number", "minimum": 0},
@@ -402,15 +402,24 @@ def volatile_rule_redirect(lang: str = "en") -> str:
 
 
 # Compact code-templated introduction. The web UI combines these two
-# fragments into one conversational bubble inside the transcript. Trust
-# limitations live in the persistent notice/footer; crisis resources appear
-# only when the deterministic crisis layer is actually needed.
+# fragments into one conversational bubble inside the transcript. The
+# persistent notice/footer only covers "not an application / nothing is
+# saved" — it does NOT carry the 911/988 emergency pointer or the
+# can't-see/call/dispatch capability limits, so both must stay in this
+# disclosure itself. This was dropped in the W60-era "compact intro" pass
+# and is restored per CA SB 243 / WA HB 2225 / FTC AI-disclosure guidance
+# (see README.md's guardrail table). Crisis keywords still get the fuller
+# hardcoded ``crisis_response()`` on top of this.
 FIRST_TURN_DISCLOSURE_EN = (
-    f"Hi! I'm {PRODUCT_NAME}, an automated guide for a quick NC FNS / SNAP eligibility estimate."
+    f"Hi! I'm {PRODUCT_NAME}, an automated guide for a quick NC FNS / SNAP eligibility estimate. "
+    "I can't see you, call anyone, or dispatch help. If this is a life-threatening emergency, "
+    "call 911. If you're in a mental-health crisis, call or text 988."
 )
 
 FIRST_TURN_DISCLOSURE_ES = (
-    f"¡Hola! Soy {PRODUCT_NAME}, una guía automatizada para una evaluación rápida de elegibilidad de FNS / SNAP."
+    f"¡Hola! Soy {PRODUCT_NAME}, una guía automatizada para una evaluación rápida de elegibilidad de FNS / SNAP. "
+    "No puedo verte, llamar a nadie ni despachar ayuda. Si es una emergencia que pone en peligro tu vida, "
+    "llama al 911. Si estás en una crisis de salud mental, llama o envía un mensaje de texto al 988."
 )
 
 FIRST_TURN_GREETING_EN = (
@@ -813,7 +822,7 @@ class FoodPathAgent:
             leading = re.match(r"^\$?(\d{1,4})\b", text)
             if leading:
                 value = int(leading.group(1))
-                if 1 <= value <= 100:
+                if 1 <= value <= max_household_size():
                     return value
                 return None
             # Phrase forms: "There are N of us", "household of N",
@@ -828,7 +837,7 @@ class FoodPathAgent:
             )
             if phrase:
                 value = int(phrase.group(1))
-                if 1 <= value <= 100:
+                if 1 <= value <= max_household_size():
                     return value
             # "N people in our household" / "N of us" / "N person" at
             # the end of the reply.
@@ -839,7 +848,7 @@ class FoodPathAgent:
             )
             if trailing:
                 value = int(trailing.group(1))
-                if 1 <= value <= 100:
+                if 1 <= value <= max_household_size():
                     return value
             return None
         if field == "gross_monthly_income":

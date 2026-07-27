@@ -7,8 +7,8 @@ The agent must remain correct when the provider returns:
      backstop path must ask the next missing field).
   3. A tool call with a malformed input object (raises ValueError;
      the agent must catch it and not crash).
-  4. A tool call with out-of-range values (e.g. household_size=999,
-     which the screening schema caps at 100; the agent must drop the bad call
+  4. A tool call with out-of-range values (e.g. household_size=99,
+     which the schema caps at 20; the agent must drop the bad call
      and re-ask the field).
   5. A provider exception (the agent's call to llm.chat raises
      a generic Exception; the agent's ``turn()`` must let it
@@ -138,12 +138,12 @@ def test_degenerate_malformed_tool_input_does_not_crash():
 
 
 # ---------------------------------------------------------------------------
-# (4) Out-of-range value (household_size=999; screen cap is 100)
+# (4) Out-of-range value (household_size=99; schema caps at 20)
 # ---------------------------------------------------------------------------
 
 
 def test_degenerate_out_of_range_value_dropped_silently():
-    """Provider emits a tool call with household_size=999, which is
+    """Provider emits a tool call with household_size=99, which is
     out of the schema's allowed range. The agent's pydantic
     validation rejects the bad value; the field stays None; the
     backstop asks the next missing field on the same turn. The
@@ -153,7 +153,7 @@ def test_degenerate_out_of_range_value_dropped_silently():
     out_of_range = {
         "content": "",
         "tool_calls": [
-            {"name": "update_state", "input": {"household_size": 999}}
+            {"name": "update_state", "input": {"household_size": 99}}
         ],
     }
 
@@ -181,7 +181,7 @@ def test_degenerate_out_of_range_value_dropped_silently():
     # Either path is acceptable per the W35 spec; what we forbid
     # is the bad value landing in state and what we require is
     # a non-empty user-visible reply.
-    assert agent.state.household_size != 999
+    assert agent.state.household_size != 99
     if not raised:
         assert reply.strip()
 

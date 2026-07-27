@@ -1227,20 +1227,30 @@ def _client_script(lang: str) -> str:
   function renderResultCard(data){
     const r = data.eligibility_result;
     if(!r) return;
+    // The calculator (src/calculator.py:calculate_eligibility) returns
+    // qualifies/income_considered/limit/test_used/outcome/notes — NOT
+    // eligible/gross_monthly_income/applicable_limit/applicable_test. Those
+    // keys never existed on this object, so every card used to silently
+    // fall back to its "not eligible" / blank-field defaults regardless of
+    // the real outcome. Read the real keys, and use the three-way
+    // ``outcome`` (not just the boolean ``qualifies``) so "uncertain,
+    // apply anyway" doesn't get lumped in with "likely not eligible".
+    const eligible = r.outcome === 'likely_eligible';
+    const uncertain = r.outcome === 'uncertain_apply_anyway';
     // If we already rendered a card for this exact outcome, don't repeat.
     const existingId = messages.querySelector('[data-result-outcome]');
     if(existingId && existingId.getAttribute('data-result-outcome') === JSON.stringify({
-      eligible: !!r.eligible, head: r.headline || '', body: r.reason || ''
+      outcome: r.outcome || '', body: r.notes || ''
     })) return;
     if(existingId) existingId.remove();
     const card = document.createElement('div');
     card.className = 'bubble result-card';
     card.setAttribute('data-result-outcome', JSON.stringify({
-      eligible: !!r.eligible, head: r.headline || '', body: r.reason || ''
+      outcome: r.outcome || '', body: r.notes || ''
     }));
     card.setAttribute('role','region');
     card.setAttribute('aria-label', lang==='es' ? 'Resultado de la evaluación' : 'Screening result');
-    if(!r.eligible) card.setAttribute('data-outcome','denied');
+    if(!eligible && !uncertain) card.setAttribute('data-outcome','denied');
     const labelsEn = {
       eligibility: 'Eligibility',
       income: 'Income used',
@@ -1257,15 +1267,15 @@ def _client_script(lang: str) -> str:
     };
     const lab = (lang==='es') ? labelsEs : labelsEn;
     const headline = (lang==='es')
-      ? (r.eligible ? 'Es probable que seas elegible' : 'Es probable que no seas elegible con los datos actuales')
-      : (r.eligible ? 'You are likely eligible' : 'You are likely not eligible based on what you shared');
-    const reason = r.reason || r.summary || '';
-    const incomeUsed = r.gross_monthly_income != null ? '$' + Number(r.gross_monthly_income).toLocaleString() : '—';
-    const limitUsed = r.applicable_limit != null ? '$' + Number(r.applicable_limit).toLocaleString() : (r.limit != null ? '$' + Number(r.limit).toLocaleString() : '—');
-    const rule = r.applicable_test || r.test || r.track || '—';
-    const next = r.next_steps || (r.eligible
+      ? (eligible ? 'Es probable que seas elegible' : uncertain ? 'Elegibilidad incierta — de todos modos deberías solicitar' : 'Es probable que no seas elegible con los datos actuales')
+      : (eligible ? 'You are likely eligible' : uncertain ? 'Eligibility is uncertain — you should still apply' : 'You are likely not eligible based on what you shared');
+    const reason = r.notes || '';
+    const incomeUsed = r.income_considered != null ? '$' + Number(r.income_considered).toLocaleString() : '—';
+    const limitUsed = r.limit != null ? '$' + Number(r.limit).toLocaleString() : '—';
+    const rule = r.test_used || '—';
+    const next = (eligible || uncertain)
       ? (lang==='es' ? 'Aplica con tu oficina local de DSS o en epass.nc.gov.' : 'Apply at your local DSS office or at epass.nc.gov.')
-      : (lang==='es' ? 'Puedes revisar los detalles y volver a intentarlo, o hablar con un trabajador social.' : 'Review the details and try again, or talk to a case worker.'));
+      : (lang==='es' ? 'Puedes revisar los detalles y volver a intentarlo, o hablar con un trabajador social.' : 'Review the details and try again, or talk to a case worker.');
     card.innerHTML = ''
       + '<h3>' + lab.eligibility + '</h3>'
       + '<p class="outcome-headline">' + headline + '</p>'

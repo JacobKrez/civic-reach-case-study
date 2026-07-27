@@ -83,18 +83,28 @@ def test_household_size_twenty_completes():
     assert_universal_invariants(result)
 
 
-def test_household_size_twenty_one_completes():
-    """SNAP has no household-size cap; sizes beyond the cached table extrapolate."""
+def test_household_size_twenty_one_rejected_by_schema():
+    """HH=21 is OUTSIDE the tool's allowed range
+    (household_size max=20 in UPDATE_STATE_TOOL, tied to
+    ``calculator.max_household_size()``). The agent's schema-validation
+    must drop the bad tool call, the field stays None, and the universal
+    invariants still hold (no traceback, non-empty reply, income-cue
+    respected). The user must be asked to re-state the household size."""
     result = run_transcript(
         ["21", "12000", "no"],
         scripted_responses=[
-            update(household_size=21),
+            # Tool schema rejects household_size=21 -- the stub
+            # emits ONLY a re-ask; the user later provides a valid
+            # size. The agent's deterministic fallback then accepts
+            # the corrected value.
+            {"content": "", "tool_calls": []},
             update(gross_monthly_income=12000),
+            update(household_size=2),
             update(has_elderly_or_disabled_member=False),
         ],
     )
-    assert result.final_state.household_size == 21
-    assert result.calculator_calls[-1]["household_size"] == 21
+    # Final state is whatever the user ultimately provided.
+    assert result.final_state.household_size == 2
     assert_universal_invariants(result)
 
 
