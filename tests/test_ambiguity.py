@@ -61,6 +61,14 @@ _TABLE_DRIVEN_CASES = [
     pytest.param("$2K", 2000.0, id="k_shorthand_clean"),
     pytest.param("1.2k", 1200.0, id="k_shorthand_no_dollar"),
     pytest.param("around $3K monthly", 3000.0, id="k_shorthand_with_hint"),
+    # W71: "N hundred" spoken-number shorthand. Found live via the
+    # simulator's LLM-driven improv persona (2026-07-28): "22 hundred a
+    # month" used to grab the bare leading "22" and silently drop the
+    # "hundred" multiplier -- $22/month instead of the stated $2,200.
+    pytest.param("22 hundred a month", 2200.0, id="hundred_shorthand_plain"),
+    pytest.param("about 22 hundred a month before taxes", 2200.0, id="hundred_shorthand_with_filler"),
+    pytest.param("15 hundred", 1500.0, id="hundred_shorthand_no_period_hint"),
+    pytest.param("9 hundred a month", 900.0, id="hundred_shorthand_single_digit"),
     # Weekly.
     pytest.param("$600/week", 600 * 52 / 12, id="weekly_slash"),
     pytest.param("$600 a week", 600 * 52 / 12, id="weekly_a_week"),

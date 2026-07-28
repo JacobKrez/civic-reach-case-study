@@ -171,6 +171,16 @@ _K_SCALE_PATTERN = re.compile(r"(\d+(?:\.\d+)?)\s*k\b", re.IGNORECASE)
 # m-shorthand: "$2m", "1.5M"
 _M_SCALE_PATTERN = re.compile(r"(\d+(?:\.\d+)?)\s*m\b", re.IGNORECASE)
 
+# W71: "N hundred" -- a very common casual way to state a monthly income
+# ("about 22 hundred a month", "15 hundred"). Found live via the
+# simulator's new LLM-driven improv persona (2026-07-28): "22 hundred a
+# month" fell through to the plain-number branch, which grabbed the bare
+# leading "22" and silently dropped the "hundred" multiplier entirely --
+# $22/month instead of the stated $2,200/month. Mirrors the k-shorthand
+# pattern above (multiply by a scale word) rather than the m-shorthand's
+# single-letter suffix, since "hundred" is spelled out, not abbreviated.
+_HUNDRED_SCALE_PATTERN = re.compile(r"(\d+(?:\.\d+)?)\s*hundred\b", re.IGNORECASE)
+
 
 # ---------------------------------------------------------------------------
 # Public API
@@ -309,6 +319,21 @@ def normalize_income(text: str) -> Optional[float]:
             base = None
         if base is not None and base >= 0:
             return base * 1_000_000.0
+
+    # ------------------------------------------------------------------
+    # 4b. "N hundred" ("22 hundred a month", "15 hundred"). Same shape as
+    #     the k-shorthand branch above -- a scale word after a leading
+    #     number -- but spelled out rather than abbreviated, so it needs
+    #     its own pattern rather than reusing _K_SCALE_PATTERN.
+    # ------------------------------------------------------------------
+    hundred_match = _HUNDRED_SCALE_PATTERN.search(lowered)
+    if hundred_match:
+        try:
+            base = float(hundred_match.group(1))
+        except ValueError:
+            base = None
+        if base is not None and base >= 0:
+            return base * 100.0
 
     # ------------------------------------------------------------------
     # 5. Plain monthly figure.
