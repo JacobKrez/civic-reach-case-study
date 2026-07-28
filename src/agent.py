@@ -2086,6 +2086,44 @@ class FoodPathAgent:
                 # Bad tool call from the model: drop it, keep the
                 # cached verdict, fall through to the explanation path.
                 post_corrections = []
+            # Deterministic backstop, live-probed 2026-07-28: unlike every
+            # other correction path in this file, a post-verdict correction
+            # had NO fallback at all -- it depended entirely on the model
+            # emitting a tool call. Reproduced: "actually wait, my income
+            # is really 1500" after a $2,200 verdict silently did nothing
+            # in 1 of 5 live runs (model returned no tool call), leaving
+            # the OLD verdict on screen with no indication the correction
+            # was ignored. Same correction-cue + income-cue shape already
+            # used by the mid-intake W64 out-of-order-correction fallback
+            # below -- that code is unreachable from this early-return
+            # branch, so this mirrors it rather than sharing it.
+            if not post_corrections:
+                correction_cue = re.search(
+                    r"\b(?:actually|sorry|i\s+meant|correction|no\s+wait|"
+                    r"that(?:s|\s+is)\s+wrong|en realidad|perd[oó]n|"
+                    r"quer[ií]a decir|correcci[oó]n|no\s+espera)\b",
+                    user_message, re.I,
+                )
+                income_cue = re.search(FoodPathAgent._INCOME_CUE_PATTERN, user_message, re.I)
+                deduction_cue = re.search(
+                    r"\b(?:rent|mortgage|childcare|daycare|medical|car|"
+                    r"utilities?|insurance|bills?|gas|electric)\b",
+                    user_message, re.I,
+                )
+                if correction_cue and income_cue and not deduction_cue:
+                    parsed_income = normalize_income(user_message)
+                    if (
+                        parsed_income is not None
+                        and parsed_income != self.state.gross_monthly_income
+                    ):
+                        try:
+                            post_corrections = self._apply_tool_calls(
+                                [{"name": "update_state", "input": {"gross_monthly_income": parsed_income}}],
+                                user_message=user_message,
+                                asked_field=None,
+                            )
+                        except ValueError:
+                            post_corrections = []
             if post_corrections:
                 # A real correction just landed. Invalidate the cached
                 # result so the recompute below produces a fresh one.
