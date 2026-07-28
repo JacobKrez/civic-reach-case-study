@@ -52,6 +52,7 @@ from src.agent import FoodPathAgent
 from src.guardrails.classifier import CLASSIFIER_SYSTEM_PROMPT
 
 from ._helpers import (
+    _w53_asks_for_field,
     assert_universal_invariants,
     run_transcript,
 )
@@ -535,3 +536,88 @@ def test_w53_anchor_does_not_suppress_elderly_question_in_canned_redirect():
         f"the canned redirect's description of the elderly field suppressed "
         f"the real elderly question: {reply!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# W70b: the SIMULATOR's own copy of this matching logic (_w53_asks_for_field
+# in ._helpers, used by assert_forward_progress) is a deliberately-duplicated
+# mirror of src/agent.py's anchor-phrase floor above -- kept separate so the
+# test helper file stays import-free of agent internals. Duplication means
+# drift: the agent's own anchor-phrase fix (word-inserted-mid-question, the
+# tests above) never propagated to this copy, so the continuous simulator
+# kept flagging genuinely correct household_size paraphrases as forward-
+# progress violations. Found live 2026-07-28 via redteam/findings/, not a
+# human transcript this time. These tests pin the helper's copy directly.
+# ---------------------------------------------------------------------------
+
+
+def test_w53_helper_anchor_recognizes_word_inserted_household_question():
+    """The exact live simulator finding: "in your household" inserted
+    mid-sentence must still count as asking for household_size."""
+    reply = (
+        "Sounds good — let's get started. How many people, including "
+        "you, usually buy and prepare food together in your household? "
+        "If you usually buy and cook just for yourself, answer 1."
+    )
+    assert _w53_asks_for_field(reply, "household_size", "en") is True
+
+
+def test_w53_helper_anchor_recognizes_empathetic_lead_in():
+    """A second live simulator finding, same root cause: an empathetic
+    lead-in before the real question must not defeat the match."""
+    reply = (
+        "No worries at all — this kind of thing can feel like a lot "
+        "of questions. We can stop whenever you want, and nothing is "
+        "recorded until you say so.\n\nIf you'd like to keep going, I'll "
+        "just need one small thing: how many people, including you, "
+        "usually buy and prepare food together in your household?"
+    )
+    assert _w53_asks_for_field(reply, "household_size", "en") is True
+
+
+def test_w53_helper_still_matches_the_unmodified_canonical_question():
+    """Non-regression: the exact canonical sentence, with no paraphrase
+    at all, must still match (this is the original, pre-anchor behavior
+    and must keep working)."""
+    reply = (
+        "Got it. How many people, including you, usually buy and prepare "
+        "food together? If you usually buy and cook just for yourself, "
+        "answer 1."
+    )
+    assert _w53_asks_for_field(reply, "household_size", "en") is True
+
+
+def test_w53_helper_anchor_does_not_match_a_canned_redirect_description():
+    """Same false-positive risk src/agent.py's anchor already guards
+    against: a reply merely LISTING household size as one of the things
+    still needed must not count as asking the real question."""
+    reply = (
+        "I can't help with that. I just need your household size, your "
+        "gross monthly income, and whether anyone in your household is "
+        "elderly or disabled."
+    )
+    assert _w53_asks_for_field(reply, "household_size", "en") is False
+
+
+def test_w53_helper_anchor_scope_is_household_size_only():
+    """The anchor fallback must stay scoped to household_size -- the
+    other two fields still require the full canonical sentence, same as
+    src/agent.py's own scoping and for the same reason (a short anchor
+    for income/elderly would risk matching a canned redirect that merely
+    describes the remaining fields)."""
+    redirect = (
+        "I can't help with that. I just need your household size, your "
+        "gross monthly income, and whether anyone in your household is "
+        "elderly or disabled."
+    )
+    assert _w53_asks_for_field(redirect, "gross_monthly_income", "en") is False
+    assert _w53_asks_for_field(redirect, "has_elderly_or_disabled_member", "en") is False
+
+
+def test_w53_helper_anchor_recognizes_spanish_word_inserted_question():
+    reply = (
+        "Perfecto — empecemos. ¿Cuántas personas, "
+        "incluyéndote, compran y preparan comida juntas en su hogar? "
+        "Si normalmente compras y cocinas solo para ti, responde 1."
+    )
+    assert _w53_asks_for_field(reply, "household_size", "es") is True

@@ -727,6 +727,41 @@ _W53_NEXT_FIELD_QUESTION: dict[str, dict[str, str]] = {
 }
 
 
+# W70b: mirrors ``src.agent._W53_ANCHOR_PHRASES``. Live-probed 2026-07-28
+# (found by the continuous simulator, not a human transcript this time):
+# a full-sentence substring match against the canonical household_size
+# question false-positives the simulator's OWN forward-progress
+# invariant on a perfectly valid model paraphrase -- e.g. "Sounds good
+# -- let's get started. How many people, including you, usually buy and
+# prepare food together IN YOUR HOUSEHOLD? If you usually buy and cook
+# just for yourself, answer 1." inserts "in your household" before the
+# "?", which breaks a contiguous match against the canonical sentence.
+#
+# ``src/agent.py`` already solved this exact problem for its OWN
+# already-asked detector (the W53 fold-ask floor, so it doesn't append
+# a duplicate question on top of a valid paraphrase) via anchor-phrase
+# matching: a small set of short, distinctive phrases that must ALL
+# appear, not necessarily contiguously. That fix never propagated to
+# this file's separately-duplicated copy of the same logic (duplicated
+# on purpose, per the note above, to keep this helper import-free of
+# agent internals) -- so the simulator kept flagging genuinely correct
+# replies as invariant violations. Mirroring the same anchor-phrase
+# table here closes that drift. Deliberately scoped to household_size
+# ONLY, for the same reason src/agent.py scopes it there: the other two
+# fields' canonical questions are single sentences that have matched
+# exactly on every live probe, and a short anchor for them would risk
+# false-matching a canned redirect that merely LISTS the remaining
+# fields without actually asking one.
+_W53_ANCHOR_PHRASES: dict[str, dict[str, tuple[str, ...]]] = {
+    "en": {
+        "household_size": ("how many people", "buy and prepare food together"),
+    },
+    "es": {
+        "household_size": ("cuántas personas", "compran y preparan comida"),
+    },
+}
+
+
 def _w53_norm_for_match(text: str) -> str:
     """Normalize text for substring matching: lowercase, straight
     apostrophes (curly -> straight). Mirrors the normalization the
@@ -738,19 +773,24 @@ def _w53_norm_for_match(text: str) -> str:
 def _w53_asks_for_field(reply: str, field: str, language: str) -> bool:
     """True when *reply* already contains a real question for *field*.
 
-    Detected by checking whether the canonical next-field question
-    for *field* (in *language*) appears in the reply. We compare
-    against the full canonical question (not a substring) so the
-    check fires only when the field is genuinely being asked — a
-    question mark alone, a rhetorical question, or a question for a
+    Detected by checking whether the canonical next-field question for
+    *field* (in *language*) appears in the reply, OR (household_size
+    only, see _W53_ANCHOR_PHRASES) whether every short anchor phrase for
+    the field appears somewhere in the reply. Full-sentence matching
+    means the check fires only when the field is genuinely being asked
+    -- a question mark alone, a rhetorical question, or a question for a
     different field all fail. Curly apostrophes in either side are
     normalized to straight so the curly-quote renderings pass.
     """
+    normalized_reply = _w53_norm_for_match(reply)
+    anchors = (_W53_ANCHOR_PHRASES.get(language) or {}).get(field)
+    if anchors and all(_w53_norm_for_match(a) in normalized_reply for a in anchors):
+        return True
     table = _W53_NEXT_FIELD_QUESTION.get(language) or _W53_NEXT_FIELD_QUESTION["en"]
     question = table.get(field)
     if not question:
         return False
-    return _w53_norm_for_match(question) in _w53_norm_for_match(reply)
+    return _w53_norm_for_match(question) in normalized_reply
 
 
 def assert_forward_progress(result: TranscriptResult) -> None:
