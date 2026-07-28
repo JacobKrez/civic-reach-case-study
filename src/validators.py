@@ -170,6 +170,13 @@ _SSN_SPACED = re.compile(
     # Note: a leading space is fine; spaces are common in prose.
     r"(?<![\d])(\d{3})[ ](\d{2})[ ](\d{4})(?!\d)"
 )
+_SSN_DOTTED = re.compile(
+    # Dot-separated form ("123.45.6789"). Not in the original pattern
+    # set even though the phone-number validator above explicitly
+    # allows "." as a separator -- an asymmetry with no reason behind
+    # it, closed here the same way.
+    r"(?<![\d.])(\d{3})\.(\d{2})\.(\d{4})(?![\d.])"
+)
 _SSN_UNSEPARATED = re.compile(
     # Unseparated: 9 digits with non-digit boundaries. This is the
     # most ambiguous form (a 9-digit run can be many things);
@@ -231,9 +238,10 @@ def _looks_like_ssn(area: str, group: str, serial: str) -> bool:
 def _extract_ssn_like_strings(reply: str) -> list[str]:
     """Return all SSN-shaped strings in *reply*. Empty list = pass.
 
-    Three formats are matched:
+    Four formats are matched:
     - hyphen-separated: 123-45-6789
     - space-separated: 123 45 6789
+    - dot-separated: 123.45.6789
     - no-separators: 123456789 (with the looks_like_ssn guard)
 
     The hyphenated form is the most common in human prose and in
@@ -255,6 +263,12 @@ def _extract_ssn_like_strings(reply: str) -> list[str]:
         if _looks_like_ssn(m.group(1), m.group(2), m.group(3)):
             found.append(m.group(0))
             seen_spans.append(m.span())
+    for m in _SSN_DOTTED.finditer(reply):
+        if m.span() in seen_spans:
+            continue
+        if _looks_like_ssn(m.group(1), m.group(2), m.group(3)):
+            found.append(m.group(0))
+            seen_spans.append(m.span())
     for m in _SSN_UNSEPARATED.finditer(reply):
         if m.span() in seen_spans:
             continue
@@ -262,6 +276,23 @@ def _extract_ssn_like_strings(reply: str) -> list[str]:
         if _looks_like_ssn(s[0:3], s[3:5], s[5:9]):
             found.append(s)
     return found
+
+
+def redact_ssn_fabrication(reply: str) -> str:
+    """Return *reply* with every SSN-shaped string replaced by
+    ``"[REDACTED]"``.
+
+    Deliberately narrower than ``guardrails.pii.redact_for_logging``:
+    this only touches the exact spans ``_extract_ssn_like_strings``
+    flagged, so a reply that legitimately contains a properly-formatted
+    hotline number (988, 1-800-799-7233, ...) alongside a fabricated or
+    echoed SSN keeps the hotline number intact. Idempotent and safe to
+    call even when there is nothing to redact (returns *reply* unchanged).
+    """
+    redacted = reply
+    for s in _extract_ssn_like_strings(reply):
+        redacted = redacted.replace(s, "[REDACTED]")
+    return redacted
 
 
 def check_ssn_fabrication(reply: str) -> list[ValidationFailure]:
@@ -486,5 +517,6 @@ __all__ = [
     "check_verdict_language",
     "check_income_limits",
     "check_ssn_fabrication",
+    "redact_ssn_fabrication",
     "check_all",
 ]

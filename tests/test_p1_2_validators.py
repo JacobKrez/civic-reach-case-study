@@ -28,6 +28,7 @@ from src.validators import (
     check_phone_numbers,
     check_ssn_fabrication,
     check_verdict_language,
+    redact_ssn_fabrication,
 )
 
 
@@ -367,3 +368,74 @@ def test_p1_2_check_all_includes_ssn_in_aggregated_failures():
     assert "verdict" in kinds, failures
     assert "income_limit" in kinds, failures
     assert "ssn" in kinds, failures
+
+
+# ---------------------------------------------------------------------------
+# Gaps found reviewing the SSN validator against a live turn (2026-07-28).
+# ---------------------------------------------------------------------------
+
+
+def test_p1_2_ssn_redacted_on_post_verdict_followup_turn():
+    """The check_all() fall-back only replaces content when
+    ``state.missing_fields()`` is non-empty, which is correct for the
+    other three validators (there's no "next field" once intake is
+    complete) but was silently exempting SSN echoes on every follow-up
+    question asked AFTER the verdict -- exactly the turn where a chatty
+    model is most likely to summarize the whole conversation, SSN
+    included. SSN redaction must fire unconditionally, not just on the
+    turn the verdict is first computed."""
+    from src.agent import FoodPathAgent
+
+    class SSNEchoingLLM:
+        def __init__(self):
+            self.n = 0
+
+        def chat(self, messages, system=None, tools=None):
+            self.n += 1
+            if self.n <= 4:
+                return {"content": "", "tool_calls": []}
+            return {
+                "content": (
+                    "Since you shared SSN 123-45-6789 along with your "
+                    "income, your household likely qualifies based on "
+                    "the figures given."
+                ),
+                "tool_calls": [],
+            }
+
+    agent = FoodPathAgent(llm_client=SSNEchoingLLM())
+    agent.turn("3")
+    agent.turn("2200")
+    agent.turn("no")  # verdict computed here
+    reply = agent.turn("can you confirm my ssn 123-45-6789 was recorded correctly?")
+    assert "123-45-6789" not in reply, f"SSN leaked on a post-verdict turn: {reply!r}"
+    assert "[REDACTED]" in reply
+
+
+def test_p1_2_ssn_redaction_preserves_a_legitimate_hotline_in_the_same_reply():
+    """redact_ssn_fabrication must be narrower than the general PII
+    redactor: a reply containing both a fabricated/echoed SSN and a
+    real, properly-formatted crisis hotline number must keep the
+    hotline number intact and only remove the SSN."""
+    mixed = redact_ssn_fabrication(
+        "Your SSN 123-45-6789 was noted. For an emergency, call the "
+        "DV hotline 1-800-799-7233."
+    )
+    assert "123-45-6789" not in mixed
+    assert "1-800-799-7233" in mixed
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Your SSN is 123.45.6789 on file.",
+        "SSN: 123.45.6789",
+    ],
+)
+def test_p1_2_ssn_validator_catches_dot_separated(text):
+    """The phone-number validator explicitly allows '.' as a
+    separator; the SSN patterns originally didn't, an asymmetry with
+    no reasoning behind it."""
+    failures = check_ssn_fabrication(text)
+    assert failures, f"dot-separated SSN not caught: {text!r}"
+    assert "123.45.6789" not in redact_ssn_fabrication(text) 

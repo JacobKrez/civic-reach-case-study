@@ -2081,6 +2081,20 @@ class FoodPathAgent:
             content = _outcome_label_floor(
                 content, self._eligibility_result, self.state.language, _purpose="verdict_with_corrections"
             )
+            # SSN redaction applies on every turn, this early-return path
+            # included -- found live 2026-07-28: a post-verdict follow-up
+            # question is exactly where a chatty model is most likely to
+            # summarize everything the user said, an earlier-pasted SSN
+            # included, and this branch returns before the P1.2 validator
+            # block further down ever runs. See the fuller note there.
+            from .validators import check_ssn_fabrication, redact_ssn_fabrication
+            if check_ssn_fabrication(content):
+                content = redact_ssn_fabrication(content)
+                self._audit.append({
+                    "turn": self.state.turn_count,
+                    "event": "p1_2_ssn_redacted_from_reply",
+                    "note": "Model echoed an SSN-shaped string; redacted before sending to the user.",
+                })
             self._messages.append({"role": "assistant", "content": content})
             self._hostile_this_turn = False
             self._classifier_off_topic_this_turn = False
@@ -2108,6 +2122,16 @@ class FoodPathAgent:
             content = _outcome_label_floor(
                 content, self._eligibility_result, self.state.language, _purpose="explain_repeat"
             )
+            # SSN redaction on this early-return path too -- see the
+            # matching note on the branch above.
+            from .validators import check_ssn_fabrication, redact_ssn_fabrication
+            if check_ssn_fabrication(content):
+                content = redact_ssn_fabrication(content)
+                self._audit.append({
+                    "turn": self.state.turn_count,
+                    "event": "p1_2_ssn_redacted_from_reply",
+                    "note": "Model echoed an SSN-shaped string; redacted before sending to the user.",
+                })
             self._messages.append({"role": "assistant", "content": content})
             self._hostile_this_turn = False
             self._classifier_off_topic_this_turn = False
@@ -2536,7 +2560,28 @@ class FoodPathAgent:
         # re-ask a filled field (they only scan the reply), and the
         # W62 next-field helper is reused here so the wording stays
         # in lockstep with the rest of the agent.
-        from .validators import check_all
+        from .validators import check_all, check_ssn_fabrication, redact_ssn_fabrication
+
+        # SSN redaction runs unconditionally, before the intake-complete
+        # gate below. Found live 2026-07-28: the other three validators
+        # are deliberately log-only once intake is complete (the verdict
+        # turn has no "next field" to fall back to, and the citations
+        # suffix is worth preserving) -- but that same exemption let a
+        # verdict-turn reply ship a pasted SSN verbatim to the user,
+        # because check_all()'s failure only triggered a REPLACEMENT
+        # when self.state.missing_fields() was non-empty. SSN presence
+        # isn't a quality issue like a fabricated dollar figure; it must
+        # never reach the user regardless of what turn it's on. Redacted
+        # (not replaced) so a legitimate hotline number elsewhere in the
+        # same reply survives -- see redact_ssn_fabrication's docstring.
+        if check_ssn_fabrication(content):
+            content = redact_ssn_fabrication(content)
+            self._audit.append({
+                "turn": self.state.turn_count,
+                "event": "p1_2_ssn_redacted_from_reply",
+                "note": "Model echoed an SSN-shaped string; redacted before sending to the user.",
+            })
+
         validator_failures = check_all(
             content,
             has_eligibility_result=self._eligibility_result is not None,
