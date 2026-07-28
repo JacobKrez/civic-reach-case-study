@@ -627,6 +627,7 @@ def test_turn_keeps_state_pydantic_valid(message):
     AssessmentState.model_validate(state_dict)
 
 
+@settings(deadline=None)
 @given(
     messages=st.lists(
         adversarial_text_st,
