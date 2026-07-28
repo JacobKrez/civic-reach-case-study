@@ -1336,9 +1336,21 @@ class FoodPathAgent:
             # rules flagged the conversation as a missed contradiction.
             # The script-style digit-leading form is still the first
             # branch so the existing narrow path is unchanged.
-            leading = re.match(r"^\$?(\d{1,4})\b", text)
+            # Every digit-capture below uses \d{1,3}(?:,\d{3})* rather than
+            # a flat \d{1,4} so a comma-grouped number ("1,000") is read as
+            # ONE number, not truncated at the comma. Found live 2026-07-28:
+            # "1,000 people, and then 0 montly income" matched the old
+            # \d{1,4} leading regex as just "1" (the comma isn't a digit),
+            # "1" is in the valid 1..max_household_size() range, so it was
+            # accepted and returned immediately -- silently recording a
+            # household of 1 instead of declining the (out-of-range, but
+            # syntactically a single number) 1,000. The same truncation
+            # would also misread a legitimate value like "1,005 people" as
+            # trailing "005" == 5. Commas are stripped before int() so the
+            # full number is what actually gets range-checked.
+            leading = re.match(r"^\$?(\d{1,3}(?:,\d{3})*)\b", text)
             if leading:
-                value = int(leading.group(1))
+                value = int(leading.group(1).replace(",", ""))
                 if 1 <= value <= max_household_size():
                     return value
                 return None
@@ -1348,23 +1360,23 @@ class FoodPathAgent:
             phrase = re.search(
                 r"\b(?:there\s+are|we\s+are|we're|household\s+of|"
                 r"actually\s+it'?s|just\s+me,?\s+household\s+of)\s+"
-                r"(\d{1,4})(?:\s+(?:of|people|persons?|in\s+the\s+house))?\b",
+                r"(\d{1,3}(?:,\d{3})*)(?:\s+(?:of|people|persons?|in\s+the\s+house))?\b",
                 text,
                 re.IGNORECASE,
             )
             if phrase:
-                value = int(phrase.group(1))
+                value = int(phrase.group(1).replace(",", ""))
                 if 1 <= value <= max_household_size():
                     return value
             # "N people in our household" / "N of us" / "N person" at
             # the end of the reply.
             trailing = re.search(
-                r"\b(\d{1,4})\s+(?:people|persons?|of\s+us)\b",
+                r"\b(\d{1,3}(?:,\d{3})*)\s+(?:people|persons?|of\s+us)\b",
                 text,
                 re.IGNORECASE,
             )
             if trailing:
-                value = int(trailing.group(1))
+                value = int(trailing.group(1).replace(",", ""))
                 if 1 <= value <= max_household_size():
                     return value
             return None
