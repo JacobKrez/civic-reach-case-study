@@ -237,7 +237,11 @@ def run_transcript(
     from src.guardrails.injection import detect_injection
     from src.guardrails.drifter import detect_drifter_aside
     from src.guardrails.restarter import detect_recap_request, detect_restart_request
-    from src.guardrails.scope import detect_not_a_person_request, detect_out_of_scope
+    from src.guardrails.scope import (
+        detect_identity_question,
+        detect_not_a_person_request,
+        detect_out_of_scope,
+    )
 
     llm = RecordingLLM(
         main_responses=scripted_responses,
@@ -266,6 +270,7 @@ def run_transcript(
             detect_crisis(message)
             or detect_injection(message)
             or detect_out_of_scope(message)
+            or detect_identity_question(message)
             or detect_not_a_person_request(message)
             or detect_expedited_question(message)
             or detect_benefit_amount_question(message)

@@ -325,16 +325,64 @@ def test_classifier_injection_path_returns_fixed_response():
     assert llm.calls[0]["system"] == CLASSIFIER_SYSTEM_PROMPT
 
 
-def test_classifier_off_topic_path_returns_fixed_redirect():
+def test_classifier_off_topic_path_does_not_short_circuit():
+    """P0.3: the classifier no longer has conversation veto on off_topic.
+
+    Crisis and injection still short-circuit (those tests are
+    unchanged above). off_topic is now a per-turn steering signal:
+    the classifier call still runs, is_out_of_scope is still set for
+    red-team attribution, the steering hint is prepended to the main
+    LLM call for THIS turn only, and the main LLM produces the reply.
+    The canned scope_redirect_message is no longer the reply to a
+    classifier off_topic; that canned path is owned by the keyword
+    layer (detect_out_of_scope) for clearly off-topic messages.
+    """
     llm = FakeLLM(content="assistant answer", classifier_content="off_topic")
     agent = FoodPathAgent(llm_client=llm)
 
-    # Off-topic phrasing the keyword list does not catch.
     response = agent.turn("Could you draft an email for me to my landlord?")
-    assert response == scope_redirect_message()
+    # is_out_of_scope is set for red-team attribution.
     assert agent.state.is_out_of_scope is True
-    assert len(llm.calls) == 1
+    # Reply is NOT the canned scope redirect — the main LLM got the
+    # turn and produced the answer. The intake is incomplete so the
+    # W53 forward-progress floor appends the next-field question,
+    # which is required behavior (per the test above).
+    assert response != scope_redirect_message()
+    assert response.startswith("assistant answer")
+    # Two LLM calls: the classifier call, then the main call with
+    # the steering hint prepended.
+    assert len(llm.calls) == 2
     assert llm.calls[0]["system"] == CLASSIFIER_SYSTEM_PROMPT
+    # The steering hint is prepended to the main call but the stock
+    # system prompt still follows (substring match, not equality —
+    # the hint is per-turn and doesn't replace the system prompt).
+    assert "intent classifier" not in llm.calls[1]["system"]
+    assert "did not clearly look like an FNS intake answer" in llm.calls[1]["system"]
+    assert "FoodPath" in llm.calls[1]["system"]
+    # Per-turn flag is set on the agent for this turn.
+    assert agent._classifier_off_topic_this_turn is False  # reset after turn()
+
+
+def test_classifier_off_topic_steering_hint_is_per_turn():
+    """P0.3: the off_topic steering hint applies to the turn the
+    classifier flagged, and is gone on the very next turn. Same
+    per-turn lifecycle as _hostile_this_turn / HOSTILITY_CONTEXT_EN.
+    """
+    llm = FakeLLM(content="assistant answer", classifier_content="off_topic")
+    agent = FoodPathAgent(llm_client=llm)
+
+    # Turn 1: classifier flags off_topic → steering hint prepended.
+    agent.turn("Could you draft an email for me to my landlord?")
+    # Per-turn flag is reset at the end of turn().
+    assert agent._classifier_off_topic_this_turn is False
+
+    # Turn 2: classifier returns normal → no steering hint.
+    llm2 = FakeLLM(content="next answer")
+    agent.llm_client = llm2
+    agent.turn("There are three of us in my household.")
+    # The main call's system prompt is the stock one (no steering).
+    assert "did not clearly look like an FNS intake answer" not in llm2.calls[-1]["system"]
+    assert agent._classifier_off_topic_this_turn is False
 
 
 def test_classifier_normal_path_falls_through_to_agent_llm():

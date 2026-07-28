@@ -30,7 +30,15 @@ from __future__ import annotations
 import re
 from typing import Optional
 
-__all__ = ["normalize_income"]
+__all__ = [
+    "normalize_income",
+    "classify_income_ambiguity",
+    "income_clarification_question",
+    "AMBIGUITY_HOURLY_NO_HOURS",
+    "AMBIGUITY_DAILY_NO_DAYS",
+    "AMBIGUITY_PERIOD_UNCLEAR_HIGH",
+    "AMBIGUITY_PERIOD_UNCLEAR_LOW",
+]
 
 
 # ---------------------------------------------------------------------------
@@ -105,6 +113,35 @@ _HOURLY_HINT_PATTERN = re.compile(
     r"(?:per|an|a|each)\s*hour(?:ly)?|/hour|/hr\b|/h\b|\bhr\b|\bhourly\b",
     re.IGNORECASE,
 )
+
+# "a year", "per year", "yearly", "annually", "/yr", "annual salary".
+# KB/02 ("Annual / post-tax / 'it varies'") is explicit: divide by 12.
+# Without this the screen read "$42,000 a year" as $42,000 A MONTH and
+# falsely denied an eligible household -- the worst failure this tool has.
+_ANNUAL_HINT_PATTERN = re.compile(
+    r"(?:per|a|each)\s*year|/year|/yr\b|\byr\b|\byearly\b|\bannually\b|\bannual\b|\bp\.?a\.?\b",
+    re.IGNORECASE,
+)
+
+# "a day", "per day", "daily", "/day". Unlike weekly/annual there is NO
+# published day->month conversion: it depends entirely on days worked, so
+# we refuse to guess and ask, exactly like the hourly-without-hours path.
+_DAILY_HINT_PATTERN = re.compile(
+    r"(?:per|a|each)\s*day|/day|\bdaily\b",
+    re.IGNORECASE,
+)
+
+# "5 days a week", "3 days per week", "6 days/wk"
+_DAYS_PER_WEEK_PATTERN = re.compile(
+    r"([\d.]+)\s*days?\s*(?:/|a\s+|per\s+|each\s+)\s*(?:week|wk)\b",
+    re.IGNORECASE,
+)
+
+# ANY stated quantity of hours/days, in any shape -- "40 hours a week",
+# "40hrs", "40 hrs". Used only to decide whether the message is missing
+# the quantity outright, which is a lower bar than being able to parse it.
+_HOURS_QUANTITY_PATTERN = re.compile(r"\d\s*(?:hours?|hrs?)\b", re.IGNORECASE)
+_DAYS_QUANTITY_PATTERN = re.compile(r"\d\s*days?\b", re.IGNORECASE)
 
 # k-shorthand: "$2.5k", "$2K", "2k", "1.2k"
 _K_SCALE_PATTERN = re.compile(r"(\d+(?:\.\d+)?)\s*k\b", re.IGNORECASE)
@@ -185,6 +222,36 @@ def normalize_income(text: str) -> Optional[float]:
         return None
 
     # ------------------------------------------------------------------
+    # 1b. Daily phrasing.
+    #     "$70 a day, 5 days a week" is convertible; "$70 a day" alone is
+    #     not -- days worked per month is unknown and guessing 7 days a
+    #     week (or 5) would silently invent income. Same refusal contract
+    #     as hourly-without-hours above.
+    # ------------------------------------------------------------------
+    if _DAILY_HINT_PATTERN.search(lowered):
+        daily_value = _amount_with_scale(lowered)
+        days_match = _DAYS_PER_WEEK_PATTERN.search(lowered)
+        if daily_value is not None and days_match:
+            try:
+                days_per_week = float(days_match.group(1))
+            except ValueError:
+                return None
+            if 0 < days_per_week <= 7:
+                return daily_value * days_per_week * _WEEKS_PER_MONTH
+        return None
+
+    # ------------------------------------------------------------------
+    # 1c. Annual phrasing -> divide by 12 (KB/02, "Annual ... divide by 12").
+    #     Checked BEFORE the k-shorthand branch so "70k a year" is
+    #     70,000/12 rather than $70,000 a month.
+    # ------------------------------------------------------------------
+    if _ANNUAL_HINT_PATTERN.search(lowered):
+        annual_value = _amount_with_scale(lowered)
+        if annual_value is not None:
+            return annual_value / 12.0
+        return None
+
+    # ------------------------------------------------------------------
     # 2. Weekly phrasing.
     # ------------------------------------------------------------------
     if _WEEKLY_HINT_PATTERN.search(lowered):
@@ -238,6 +305,185 @@ def normalize_income(text: str) -> Optional[float]:
 # ---------------------------------------------------------------------------
 # Extraction helpers
 # ---------------------------------------------------------------------------
+
+
+def _amount_with_scale(text: str) -> Optional[float]:
+    """Return the first money amount in *text*, honouring k/m shorthand.
+
+    ``_extract_money_number`` alone reads "70k" as ``70``; the period
+    branches (annual, daily) need "70k a year" to mean 70,000. Plain
+    amounts fall through to ``_extract_money_number`` unchanged.
+    """
+    k_match = _K_SCALE_PATTERN.search(text)
+    if k_match:
+        try:
+            base = float(k_match.group(1))
+        except ValueError:
+            base = None
+        if base is not None and base >= 0:
+            return base * 1000.0
+    m_match = _M_SCALE_PATTERN.search(text)
+    if m_match:
+        try:
+            base = float(m_match.group(1))
+        except ValueError:
+            base = None
+        if base is not None and base >= 0:
+            return base * 1_000_000.0
+    return _extract_money_number(text)
+
+
+# ---------------------------------------------------------------------------
+# Ambiguity classification -- WHY a value could not be pinned down
+# ---------------------------------------------------------------------------
+#
+# ``normalize_income`` returns a bare ``None`` for anything it refuses to
+# guess at, which is the right safety contract but leaves the caller with
+# only a generic "please repeat that" follow-up. These reason codes let the
+# agent ask the SPECIFIC question that resolves the ambiguity, which is the
+# difference between a screen a real person can finish and one they abandon.
+
+AMBIGUITY_HOURLY_NO_HOURS = "hourly_no_hours"
+AMBIGUITY_DAILY_NO_DAYS = "daily_no_days"
+AMBIGUITY_PERIOD_UNCLEAR_HIGH = "period_unclear_high"
+AMBIGUITY_PERIOD_UNCLEAR_LOW = "period_unclear_low"
+
+# A bare number below this is far more likely a daily/weekly figure (or an
+# hourly rate) than a real monthly income, so we ask instead of assuming.
+# Zero is exempt: "0" is a legitimate, common answer meaning no income.
+_IMPLAUSIBLY_LOW_MONTHLY = 100.0
+
+
+def _implausibly_high_monthly() -> float:
+    """The ceiling above which a bare number is probably an annual figure.
+
+    Anchored to the calculator's own most generous monthly band (200% FPL
+    at the largest household size) rather than a hand-picked constant, so
+    the threshold cannot drift away from the published tables. Imported
+    lazily to keep this module free of import-time coupling.
+    """
+    try:
+        from ..calculator import income_limits, max_household_size
+
+        return float(income_limits(max_household_size())["expanded"])
+    except Exception:  # pragma: no cover - defensive; module must never raise
+        return 20_000.0
+
+
+def classify_income_ambiguity(
+    text: object, *, value: Optional[float] = None
+) -> Optional[str]:
+    """Return WHY *text* is an ambiguous income answer, or ``None``.
+
+    ``None`` means "not ambiguous" -- either it parsed cleanly or it was
+    plain nonsense that deserves the ordinary re-ask. Only string input can
+    be ambiguous: a number arriving through the ``update_state`` tool call
+    has already been committed to as a monthly figure by the caller.
+
+    ``value`` is the figure about to be written to state, when the caller
+    has one. It matters because this function's job is to catch a *guess*,
+    not to overrule a better reading of the message: "$15/hr 40hrs" states
+    the hours in a shape the regexes here miss, and "2 of us, $1000/mo"
+    leads with a household size rather than the income. In both cases an
+    extractor upstream understood the message better than a naive re-parse
+    would, so second-guessing it would throw away a correct answer.
+    """
+    if not isinstance(text, str):
+        return None
+    raw = text.strip()
+    if not raw:
+        return None
+    lowered = raw.casefold()
+
+    # A rate with no quantity of time is unusable -- but only when the
+    # message genuinely lacks the quantity, not when it merely phrased it
+    # in a shape the parser above does not recognise.
+    if _HOURLY_HINT_PATTERN.search(lowered) and not _HOURS_QUANTITY_PATTERN.search(lowered):
+        return AMBIGUITY_HOURLY_NO_HOURS
+    if _DAILY_HINT_PATTERN.search(lowered) and not _DAYS_QUANTITY_PATTERN.search(lowered):
+        return AMBIGUITY_DAILY_NO_DAYS
+
+    # A value that parsed, but whose PERIOD was never stated and whose
+    # magnitude makes "per month" an implausible reading.
+    if _explicit_period_stated(lowered):
+        return None
+    naive = normalize_income(raw)
+    if naive is None or naive == 0:
+        return None
+    # Only question the figure when it IS the naive reading of the message.
+    # A different value means something upstream parsed more than the first
+    # number it saw, and that reading is the one to trust.
+    if value is not None and abs(value - naive) > 0.01:
+        return None
+    if naive > _implausibly_high_monthly():
+        return AMBIGUITY_PERIOD_UNCLEAR_HIGH
+    if naive < _IMPLAUSIBLY_LOW_MONTHLY:
+        return AMBIGUITY_PERIOD_UNCLEAR_LOW
+    return None
+
+
+def _explicit_period_stated(lowered: str) -> bool:
+    """True when the user named a period, so we must not second-guess them."""
+    return bool(
+        _MONTHLY_HINT_PATTERN.search(lowered)
+        or _WEEKLY_HINT_PATTERN.search(lowered)
+        or _ANNUAL_HINT_PATTERN.search(lowered)
+        or _DAILY_HINT_PATTERN.search(lowered)
+        or _HOURLY_HINT_PATTERN.search(lowered)
+    )
+
+
+def income_clarification_question(
+    reason: str, lang: str = "en", *, value: Optional[float] = None
+) -> str:
+    """Return the follow-up question that resolves *reason*.
+
+    Code-templated, never model-written: a clarifying question that
+    invented a number or a period would defeat the point of asking.
+    """
+    amount = ""
+    if value is not None:
+        amount = f"${value:,.0f}" if float(value).is_integer() else f"${value:,.2f}"
+
+    if lang == "es":
+        questions = {
+            AMBIGUITY_HOURLY_NO_HOURS: (
+                "Entendido. Para convertir un salario por hora a un total mensual, "
+                "¿cuántas horas trabajas por semana normalmente?"
+            ),
+            AMBIGUITY_DAILY_NO_DAYS: (
+                "Entendido. Para convertir un pago diario a un total mensual, "
+                "¿cuántos días por semana trabajas normalmente?"
+            ),
+            AMBIGUITY_PERIOD_UNCLEAR_HIGH: (
+                f"Solo para confirmar: {amount} ¿es por año o por mes? "
+                "Necesito el total mensual bruto del hogar."
+            ).strip(),
+            AMBIGUITY_PERIOD_UNCLEAR_LOW: (
+                f"Solo para confirmar: {amount} ¿es por mes, por semana o por día? "
+                "Necesito el total mensual bruto del hogar."
+            ).strip(),
+        }
+    else:
+        questions = {
+            AMBIGUITY_HOURLY_NO_HOURS: (
+                "Got it. To turn an hourly rate into a monthly total, "
+                "about how many hours a week do you usually work?"
+            ),
+            AMBIGUITY_DAILY_NO_DAYS: (
+                "Got it. To turn a daily rate into a monthly total, "
+                "about how many days a week do you usually work?"
+            ),
+            AMBIGUITY_PERIOD_UNCLEAR_HIGH: (
+                f"Just to be sure I have this right — is {amount} per year or per month? "
+                "I need the household's gross monthly total."
+            ).strip(),
+            AMBIGUITY_PERIOD_UNCLEAR_LOW: (
+                f"Just to be sure I have this right — is {amount} per month, per week, or per day? "
+                "I need the household's gross monthly total."
+            ).strip(),
+        }
+    return questions.get(reason, "")
 
 
 def _extract_money_number(text: str) -> Optional[float]:

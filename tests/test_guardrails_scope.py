@@ -134,9 +134,10 @@ def test_out_of_scope_returns_fixed_redirect_text():
 
     response = agent.turn("Can you write me code for a Snake game?")
 
-    # The redirect must be the fixed polite message, not an LLM-generated
-    # attempt to answer the off-topic ask.
-    assert response == scope_redirect_message()
+    # P0.4: the canned redirect is the prefix; the W53 next-field
+    # fold appends the actual next missing field's question (no-op
+    # if the reply already contained the canonical signature).
+    assert response.startswith(scope_redirect_message())
     # And the LLM should NOT have been called at all.
     assert llm.calls == []
 
@@ -153,7 +154,8 @@ def test_spanish_out_of_scope_returns_fixed_redirect_without_llm():
 
     response = agent.turn("Necesito un abogado, ¿puedes ayudarme?")
 
-    assert response == scope_redirect_message("es")
+    # P0.4: canned prefix + W53 next-field fold.
+    assert response.startswith(scope_redirect_message("es"))
     assert agent.state.is_out_of_scope is True
     assert llm.calls == []
 
@@ -201,7 +203,8 @@ def test_out_of_scope_does_not_destroy_collected_state():
 
     # Now the user goes off-topic.
     response = agent.turn("Actually, can you write me code?")
-    assert response == scope_redirect_message()
+    # P0.4: canned prefix + W53 next-field fold.
+    assert response.startswith(scope_redirect_message())
     # State is preserved.
     assert agent.state.household_size == 4
     assert agent.state.is_out_of_scope is True

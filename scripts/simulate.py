@@ -788,6 +788,88 @@ def _skeptical_reply(
     return rng.choice(_PUSHBACK)
 
 
+# P1.3: curious-skeptic persona (CONVERSATION_OVERHAUL.md §3 P1.3).
+# Behavior: greets → asks who/what/why → questions legitimacy → drifts once
+# → completes intake. Combines the social greeting shape, the meta
+# (process) questioning shape, the skeptical (legitimacy pushback)
+# shape, the drifter (one off-topic aside) shape, and the default
+# happy-path shape. The agent must produce conversational replies
+# (ack → answer → one question) at every step; the P1.3 tripwire
+# asserts the intake completes in <= 10 turns and no canned
+# non-sequitur appears anywhere.
+_CURIOUS_SKEPTIC_GREETINGS = (
+    "hi",
+    "hello",
+    "hey",
+)
+_CURIOUS_SKEPTIC_IDENTITY = (
+    "who are you",
+    "what is this",
+    "what is foodpath",
+    "how does this work",
+    "what do you do",
+)
+_CURIOUS_SKEPTIC_LEGITIMACY = (
+    "is this a real caseworker?",
+    "are you going to call my caseworker?",
+    "is this 911?",
+    "is this the ebt line?",
+    "are you a real person?",
+)
+_CURIOUS_SKEPTIC_DRIFT = (
+    "my bus route just changed and it takes forever to get downtown",
+    "the food bank on Main is closed on weekends, any idea why?",
+    "my neighbor said the county lost her paperwork twice",
+)
+
+
+def _curious_skeptic_reply(
+    agent_reply: str, scenario: Scenario, rng: random.Random, state: ConversationState
+) -> str:
+    """P1.3 chatty persona. The agent must:
+    - answer the greet naturally (no canned disclosure re-print)
+    - answer the identity questions with the P0.2 short response
+    - answer the legitimacy questions with the P0.2 / not-a-person
+      block without re-asking household-size
+    - handle the single drift without losing state (P0.4 W53 fold)
+    - complete the intake in <= 10 turns (P1.3 tripwire)
+    """
+    state.turn_index += 1
+    t = state.turn_index
+    # 1: greet
+    if t == 1:
+        return rng.choice(_CURIOUS_SKEPTIC_GREETINGS)
+    # 2-3: identity / what is this
+    if t in (2, 3):
+        return rng.choice(_CURIOUS_SKEPTIC_IDENTITY)
+    # 4: legitimacy / not-a-person class
+    if t == 4:
+        return rng.choice(_CURIOUS_SKEPTIC_LEGITIMACY)
+    # 5: one drift aside (drifter handler takes it; the next real
+    # answer follows naturally)
+    if t == 5:
+        return rng.choice(_CURIOUS_SKEPTIC_DRIFT)
+    # 6-8: provide the three intake fields (only the first 3 are
+    # required to complete; the persona may also mention deductions
+    # late, but the tripwire is on <= 10 turns total).
+    if not state.introduced_household:
+        state.introduced_household = True
+        return f"{scenario.household_size} people"
+    if not state.introduced_income:
+        state.introduced_income = True
+        return f"${int(scenario.gross_monthly_income)} a month"
+    if not state.introduced_elderly:
+        state.introduced_elderly = True
+        return "yes" if scenario.has_elderly_or_disabled else "no"
+    # Anything past 8 turns is post-completion chatter; persona
+    # can ask a follow-up about the result.
+    return rng.choice((
+        "ok thanks",
+        "got it",
+        "what does that mean exactly?",
+    ))
+
+
 def _restarter_reply(
     agent_reply: str, scenario: Scenario, rng: random.Random, state: ConversationState
 ) -> str:
@@ -843,6 +925,16 @@ PERSONAS: dict[str, Persona] = {
         name="skeptical",
         description="Challenges the numbers and the verdict.",
         reply=_skeptical_reply,
+    ),
+    "curious_skeptic": Persona(
+        name="curious_skeptic",
+        # P1.3 (CONVERSATION_OVERHAUL.md §3): chatty persona that
+        # greets, asks who/what/why, questions legitimacy, drifts once,
+        # then completes intake. Exercises the full P0.2-P0.4 surface
+        # (identity short answer, not-a-person full block, drifter
+        # acknowledgement, state-aware W53 fold).
+        description="Greets, asks identity questions, challenges legitimacy, drifts once, completes intake (P1.3).",
+        reply=_curious_skeptic_reply,
     ),
     "restarter": Persona(
         name="restarter",

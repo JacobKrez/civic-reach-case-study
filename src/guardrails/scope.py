@@ -53,6 +53,13 @@ _OUT_OF_SCOPE_PHRASES_ES: tuple[str, ...] = (
     "consejo legal",
     "tribunal de reclamos menores",
     "corte de reclamos menores",
+    "ayuda legal",
+    # Immigration
+    "inmigracion",
+    "caso de inmigracion",
+    # Tax / IRS
+    "declaracion de impuestos",
+    "impuestos",
     # General off-topic family
     "escribeme codigo",
     "escribe codigo",
@@ -262,6 +269,7 @@ _NOT_A_PERSON_PHRASES: tuple[str, ...] = (
     "are you calling my caseworker",
     "will you call my caseworker",
     "will you notify my caseworker",
+    "is this a real caseworker",
     "is this 911",
     "are you 911",
     "is this 988",
@@ -274,6 +282,19 @@ _NOT_A_PERSON_PHRASES: tuple[str, ...] = (
     "is this a real hotline",
     "is this emergency services",
     "are you emergency services",
+    # P0.2 — identity-class subset. These are also listed in
+    # _IDENTITY_QUESTIONS_EN below for the strict-subset routing in
+    # detect_identity_question(). Keep the two lists in sync: if a
+    # phrase is added here, add it there too (and to the ES list).
+    "who are you",
+    "what are you",
+    "what do you do",
+    "what do u do",
+    "what is this",
+    "what is foodpath",
+    "what's foodpath",
+    "how does this work",
+    "how does foodpath work",
 )
 
 _NOT_A_PERSON_PHRASES_ES: tuple[str, ...] = (
@@ -326,9 +347,117 @@ _NOT_A_PERSON_PHRASES_ES: tuple[str, ...] = (
     "eres una linea directa",
     "esto es servicios de emergencia",
     "eres servicios de emergencia",
+    # P0.2 — identity-class subset (Spanish). Also listed in
+    # _IDENTITY_QUESTIONS_ES below for the strict-subset routing.
+    "quien eres",
+    "que eres",
+    "que haces",
+    "como funciona esto",
+    "que es foodpath",
 )
+# P0.2 — identity-class phrases. These are the "who are you / what do you
+# do / what is this" family. The strict identity subset is an ADDITIONAL
+# routing choice layered on top of the broader keyword detector: the
+# same phrases also appear in _NOT_A_PERSON_PHRASES below so that
+# ``detect_not_a_person_request`` catches them too. If the two lists
+# drift apart, a reordering of the agent's guardrail chain could let
+# identity questions fall through to the classifier and re-introduce
+# the "I appreciate you sharing that" non-sequitur.
+_IDENTITY_QUESTIONS_EN: tuple[str, ...] = (
+    "who are you",
+    "what are you",
+    "what do you do",
+    "what do u do",
+    "what is this",
+    "what is foodpath",
+    "what's foodpath",
+    "how does this work",
+    "how does foodpath work",
+)
+_IDENTITY_QUESTIONS_ES: tuple[str, ...] = (
+    "quien eres",
+    "qué eres",
+    "que eres",
+    "qué haces",
+    "que haces",
+    "cómo funciona esto",
+    "como funciona esto",
+    "qué es foodpath",
+    "que es foodpath",
+)
+_IDENTITY_PATTERNS_EN = _compile_bounded_phrases(_IDENTITY_QUESTIONS_EN)
+_IDENTITY_PATTERNS_ES = _compile_bounded_phrases(_IDENTITY_QUESTIONS_ES)
+
 _NOT_A_PERSON_PATTERNS = _compile_bounded_phrases(_NOT_A_PERSON_PHRASES)
 _NOT_A_PERSON_PATTERNS_ES = _compile_bounded_phrases(_NOT_A_PERSON_PHRASES_ES)
+
+
+def detect_identity_question(text: str) -> bool:
+    """Return ``True`` iff *text* matches the identity-class subset.
+
+    Stricter than :func:`detect_not_a_person_request` — only the
+    "who are you / what do you do / what is this" family. These are
+    the cases that deserve a short identity answer + resume with the
+    next missing field, not the full 4-channel "what this is NOT" block.
+    """
+    if not text or not text.strip():
+        return False
+    normalized = text.casefold().replace("’", "'").replace("‘", "'")
+    accentless = normalized.translate(_SPANISH_ACCENTS)
+    for pattern in _IDENTITY_PATTERNS_EN:
+        if pattern.search(normalized):
+            return True
+    for pattern in _IDENTITY_PATTERNS_ES:
+        if pattern.search(normalized) or pattern.search(accentless):
+            return True
+    return False
+
+
+def short_identity_response(
+    lang: str = "en", missing: list[str] | None = None
+) -> str:
+    """Return a short identity answer + the next missing field's question.
+
+    Used for the strict identity-class questions ("who are you", "what
+    do you do") where the full 4-channel "what this is NOT" block is
+    over-fitted, and the user still needs to be brought back to the
+    intake with the next missing field appended.
+
+    The identity sentence is short and references the actual product
+    name so the user has a concrete answer to "who are you?" — it does
+    not enumerate hotlines, never re-asks filled fields, and never
+    opens with "I appreciate you sharing that" or any canned
+    acquisition-style opener that would be a non-sequitur to a simple
+    identity question.
+    """
+    missing = list(missing or [])
+    if lang == "es":
+        opener = (
+            f"Soy {PRODUCT_NAME}, un asistente automatizado para una "
+            "evaluación inicial de elegibilidad para FNS / SNAP de "
+            "Carolina del Norte. No soy una persona real y no puedo "
+            "tomar acciones en el mundo real — solo puedo hacer esa "
+            "evaluación inicial."
+        )
+    else:
+        opener = (
+            f"I'm {PRODUCT_NAME}, an automated guide for an initial "
+            "NC FNS / SNAP eligibility estimate. I'm not a real person "
+            "and I can't take any real-world action — I just do this "
+            "one initial screen."
+        )
+    if not missing:
+        return opener
+    # The intake order is fixed by state.missing_fields; use the
+    # canonical next-field question map so the prompt stays in
+    # lockstep with the rest of the agent.
+    from ..agent_questions import NEXT_FIELD_QUESTION
+    question = NEXT_FIELD_QUESTION.get(lang, NEXT_FIELD_QUESTION.get("en", {})).get(
+        missing[0], ""
+    )
+    if question:
+        return f"{opener} {question}"
+    return opener
 
 
 def detect_not_a_person_request(text: str) -> bool:

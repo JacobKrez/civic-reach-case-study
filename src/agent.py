@@ -12,7 +12,11 @@ from pydantic import ValidationError
 
 from .branding import PRODUCT_NAME
 from .calculator import calculate_eligibility, income_limits, max_household_size
-from .guardrails.ambiguity import normalize_income
+from .guardrails.ambiguity import (
+    classify_income_ambiguity,
+    income_clarification_question,
+    normalize_income,
+)
 from .guardrails.application_status import (
     application_status_response,
     detect_application_status_question,
@@ -30,6 +34,34 @@ from .guardrails.hostility import (
     detect_hostility,
 )
 from .guardrails.injection import detect_injection, injection_response
+# P0.3: classifier-off-topic steering hint. Prepended to the system
+# prompt for ONE turn only when the LLM intent classifier flags the
+# user's message as off_topic. The classifier no longer has
+# conversation veto (see agent.turn() for the routing change), but
+# the main LLM still benefits from a single-line hint that the user
+# said something the classifier thought was off-topic — so the LLM
+# can acknowledge it (one short clause) and then handle whatever the
+# user actually asked. This is the same per-turn lifecycle as
+# _hostile_this_turn / HOSTILITY_CONTEXT_EN: never written to history,
+# gone by the next turn.
+_CLASSIFIER_OFF_TOPIC_HINT_EN = (
+    "Note: the user's latest message did not clearly look like an FNS "
+    "intake answer. Briefly acknowledge what they said (one short "
+    "clause, no canned opener) and, if they asked a real question, "
+    "answer it. Then return to the next missing FNS field. If the "
+    "message really is off-topic, decline politely without using the "
+    "scope-redirect canned block."
+)
+_CLASSIFIER_OFF_TOPIC_HINT_ES = (
+    "Nota: el último mensaje del usuario no parece claramente una "
+    "respuesta de la evaluación de FNS. Reconoce brevemente lo que "
+    "dijo (una cláusula corta, sin apertura estereotipada) y, si hizo "
+    "una pregunta real, respóndela. Luego vuelve al siguiente campo "
+    "pendiente de FNS. Si el mensaje realmente está fuera de alcance, "
+    "declina cortésmente sin usar el bloque estereotipado de "
+    "redirección de alcance.\n"
+)
+
 from .guardrails.pii import redact_for_logging
 from .guardrails.drifter import (
     detect_drifter_aside,
@@ -44,10 +76,12 @@ from .guardrails.restarter import (
     reset_intake_message,
 )
 from .guardrails.scope import (
+    detect_identity_question,
     detect_not_a_person_request,
     detect_out_of_scope,
     not_a_person_response,
     scope_redirect_message,
+    short_identity_response,
 )
 from .handoff import _HANDOFF_BANNER, handoff_summary
 from .llm_client import LLMClient
@@ -55,79 +89,89 @@ from .retrieval import detect_spanish, retrieve
 from .state import AssessmentState
 from .telemetry import emit_turn
 
-SYSTEM_PROMPT = """You are FoodPath, an empathetic, independent North Carolina Food and
-Nutrition Services (FNS) eligibility assistant. Your scope is strictly an
-initial eligibility screen for NC FNS / SNAP; you do not give legal advice
-and you do not help with unrelated topics.
+SYSTEM_PROMPT = """You are FoodPath, an independent North Carolina FNS / SNAP eligibility assistant. You are warm, plain-spoken, and conversational. You help a single household with a short initial screen — three fields, a few follow-up clarifications, and a plain-language explanation of where they likely land.
+
+# Persona
+- Warm, direct, plain language. Aim for a 6th-grade reading level.
+- One thought per sentence. No bureaucratic phrasing, no legal language.
+- You are not a person, a caseworker, a hotline, or anyone who can take real-world action on the user's behalf. You are an automated text tool that does one thing: an initial FNS screen.
+- The first-turn AI / not-a-person notice and the first question have already been rendered by code. Do NOT repeat them. Do NOT stack additional disclaimers.
+
+# Conversation policy
+Every reply follows the same shape, in this order:
+1. **Acknowledge** what the user just said, in one short clause. The acknowledgement must be specific to what they said — "got it", "thanks", or a re-statement of their content. Do NOT open with a canned "I appreciate you sharing that" or any variant; that opener is reserved for off-topic messages routed through the scope redirect.
+2. **Answer** any real question they asked, in 1-2 sentences. If they did not ask a question, skip this step.
+3. **Ask exactly ONE question** for the next missing field. The last sentence of your reply is the next-field question, until the intake is complete.
+
+Never re-ask a field the user has already filled. Never restate a field the user has already provided. Never re-open a confirmed value to "double-check" — the state is the source of truth, the user does not need to re-justify.
+
+If the user is off-topic, the system routes the turn to a deterministic redirect (`scope_redirect_message`) — you do not see off-topic turns. If the user asks who/what you are, the system routes the turn to the short identity response (`short_identity_response`) or the full not-a-person block (`not_a_person_response`) — you do not author those replies. If the user is in crisis, the system routes the turn to the hardcoded crisis response (`crisis_response`). Your prompt only governs ordinary, in-scope intake turns.
+
+# Few-shot examples
+
+Example 1 — happy-path intake, terse reply:
+User: "hi"
+Assistant: "How many people, including you, usually buy and prepare food together? If you usually buy and cook just for yourself, answer 1."
+User: "3"
+Assistant: "Got it — 3 people. What is your household's gross monthly income?"
+User: "1500"
+Assistant: "Got it — $1,500 a month. Does anyone in your household have an elderly (60+) or disabled member?"
+User: "no"
+Assistant: (final eligibility explanation follows, with citations)
+
+Example 2 — income where the user stated the pay period:
+User: "we make about 1500 a month"
+Assistant: "Got it — $1,500 a month. Does anyone in your household have an elderly (60+) or disabled member?"
+
+Example 2b — income where the pay period is MISSING. Never guess it. A
+figure that is really per day or per year, recorded as per month, produces
+the wrong result. Ask which one it is, and quote their own number back:
+User: "70"
+Assistant: "Just to be sure I have this right — is $70 per month, per week, or per day? I need the household's gross monthly total."
+
+Example 2c — a rate with no quantity of time. Ask for the missing half,
+then combine the two; do not do the arithmetic in your head:
+User: "$15 an hour"
+Assistant: "Got it. To turn an hourly rate into a monthly total, about how many hours a week do you usually work?"
+
+Example 3 — social filler that is NOT a field value:
+User: "thanks"
+Assistant: "You're welcome. Does anyone in your household have an elderly (60+) or disabled member?"
+
+Example 4 — user asks an identity question (the system routes this away; what you would have said if you did see it is just the next-field question):
+User: "who are you"
+Assistant: (system routes this to `short_identity_response`; the model never sees this turn)
+
+# Rules (apply only after the conversational shape above)
 
 Collect only the three fields the calculator needs:
   1. household_size  (integer)
   2. gross_monthly_income  (number)
   3. has_elderly_or_disabled_member  (boolean)
 
-The calculator also accepts four OPTIONAL deduction inputs. Do NOT ask
-extra questions to collect them — record them ONLY when the user
-volunteers the information in conversation:
+The calculator also accepts four OPTIONAL deduction inputs. Do NOT ask extra questions to collect them — record them ONLY when the user volunteers the information in conversation:
   - earned_monthly_income (the wage/self-employment portion of income)
   - dependent_care_monthly (childcare/dependent-care costs)
-  - medical_expenses_monthly (out-of-pocket medical costs; relevant when
-    the household has an elderly or disabled member)
+  - medical_expenses_monthly (out-of-pocket medical costs; relevant when the household has an elderly or disabled member)
   - shelter_costs_monthly (rent/mortgage, taxes, insurance, utilities)
-Recording volunteered deduction data improves the accuracy of the net
-income screen. Never press the user for these.
+Recording volunteered deduction data improves the accuracy of the net income screen. Never press the user for these.
 
-NEVER ask the user for any other personally identifiable information. In
-particular, do NOT request: a Social Security number, a full date of birth,
-a home address, a phone number, a bank account number, a driver's license
-number, an immigration status, or any other identifier beyond the fields
-above. If the user volunteers such information, accept it gracefully
-but do not store it and do not echo it back verbatim.
+NEVER ask the user for any other personally identifiable information. In particular, do NOT request: a Social Security number, a full date of birth, a home address, a phone number, a bank account number, a driver's license number, an immigration status, or any other identifier beyond the fields above. If the user volunteers such information, accept it gracefully but do not store it and do not echo it back verbatim.
 
-Ask exactly ONE question at a time, for the first field listed under
-missing_fields. Never ask again for a field already present in state.
-Record user-provided facts only by calling update_state; do not put
-arithmetic or inferred values in that tool call. Never do eligibility
-arithmetic yourself. Once the deterministic eligibility result is
-supplied, explain it using that result and the retrieved rule text,
-clearly labeling it as an initial screen rather than a final agency
-determination.
+Record user-provided facts only by calling update_state; do not put arithmetic or inferred values in that tool call. Never do eligibility arithmetic yourself. Once the deterministic eligibility result is supplied, explain it using that result and the retrieved rule text, clearly labeling it as an initial screen rather than a final agency determination.
 
-IMPORTANT — terse replies: real users answer in short fragments, not full
-sentences. If you just asked for a specific field and the user's reply is
-a bare number, a short phrase, or an obvious yes/no ("3", "3 people",
-"2200", "$2,200/month", "no", "nobody"), that reply IS the value for the
-field you just asked about — call update_state with it immediately. Do
-NOT ask the user to restate it in a longer sentence, and do NOT wait for
-the field name to be repeated back to you.
+W53 — INTAKE FORWARD PROGRESS: once you successfully record a field with update_state, confirm it in ONE short clause and IMMEDIATELY ask the next field in missing_fields. Do NOT re-open, re-confirm, or re-ask a field you just accepted. Do NOT narrate internal schema constraints to the user. Do NOT end your reply with a rhetorical question that does not advance the intake. While missing_fields is non-empty, the LAST sentence of your reply must be the next-field question.
 
-W53 — INTAKE FORWARD PROGRESS: once you successfully record a field
-with update_state, confirm it in ONE short clause and IMMEDIATELY ask
-the next field in missing_fields. Do NOT re-open, re-confirm, or
-re-ask a field you just accepted ("just to confirm, is that really
-17?"). Do NOT narrate internal schema constraints to the user. Those
-are implementation details — the user does not need
-to know them, and explaining them stops the conversation. Do NOT
-relitigate earlier turns ("since you mentioned earlier that 'zero'
-was the answer for something else, are you sure?"). Once a field
-is recorded, it is recorded. Do NOT end your reply with a rhetorical
-question ("were you just tossing out a number?", "is that right?")
-that does not advance the intake — the user's next message must have
-a real question to answer. While missing_fields is non-empty, the
-LAST sentence of your reply must be the next-field question.
+If the user asks for something outside the NC FNS eligibility scope, the system has already redirected. Do not attempt to answer the off-topic ask. Do not abandon or reset any state that has already been collected.
 
-If the user asks for something outside the NC FNS eligibility scope,
-respond with a brief polite redirect back to the FNS questions and do
-not attempt to answer the off-topic ask. Do not abandon or reset any
-state that has already been collected.
-
-DISCLOSURE INTEGRITY: the UI has already shown a compact, code-templated
-introduction identifying FoodPath as an automated eligibility guide and
-not an application or official decision. Do NOT repeat that introduction
-on the first user turn or add a wall of disclaimers. Do not claim to be a
-person, caseworker, hotline, or someone who can take real-world action.
-If the user explicitly asks who or what you are, the response is produced
-by ``not_a_person_response(lang)``. Active crisis disclosures are handled
-separately by the hardcoded ``crisis_response()``.
+# DISCLOSURE INTEGRITY: the UI has already shown a compact, code-templated
+# introduction identifying FoodPath as an automated eligibility guide and
+# not an application or official decision. Do NOT repeat that introduction
+# on the first user turn or add a wall of disclaimers. Do not claim to be a
+# person, caseworker, hotline, or someone who can take real-world action.
+# If the user explicitly asks who or what you are, the response is produced
+# by ``not_a_person_response(lang)``. Active crisis disclosures are handled
+# separately by the hardcoded ``crisis_response()``.
 """
 
 # Spanish full-conversation system prompt (W19). A 1:1 rendering of the
@@ -139,119 +183,103 @@ separately by the hardcoded ``crisis_response()``.
 # explanation in Spanish. Keep rule vocabulary (income limits, deduction
 # names) aligned with knowledge_base/01_program_overview.es.md so the
 # model's phrasing matches the retrieved Spanish rule text.
-SYSTEM_PROMPT_ES = """Eres FoodPath, un asistente independiente y empático de elegibilidad para los
-Servicios de Alimentos y Nutrición (FNS) de Carolina del Norte. Tu alcance
-está estrictamente limitado a una evaluación inicial de elegibilidad para
-NC FNS / SNAP; no das asesoría legal ni ayudas con temas no relacionados.
+
+SYSTEM_PROMPT_ES = """Eres FoodPath, un asistente independiente de elegibilidad para FNS / SNAP de Carolina del Norte. Eres cálido, directo y conversacional. Ayudas a un solo hogar con una evaluación inicial breve — tres campos, algunas aclaraciones, y una explicación en lenguaje sencillo de dónde probablemente se ubica.
+
+# Persona
+- Cálido, directo, lenguaje sencillo. Apunta a un nivel de lectura de sexto grado.
+- Un pensamiento por oración. Sin frases burocráticas, sin lenguaje legal.
+- No eres una persona, un trabajador social, una línea de ayuda, ni nadie que pueda tomar acciones en el mundo real por el usuario. Eres una herramienta de texto automatizada que hace una sola cosa: una evaluación inicial de FNS.
+- El aviso inicial de IA / no-persona y la primera pregunta ya fueron renderizados por código. NO los repitas. NO añadas muros de avisos adicionales.
+
+# Política de conversación
+Cada respuesta sigue la misma forma, en este orden:
+1. **Reconoce** lo que el usuario acaba de decir, en una cláusula corta. El reconocimiento debe ser específico de lo que dijo — "entendido", "gracias", o una reformulación de su contenido. NO abras con un "agradezco que lo compartas" estereotipado ni con ninguna variante; ese inicio está reservado para mensajes fuera de alcance enrutados por la redirección de alcance.
+2. **Responde** cualquier pregunta real que haya hecho, en 1-2 oraciones. Si no hizo una pregunta, omite este paso.
+3. **Haz exactamente UNA pregunta** para el siguiente campo pendiente. La última oración de tu respuesta es la pregunta del siguiente campo, hasta que la recolección esté completa.
+
+Nunca vuelvas a preguntar un campo que el usuario ya llenó. Nunca repitas un campo que el usuario ya proporcionó. Nunca vuelvas a abrir un valor confirmado para "verificar de nuevo" — el estado es la fuente de verdad, el usuario no necesita re-justificarlo.
+
+Si el usuario está fuera de alcance, el sistema enruta el turno a una redirección determinista (`scope_redirect_message`) — tú no ves esos turnos. Si el usuario pregunta quién o qué eres, el sistema enruta el turno a la respuesta corta de identidad (`short_identity_response`) o al bloque completo de no-persona (`not_a_person_response`) — tú no escribes esas respuestas. Si el usuario está en crisis, el sistema enruta el turno a la respuesta de crisis codificada (`crisis_response`). Tu prompt solo gobierna turnos ordinarios dentro del alcance de la recolección.
+
+# Ejemplos de few-shot
+
+Ejemplo 1 — recolección por camino feliz, respuesta breve:
+Usuario: "hola"
+Asistente: "¿Cuántas personas, incluyéndote, compran y preparan comida juntas? Si normalmente compras y cocinas solo para ti, responde 1."
+Usuario: "3"
+Asistente: "Entendido — 3 personas. ¿Cuál es el ingreso mensual bruto de su hogar?"
+Usuario: "1500"
+Asistente: "Entendido — $1,500 al mes. ¿Alguna persona en su hogar tiene 60 años o más, o tiene una discapacidad?"
+Usuario: "no"
+Asistente: (sigue la explicación final de elegibilidad, con citas)
+
+Ejemplo 2 — ingreso donde el usuario indicó el período de pago:
+Usuario: "ganamos como 1500 al mes"
+Asistente: "Entendido — $1,500 al mes. ¿Alguna persona en su hogar tiene 60 años o más, o tiene una discapacidad?"
+
+Ejemplo 2b — ingreso SIN período de pago. Nunca lo adivines. Una cifra que
+en realidad es por día o por año, registrada como mensual, produce un
+resultado incorrecto. Pregunta cuál es, citando su propio número:
+Usuario: "70"
+Asistente: "Solo para confirmar: $70 ¿es por mes, por semana o por día? Necesito el total mensual bruto del hogar."
+
+Ejemplo 2c — una tarifa sin cantidad de tiempo. Pide la mitad que falta y
+luego combínalas; no hagas la aritmética de memoria:
+Usuario: "$15 por hora"
+Asistente: "Entendido. Para convertir un salario por hora a un total mensual, ¿cuántas horas trabajas por semana normalmente?"
+
+Ejemplo 3 — relleno social que NO es un valor de campo:
+Usuario: "gracias"
+Asistente: "De nada. ¿Alguna persona en su hogar tiene 60 años o más, o tiene una discapacidad?"
+
+Ejemplo 4 — el usuario pregunta una pregunta de identidad (el sistema la enruta fuera; lo que habrías dicho si la vieras es solo la siguiente pregunta de campo):
+Usuario: "quién eres"
+Asistente: (el sistema enruta esto a `short_identity_response`; el modelo nunca ve este turno)
+
+# Reglas (se aplican solo después de la forma conversacional arriba)
 
 Recolecta únicamente los tres campos que necesita la calculadora:
   1. household_size  (entero — número de personas en el hogar)
   2. gross_monthly_income  (número — ingresos mensuales brutos del hogar)
-  3. has_elderly_or_disabled_member  (booleano — si alguna persona del
-     hogar tiene 60 años o más o tiene una discapacidad)
+  3. has_elderly_or_disabled_member  (booleano — si alguna persona del hogar tiene 60 años o más o tiene una discapacidad)
 
-La calculadora también acepta cuatro deducciones OPCIONALES. NO hagas
-preguntas adicionales para recolectarlas — regístralas ÚNICAMENTE cuando
-el usuario ofrezca la información por su cuenta en la conversación:
-  - earned_monthly_income (la porción de ingresos por trabajo salarial o
-    trabajo por cuenta propia)
+La calculadora también acepta cuatro deducciones OPCIONALES. NO hagas preguntas adicionales para recolectarlas — regístralas ÚNICAMENTE cuando el usuario ofrezca la información por su cuenta:
+  - earned_monthly_income (la porción de ingresos por trabajo salarial o trabajo por cuenta propia)
   - dependent_care_monthly (costos de cuidado de niños o dependientes)
-  - medical_expenses_monthly (gastos médicos de bolsillo; relevante cuando
-    el hogar incluye una persona mayor o con discapacidad)
+  - medical_expenses_monthly (gastos médicos de bolsillo; relevante cuando el hogar incluye una persona mayor o con discapacidad)
   - shelter_costs_monthly (renta/hipoteca, impuestos, seguro, servicios)
-Registrar las deducciones que el usuario ofrece voluntariamente mejora la
-precisión de la evaluación de ingreso neto. Nunca presiones al usuario
-para obtener estos datos.
+Registrar las deducciones que el usuario ofrece voluntariamente mejora la precisión de la evaluación de ingreso neto. Nunca presiones al usuario para obtener estos datos.
 
-NUNCA pidas al usuario ninguna otra información de identificación personal.
-En particular, NO solicites: un número de Seguro Social, una fecha de
-nacimiento completa, una dirección de domicilio, un número de teléfono, un
-número de cuenta bancaria, un número de licencia de conducir, un estatus
-migratorio, ni ningún otro identificador más allá de los campos anteriores.
-Si el usuario ofrece esa información por su cuenta, acéptala con cortesía
-pero no la almacenes ni la repitas textualmente.
+NUNCA pidas al usuario ninguna otra información de identificación personal. En particular, NO solicites: un número de Seguro Social, una fecha de nacimiento completa, una dirección de domicilio, un número de teléfono, un número de cuenta bancaria, un número de licencia de conducir, un estatus migratorio, ni ningún otro identificador más allá de los campos anteriores. Si el usuario ofrece esa información por su cuenta, acéptala con cortesía pero no la almacenes ni la repitas textualmente.
 
-Haz exactamente UNA pregunta a la vez, para el primer campo listado en
-missing_fields. Nunca vuelvas a preguntar por un campo que ya esté
-presente en el estado. Registra los datos que proporciona el usuario
-únicamente llamando a update_state; no pongas cálculos aritméticos ni
-valores inferidos en esa llamada de herramienta. Nunca hagas la
-aritmética de elegibilidad tú mismo. Cuando se te proporcione el resultado
-determinista de elegibilidad, explícalo usando ese resultado y el texto de
-las reglas recuperado, aclarando claramente que se trata de una evaluación
-inicial y no de una determinación final de la agencia.
+Registra los datos que proporciona el usuario únicamente llamando a update_state; no pongas cálculos aritméticos ni valores inferidos en esa llamada de herramienta. Nunca hagas la aritmética de elegibilidad tú mismo. Cuando se te proporcione el resultado determinista de elegibilidad, explícalo usando ese resultado y el texto de las reglas recuperado, aclarando claramente que se trata de una evaluación inicial y no de una determinación final de la agencia.
 
-IMPORTANTE — respuestas breves: los usuarios reales responden con
-fragmentos cortos, no oraciones completas. Si acabas de pedir un campo
-específico y la respuesta del usuario es un número simple, una frase corta,
-o un sí/no evidente ("3", "3 personas", "2200", "$2,200 al mes", "no",
-"nadie"), esa respuesta ES el valor del campo que acabas de pedir — llama a
-update_state con ese valor de inmediato. NO le pidas al usuario que lo
-repita en una oración más larga, y no esperes a que repita el nombre del
-campo.
+W53 — PROGRESO DE LA RECOLECCIÓN: una vez que registres exitosamente un campo con update_state, confírmalo en UNA cláusula corta e INMEDIATAMENTE pregunta por el siguiente campo en missing_fields. NO vuelvas a abrir, re-confirmar ni re-preguntar un campo que acabas de aceptar. NO narres restricciones internas del esquema. NO termines tu respuesta con una pregunta retórica que no avance la recolección. Mientras missing_fields no esté vacío, la ÚLTIMA oración de tu respuesta debe ser la pregunta del siguiente campo.
 
-W53 — PROGRESO DE LA RECOLECCIÓN: una vez que registres exitosamente un
-campo con update_state, confírmalo en UNA cláusula corta e INMEDIATAMENTE
-pregunta por el siguiente campo en missing_fields. NO vuelvas a abrir,
-re-confirmar ni re-preguntar un campo que acabas de aceptar ("sólo para
-confirmar, ¿de verdad son 17?"). NO narres restricciones internas del
-esquema. Esos son detalles de implementación — el usuario no necesita
-saberlos, y explicarlos detiene la conversación. NO re-litigues turnos
-anteriores ("ya que antes mencionaste que 'cero' era la respuesta de
-otra cosa, ¿estás seguro?"). Una vez que un campo está registrado, está
-registrado. NO termines tu respuesta con una pregunta retórica
-("¿sólo estabas tirando un número?", "¿es correcto?") que no avance la
-recolección — el siguiente mensaje del usuario debe tener una pregunta
-real que responder. Mientras missing_fields no esté vacío, la ÚLTIMA
-oración de tu respuesta debe ser la pregunta del siguiente campo.
+Si el usuario pide algo fuera del alcance de la elegibilidad de NC FNS, el sistema ya lo redirigió. No intentes responder la solicitud fuera de tema. No abandones ni reinicies ningún estado que ya se haya recolectado.
 
-Si el usuario pide algo fuera del alcance de la elegibilidad de NC FNS,
-responde con una redirección breve y cortés de vuelta a las preguntas de
-FNS y no intentes responder la solicitud fuera de tema. No abandones ni
-reinicies ningún estado que ya se haya recolectado.
+# INTEGRIDAD DEL AVISO: la interfaz ya mostró una introducción breve,
+# generada por código, que identifica a FoodPath como una guía automatizada
+# de elegibilidad y aclara que no es una solicitud ni una decisión oficial.
+# NO repitas esa introducción en el primer turno ni agregues un muro de
+# avisos. No afirmes ser una persona, trabajador social, línea de ayuda ni
+# alguien que pueda actuar en el mundo real. Si el usuario pregunta
+# explícitamente quién o qué eres, usa ``not_a_person_response(lang)``.
+# Las crisis activas se manejan por separado con ``crisis_response()``.
 
-INTEGRIDAD DEL AVISO: la interfaz ya mostró una introducción breve,
-generada por código, que identifica a FoodPath como una guía automatizada
-de elegibilidad y aclara que no es una solicitud ni una decisión oficial.
-NO repitas esa introducción en el primer turno ni agregues un muro de
-avisos. No afirmes ser una persona, trabajador social, línea de ayuda ni
-alguien que pueda actuar en el mundo real. Si el usuario pregunta
-explícitamente quién o qué eres, usa ``not_a_person_response(lang)``. Las
-crisis activas se manejan por separado con ``crisis_response()``.
-
-IMPORTANTE: Conduce TODA la conversación en español — todas tus preguntas,
-aclaraciones y la explicación final de elegibilidad deben estar en español.
-El único contenido en inglés permitido en tus respuestas son las líneas
-deterministas generadas por código (p. ej. los sufijos "(Sources: ...)"
-y "(Updated ...)", que se agregan automáticamente y no debes reproducirlas
+IMPORTANTE: Conduce TODA la conversación en español — todas tus preguntas, aclaraciones y la explicación final de elegibilidad deben estar en español. El único contenido en inglés permitido en tus respuestas son las líneas deterministas generadas por código (p. ej. los sufijos "(Sources: ...)" y "(Updated ...)", que se agregan automáticamente y no debes reproducirlas ni traducirlas tú mismo).
 ni traducirlas tú mismo).
 """
 
 # Deterministic, code-templated fallback questions for the "model returned
 # a tool call with no text" case -- see the note at the end of turn().
 # Phrasing matches what the system prompt already asks the model to do.
-_NEXT_FIELD_QUESTION: dict[str, dict[str, str]] = {
-    "en": {
-        "household_size": (
-            "How many people, including you, usually buy and prepare food together? "
-            "If you usually buy and cook just for yourself, answer 1."
-        ),
-        "gross_monthly_income": "What is your household's gross monthly income?",
-        "has_elderly_or_disabled_member": (
-            "Does anyone in your household have an elderly (60+) or disabled member?"
-        ),
-    },
-    "es": {
-        "household_size": (
-            "¿Cuántas personas, incluyéndote, compran y preparan comida juntas? "
-            "Si normalmente compras y cocinas solo para ti, responde 1."
-        ),
-        "gross_monthly_income": "¿Cuál es el ingreso mensual bruto de su hogar?",
-        "has_elderly_or_disabled_member": (
-            "¿Alguna persona en su hogar tiene 60 años o más, o tiene una discapacidad?"
-        ),
-    },
-}
+# The single source of truth lives in src/agent_questions.py so any
+# module that needs to ask the next intake question (the agent, the
+# not-a-person identity response, the restarter, the drifter, etc.) can
+# import the same code-templated phrasing without a circular import.
+from .agent_questions import NEXT_FIELD_QUESTION as _NEXT_FIELD_QUESTION  # noqa: E402, F401
 
 # W53 — forward-progress floor. The signature is the substring of the
 # canonical next-field question that, if present in the model reply,
@@ -284,7 +312,13 @@ _LEGACY_FIELD_QUESTION_SIGNATURES: dict[str, dict[str, tuple[str, ...]]] = {
 }
 
 
-def _w53_fold_ask(content: str, lang: str, missing: list[str]) -> str:
+def _w53_fold_ask(
+    content: str,
+    lang: str,
+    missing: list[str],
+    *,
+    question_override: str | None = None,
+) -> str:
     """Append the canonical next-field question for ``missing[0]`` if
     the reply does not already contain it.
 
@@ -302,6 +336,15 @@ def _w53_fold_ask(content: str, lang: str, missing: list[str]) -> str:
     if not missing:
         return content
     field = missing[0]
+    # An ambiguity clarification replaces the canonical question for this
+    # turn: asking "What is your gross monthly income?" again, after the
+    # user already answered it with something we couldn't pin to a period,
+    # is the loop that makes a screen feel broken. The specific question
+    # ("is $70 per month, per week, or per day?") is what moves it forward.
+    if question_override:
+        if content:
+            return f"{content} {question_override}"
+        return question_override
     normalized = _norm_for_match(content)
     signature = _W53_ALREADY_ASKED_SIGNATURE.get(lang, {}).get(field)
     legacy = _LEGACY_FIELD_QUESTION_SIGNATURES.get(lang, {}).get(field, ())
@@ -479,38 +522,107 @@ def _strip_completed_intake_re_asks(content: str, language: str) -> str:
     return stripped or content
 
 
+# P2.1: ack-opener rotation. The single-field and multi-field
+# confirmations each pull from their own list, both keyed on
+# state.turn_count % n. The lists are sized so back-to-back
+# intakes produce visibly different openers (no copy-paste feel)
+# while staying inside a small, testable, code-templated set.
+# Spanish parity: ES list is the same shape as the EN list.
+_ACK_OPENERS_EN_SINGLE: tuple[str, ...] = (
+    "Got it",
+    "Thanks",
+    "Right",
+    "OK",
+)
+_ACK_OPENERS_EN_MULTI: tuple[str, ...] = (
+    "Got it",
+    "Thanks",
+    "I recorded those",
+    "OK",
+)
+_ACK_OPENERS_ES_SINGLE: tuple[str, ...] = (
+    "Entendido",
+    "Gracias",
+    "Correcto",
+    "Anotado",
+)
+_ACK_OPENERS_ES_MULTI: tuple[str, ...] = (
+    "Entendido",
+    "Gracias",
+    "Registré esos datos",
+    "Anotado",
+)
+
+
+def _ack_opener(turn_count: int, lang: str, *, multi: bool) -> str:
+    """Pick the ack opener for *turn_count* in *lang*. The rotation
+    is keyed on ``turn_count % n`` so the choice is deterministic
+    and the test suite can assert it without flakes. ``multi=True``
+    selects the multi-field list (rare; only when 2+ fields land
+    in the same turn)."""
+    if lang == "es":
+        lst = _ACK_OPENERS_ES_MULTI if multi else _ACK_OPENERS_ES_SINGLE
+    else:
+        lst = _ACK_OPENERS_EN_MULTI if multi else _ACK_OPENERS_EN_SINGLE
+    return lst[turn_count % len(lst)]
+
+
 def _intake_progress_reply(
     state: AssessmentState, newly_recorded: list[str], lang: str
 ) -> str:
-    """Render a truthful transition from stored state, never model prose."""
+    """Render a truthful transition from stored state, never model prose.
+
+    P2.1: the ack opener rotates through a small list (4 entries
+    each) keyed on ``state.turn_count % n`` so back-to-back intakes
+    don\'t feel copy-pasted. The single-field and multi-field
+    confirmations rotate independently.
+    """
     missing = state.missing_fields()
     if not newly_recorded or not missing:
         return ""
-    if len(newly_recorded) > 1:
-        confirmation = "Got it — I recorded those details." if lang == "en" else "Entendido — registré esos datos."
+    is_multi = len(newly_recorded) > 1
+    opener = _ack_opener(state.turn_count, lang, multi=is_multi)
+    if is_multi:
+        # Multi-field: opener + "I recorded those details." /
+        # equivalent. The opener rotates independently so the
+        # multi-field message reads as a different sentence shape
+        # on the next multi-field turn.
+        if lang == "es":
+            tail = (
+                "registré esos datos." if opener != "Registré esos datos"
+                else "datos registrados."
+            )
+        else:
+            tail = (
+                "I recorded those details." if opener != "I recorded those"
+                else "details recorded."
+            )
+        confirmation = f"{opener} — {tail}"
     else:
         field = newly_recorded[0]
         value = getattr(state, field)
         if lang == "es":
-            confirmation = {
-                "household_size": f"Entendido — {value} personas compran y preparan comida juntas.",
-                "gross_monthly_income": f"Entendido — ${float(value):,.0f} al mes.",
+            tail_es = {
+                "household_size": f"{value} personas compran y preparan comida juntas.",
+                "gross_monthly_income": f"${float(value):,.0f} al mes.",
                 "has_elderly_or_disabled_member": (
-                    "Entendido — hay una persona de 60 años o más, o con discapacidad."
+                    "hay una persona de 60 años o más, o con discapacidad."
                     if value else
-                    "Entendido — no hay una persona de 60 años o más, ni con discapacidad."
+                    "no hay una persona de 60 años o más, ni con discapacidad."
                 ),
-            }.get(field, "Entendido — dato registrado.")
+            }.get(field, "dato registrado.")
         else:
-            confirmation = {
-                "household_size": f"Got it — {value} people buy and prepare food together.",
-                "gross_monthly_income": f"Got it — ${float(value):,.0f} per month.",
+            tail_en = {
+                "household_size": f"{value} people buy and prepare food together.",
+                "gross_monthly_income": f"${float(value):,.0f} per month.",
                 "has_elderly_or_disabled_member": (
-                    "Got it — someone is age 60 or older or disabled."
+                    "someone is age 60 or older or disabled."
                     if value else
-                    "Got it — no one is age 60 or older or disabled."
+                    "no one is age 60 or older or disabled."
                 ),
-            }.get(field, "Got it — I recorded that.")
+            }.get(field, "I recorded that.")
+            tail = tail_en
+        confirmation = f"{opener} — {tail_es if lang == 'es' else tail_en}"
     return f"{confirmation} {_NEXT_FIELD_QUESTION[lang][missing[0]]}"
 
 
@@ -711,6 +823,27 @@ class FoodPathAgent:
         # Internal operational notes are never sent in provider messages[].
         self._audit: list[dict[str, Any]] = []
         self._eligibility_result: dict[str, Any] | None = None
+        # Set when the user's income answer parsed but its PERIOD was
+        # ambiguous ("70", "$70 a day", "$15/hr"). Consumed by the reply
+        # path on the same turn to ask the specific clarifying question
+        # instead of re-asking the generic income question.
+        self._pending_income_clarification: str | None = None
+        # The message that raised the clarification, kept one turn longer
+        # than the reason itself. When the user supplies the missing half
+        # ("40 hours a week"), it is only meaningful combined with the
+        # original half ("$15/hr") -- reading the answer on its own turns
+        # a $2,600/month wage into a $173/month one.
+        self._pending_income_context: str | None = None
+        # Per-turn: True when this turn's income came from rejoining the
+        # reply with the held context, so the ambiguity check must not
+        # re-flag the (deliberately partial) reply.
+        self._income_resolved_via_context: bool = False
+        # The turn on which the context was captured. The context answers a
+        # question we asked, so it can only ever be combined with a reply
+        # from a LATER turn -- without this, the message that raised the
+        # clarification gets rejoined with itself on the same turn ("70" +
+        # "70"), which silently re-confirms the very guess we were querying.
+        self._pending_income_context_turn: int | None = None
         # W20: per-turn hostility flag. Set by ``turn()`` when the user's
         # message trips ``detect_hostility`` and no higher-priority guardrail
         # (crisis/injection/scope) claimed the turn. ``_system_prompt()``
@@ -718,6 +851,20 @@ class FoodPathAgent:
         # turn's LLM call only; ``turn()`` resets it to False before
         # returning so it can never leak into the next turn.
         self._hostile_this_turn: bool = False
+        # P0.3: classifier off_topic per-turn steering flag (see
+        # _system_prompt for the hint that uses it). Mirrors the
+        # _hostile_this_turn lifecycle: set in turn() when the
+        # classifier returns 'off_topic', reset at the end of every
+        # turn() so the next turn gets the stock prompt.
+        self._classifier_off_topic_this_turn: bool = False
+        # P0.3: classifier flagged the previous user message as off_topic
+        # for this turn only. The main LLM still gets the turn (the
+        # classifier no longer has conversation veto) but receives a
+        # single-line steering hint so the reply can address the user's
+        # actual question rather than re-asking the next missing field
+        # blind. Reset to False at the end of every turn(), same
+        # lifecycle as _hostile_this_turn.
+        self._classifier_off_topic_this_turn: bool = False
         # Append-only history of intake-field corrections. A correction is
         # a non-None -> DIFFERENT non-None change to one of the three
         # intake fields (``household_size``, ``gross_monthly_income``,
@@ -809,6 +956,17 @@ class FoodPathAgent:
                 HOSTILITY_CONTEXT_ES
                 if self.state.language == "es"
                 else HOSTILITY_CONTEXT_EN
+            )
+            return f"{context}\n\n{base}"
+        if self._classifier_off_topic_this_turn:
+            # P0.3: classifier flagged the prior message as off_topic.
+            # Prepend the steering hint for THIS CALL ONLY — same
+            # per-turn lifecycle as _hostile_this_turn (reset at the
+            # end of every turn()). Never written to history.
+            context = (
+                _CLASSIFIER_OFF_TOPIC_HINT_ES
+                if self.state.language == "es"
+                else _CLASSIFIER_OFF_TOPIC_HINT_EN
             )
             return f"{context}\n\n{base}"
         return base
@@ -913,12 +1071,19 @@ class FoodPathAgent:
     # month") because the terse-fallback path does NOT need an income
     # cue to extract a number -- only the model's tool-call path and the
     # out-of-order income-correction block do.
+    # Naming a pay period IS an income cue: "42000 a year" and "$70 a day"
+    # are unambiguously answers to the income question, but without the
+    # annual/daily terms below they failed this gate, never reached the
+    # normalizer, and the agent just re-asked the same question -- the
+    # dead-end loop that makes the screen impossible to finish.
     _INCOME_CUE_PATTERN = (
         r"(?:\$[\s\d,.]+|\b(?:income|make|makes|earn|earned|paid|salary|salaries|"
         r"wages?|paycheck|per\s+month|per\s+week|per\s+hour|a\s+month|a\s+week|"
         r"a\s+hour|an\s+hour|monthly|weekly|hourly|biweekly|bimonthly|"
-        r"/\s*(?:hr|hour|mo|month|wk|week)|"
-        r"ingresos?|ganamos?|sueldo|bucks?|dollars?)\b)"
+        r"per\s+year|a\s+year|yearly|annually|annual|per\s+day|a\s+day|daily|"
+        r"/\s*(?:hr|hour|mo|month|wk|week|yr|year|day)|"
+        r"ingresos?|ganamos?|sueldo|al\s+año|al\s+día|anual|"
+        r"bucks?|dollars?)\b)"
     )
 
     @classmethod
@@ -988,11 +1153,47 @@ class FoodPathAgent:
             # forgot to pass a usable value and we drop that field
             # rather than write garbage into state.
             if "gross_monthly_income" in updates:
-                normalized = normalize_income(updates["gross_monthly_income"])
-                if normalized is None:
+                # Before accepting a value, check whether the USER'S OWN
+                # WORDING left the pay period ambiguous. This is checked on
+                # the raw message rather than the extracted number because
+                # both paths that can fill this field (the model's tool call
+                # and the deterministic terse-reply fallback) will happily
+                # commit "70" as $70/month -- the model by guessing, the
+                # fallback by parsing. "$70 a day" is ~$1,500/month and
+                # "$42,000 a year" is $3,500/month; recording either at face
+                # value silently produces the wrong verdict, and a wrong
+                # denial is the most harmful output this tool has.
+                ambiguity = (
+                    classify_income_ambiguity(
+                        user_message,
+                        value=normalize_income(updates["gross_monthly_income"]),
+                    )
+                    if user_message is not None
+                    and not self._income_resolved_via_context
+                    else None
+                )
+                if ambiguity is not None:
+                    self._pending_income_clarification = ambiguity
+                    self._pending_income_context = self._accumulate_income_context(
+                        user_message
+                    )
+                    self._pending_income_context_turn = self.state.turn_count
                     updates.pop("gross_monthly_income", None)
+                    self._audit.append({
+                        "turn": self.state.turn_count,
+                        "event": "income_ambiguous_clarification_requested",
+                        "reason": ambiguity,
+                    })
                 else:
-                    updates["gross_monthly_income"] = normalized
+                    normalized = normalize_income(updates["gross_monthly_income"])
+                    if normalized is None:
+                        updates.pop("gross_monthly_income", None)
+                    else:
+                        updates["gross_monthly_income"] = normalized
+                        # A usable figure landed; the half-answer we were
+                        # holding is spent and must not leak into a later
+                        # income correction.
+                        self._pending_income_context = None
             if not updates:
                 continue
             # Detect intake-field corrections (non-None -> DIFFERENT
@@ -1101,6 +1302,39 @@ class FoodPathAgent:
                     return value
             return None
         if field == "gross_monthly_income":
+            # If we asked a clarifying question last turn ("how many hours a
+            # week?"), this turn's reply is only half the answer. Rejoin it
+            # with the half the user already gave so "$15/hr" + "40 hours a
+            # week" becomes the $2,600/month the two facts actually mean,
+            # rather than a $40/week reading of the reply in isolation.
+            if (
+                self._pending_income_context
+                and self._pending_income_context_turn != self.state.turn_count
+            ):
+                context = self._pending_income_context
+                candidates = [f"{context}, {text}"]
+                # A bare "40" answering "how many hours a week?" carries the
+                # unit only in the question we asked, so restore it before
+                # parsing. Which unit to restore is decided by the context,
+                # never by guessing at the number.
+                if re.fullmatch(r"\s*\d{1,3}(?:\.\d+)?\s*", text):
+                    if re.search(r"/\s*h|hour|hourly|\bhr\b", context, re.I):
+                        candidates.append(f"{context}, {text} hours a week")
+                    elif re.search(r"\bday|daily\b", context, re.I):
+                        candidates.append(f"{context}, {text} days a week")
+                for candidate in candidates:
+                    combined = normalize_income(candidate)
+                    if combined is not None:
+                        # Deliberately does NOT clear the context here: this
+                        # parser is called once to gate the fallback and
+                        # again to use it, so clearing on the first call
+                        # would leave the second with nothing to rejoin.
+                        # The context is cleared where the value lands.
+                        # Tell the choke point not to second-guess this
+                        # value: the period ambiguity it would flag on the
+                        # bare reply ("40") is exactly what we just resolved.
+                        self._income_resolved_via_context = True
+                        return combined
             # A bare numeric/currency reply is a valid answer to the income
             # question. Text containing an unrelated number ("she's 72")
             # must carry an explicit income cue before it can be normalized.
@@ -1160,6 +1394,22 @@ class FoodPathAgent:
             return None
         return None
 
+    def _accumulate_income_context(self, user_message: str) -> str:
+        """Append *user_message* to any income context we are already holding.
+
+        Resolving an ambiguous income can take more than one exchange
+        ("70" -> "a day" -> "5"), and each reply carries only a fragment of
+        the answer. Replacing the context each time would discard the
+        amount itself by the time the user names the period; accumulating
+        keeps every fragment so the final rejoin has all of them.
+        """
+        message = (user_message or "").strip()
+        if not message:
+            return self._pending_income_context or ""
+        if self._pending_income_context:
+            return f"{self._pending_income_context}, {message}"
+        return message
+
     def _calculate_once(self) -> None:
         if self._eligibility_result is not None or not self.state.is_ready_to_calculate():
             return
@@ -1199,6 +1449,7 @@ class FoodPathAgent:
         # ``'keyword'`` when a deterministic detector fires and
         # ``'classifier'`` when the LLM intent classifier fires.
         self._guardrail_source = None
+        self._income_resolved_via_context = False
         before = self.state.model_dump(mode="json")
         started = time.perf_counter()
         reply = ""
@@ -1318,6 +1569,15 @@ class FoodPathAgent:
             # W48: keyword layer attribution.
             self._guardrail_source = "keyword"
             content = injection_response(lang)
+            # P0.4: same state-aware next-field fold as the other
+            # canned continuations. The injection response is
+            # disclosure text describing all three intake fields
+            # generically; the W53 floor appends the actual next
+            # missing field's question so filled fields are not
+            # re-requested.
+            content = _w53_fold_ask(
+                content, self.state.language, list(self.state.missing_fields())
+            )
             self._messages.append({"role": "assistant", "content": content})
             return content
 
@@ -1326,13 +1586,42 @@ class FoodPathAgent:
             # W48: keyword layer attribution.
             self._guardrail_source = "keyword"
             content = scope_redirect_message(lang)
+            # P0.4: route the "come back to the intake" tail through
+            # the W62 next-field helper. The scope-redirect message
+            # describes all three intake fields generically; without
+            # this fold, the user is told they need household_size
+            # again even after they have already provided it. The
+            # W53 floor appends the actual next missing field's
+            # question (no-op if the reply already contains it).
+            content = _w53_fold_ask(
+                content, self.state.language, list(self.state.missing_fields())
+            )
             self._messages.append({"role": "assistant", "content": content})
             return content
 
         # W27: identity-disclosure questions are now reachable because persona
         # detection requires an imperative frame.
+        # P0.2: route the strict identity-class subset ("who are you",
+        # "what do you do", "what is this") to a short identity answer
+        # + the next missing field's question, rather than the full
+        # 4-channel "what this is NOT" block. The wider
+        # ``detect_not_a_person_request`` still fires for the harder
+        # cases (is this 911? will you call my caseworker?) where the
+        # full block is the right answer.
+        if detect_identity_question(user_message):
+            content = short_identity_response(
+                lang, list(self.state.missing_fields())
+            )
+            self._messages.append({"role": "assistant", "content": content})
+            return content
         if detect_not_a_person_request(user_message):
             content = not_a_person_response(lang)
+            # P0.4: route the "continue with the FNS questions" tail
+            # through the W53 floor so the actual next missing field
+            # is appended and filled fields are not re-requested.
+            content = _w53_fold_ask(
+                content, self.state.language, list(self.state.missing_fields())
+            )
             self._messages.append({"role": "assistant", "content": content})
             return content
 
@@ -1565,7 +1854,52 @@ class FoodPathAgent:
         # goes into conversation history goes to the classifier — the
         # raw user input never leaves the local process. (Finding #20
         # in PRODUCTION_READINESS_REVIEW.)
-        intent = classify_intent(safe_user_message, self.llm_client)
+        #
+        # P2.2 latency optimization (opt-in via
+        # AGENT_SKIP_CLASSIFIER_ON_CLEAN=1): when ALL keyword guardrails
+        # above have passed without claiming the turn (crisis,
+        # injection, scope, identity, not_a_person, process, drifter,
+        # hostility), the message is "clean" and the classifier is
+        # unlikely to flip it to crisis/injection (the only two
+        # intents that still short-circuit after P0.3). The classifier
+        # is skipped to save one LLM round-trip per clean turn.
+        #
+        # Trade-off: a novel-phrasing off-topic message that all
+        # keyword layers miss will NOT set ``is_out_of_scope`` for
+        # red-team attribution. The steering-hint path (P0.3) still
+        # applies — the main LLM gets a per-turn hint if the
+        # classifier WERE to return off_topic — but the classifier
+        # is bypassed entirely. The expanded keyword lists (P0.2)
+        # cover the common cases; the trade-off favors latency for
+        # strong main models.
+        #
+        # Default: classifier runs (current behavior). Set the env
+        # var to opt in to the skip. The doc's "Measure before/after"
+        # caveat is documented in CONVERSATION_OVERHAUL.md P2.2.
+        import os as _os
+        skip_classifier = (
+            _os.environ.get("AGENT_SKIP_CLASSIFIER_ON_CLEAN", "").strip().lower()
+            in ("1", "true", "yes", "on")
+        )
+        if skip_classifier:
+            # Optimistic default: assume the keyword layer's verdict
+            # holds. The main LLM path below still runs the same
+            # code that the classifier would have (off_topic is now
+            # a steering hint, not a short-circuit). We log to
+            # _audit so latency-measurement tooling can see when
+            # the skip fired.
+            intent = "normal"
+            self._audit.append({
+                "turn": self.state.turn_count,
+                "event": "classifier_skipped_clean_turn",
+                "note": (
+                    "[FoodPath audit] P2.2: classifier call skipped on a "
+                    "clean turn (all keyword guardrails passed). "
+                    "Set AGENT_SKIP_CLASSIFIER_ON_CLEAN=0 to re-enable."
+                ),
+            })
+        else:
+            intent = classify_intent(safe_user_message, self.llm_client)
         if intent == "crisis":
             self.state.is_crisis = True
             # W48: classifier layer attribution.
@@ -1583,12 +1917,20 @@ class FoodPathAgent:
             self._messages.append({"role": "assistant", "content": content})
             return content
         if intent == "off_topic":
+            # P0.3: the classifier no longer has conversation veto on
+            # off_topic. Crisis and injection still short-circuit
+            # (above); off_topic just sets a per-turn flag so the main
+            # LLM gets a single-line steering hint for THIS turn only
+            # (see _system_prompt). The model handles the actual reply
+            # — it can acknowledge what the user said, answer a real
+            # question they asked, then return to the intake. The
+            # historical ``is_out_of_scope`` state flag is preserved
+            # for red-team attribution and the W48 layer-attribution
+            # telemetry so the dashboard still knows the classifier
+            # caught it.
             self.state.is_out_of_scope = True
-            # W48: classifier layer attribution.
             self._guardrail_source = "classifier"
-            content = scope_redirect_message(lang)
-            self._messages.append({"role": "assistant", "content": content})
-            return content
+            self._classifier_off_topic_this_turn = True
 
         # Captured BEFORE the LLM call: the single field this turn's
         # question was actually about, if the intake isn't complete yet,
@@ -1665,6 +2007,7 @@ class FoodPathAgent:
             )
             self._messages.append({"role": "assistant", "content": content})
             self._hostile_this_turn = False
+            self._classifier_off_topic_this_turn = False
             return content
 
         # If the user asks to repeat a completed Spanish result, make a
@@ -1691,6 +2034,7 @@ class FoodPathAgent:
             )
             self._messages.append({"role": "assistant", "content": content})
             self._hostile_this_turn = False
+            self._classifier_off_topic_this_turn = False
             return content
 
         # If a completed intake receives a follow-up, ask the provider to
@@ -1784,6 +2128,25 @@ class FoodPathAgent:
                     suppress_fallback = True
             if not suppress_fallback:
                 parsed = self._fallback_parse_terse_reply(field, user_message)
+                if parsed is None and field == "gross_monthly_income":
+                    # "$15/hr" and "$70 a day" deliberately refuse to parse
+                    # (the hours/days worked are unknown), so they never
+                    # reach the _apply_tool_calls choke point that normally
+                    # raises the clarification. Catch them here instead of
+                    # letting the turn fall through to a verbatim re-ask of
+                    # the question the user just tried to answer.
+                    ambiguity = classify_income_ambiguity(user_message)
+                    if ambiguity is not None:
+                        self._pending_income_clarification = ambiguity
+                        self._pending_income_context = self._accumulate_income_context(
+                            user_message
+                        )
+                        self._pending_income_context_turn = self.state.turn_count
+                        self._audit.append({
+                            "turn": self.state.turn_count,
+                            "event": "income_ambiguous_clarification_requested",
+                            "reason": ambiguity,
+                        })
                 if parsed is not None:
                     try:
                         new_corrections.extend(
@@ -2061,9 +2424,79 @@ class FoodPathAgent:
         # outcome-bearing floor) and a no-op when the model reply
         # already asked for ``missing[0]``, so existing well-behaved
         # transcripts are unaffected.
+        # An ambiguous income answer replaces the generic income question
+        # with the one that actually resolves it. Consumed once, then
+        # cleared, so a later turn re-asks normally.
+        clarification = None
+        if (
+            self._pending_income_clarification
+            and "gross_monthly_income" in self.state.missing_fields()
+        ):
+            clarification = income_clarification_question(
+                self._pending_income_clarification,
+                self.state.language,
+                value=normalize_income(user_message),
+            ) or None
+        self._pending_income_clarification = None
+        if clarification:
+            # The model has usually just asserted the reading we are about
+            # to question ("Got it - $70 per month."). Keeping that sentence
+            # in front of the clarification would both contradict it and
+            # imply the figure was accepted, so the clarification stands
+            # alone. It already quotes the user's own number back to them.
+            content = ""
         content = _w53_fold_ask(
-            content, self.state.language, list(self.state.missing_fields())
+            content,
+            self.state.language,
+            list(self.state.missing_fields()),
+            question_override=clarification,
         )
+
+        # P1.2: post-LLM output validators. Run after the W53 fold so
+        # the appended next-field question also passes through the
+        # checks. On any failure, fall back to a templated state-aware
+        # continuation: just the canonical next-field question, so the
+        # user has something concrete to answer. The validators never
+        # re-ask a filled field (they only scan the reply), and the
+        # W62 next-field helper is reused here so the wording stays
+        # in lockstep with the rest of the agent.
+        from .validators import check_all
+        validator_failures = check_all(
+            content,
+            has_eligibility_result=self._eligibility_result is not None,
+            household_size=self.state.household_size,
+        )
+        if validator_failures and self.state.missing_fields():
+            # P1.2 fall-back: replace the LLM reply with a
+            # templated state-aware continuation ONLY when intake
+            # is INCOMPLETE. On a verdict turn (intake complete)
+            # the LLM is explaining the result, the _outcome_label_floor
+            # already added the deterministic verdict label, and
+            # the citations suffix is code-templated -- replacing
+            # the LLM's explanation with a "screening is complete"
+            # stub would lose the actual verdict wording. On those
+            # turns, validators catching something is logged for
+            # telemetry but does not overwrite the content.
+            #
+            # Preserve the deterministic citations suffix (it is
+            # code-templated, not LLM-authored) so the user still
+            # sees the rule citations the calculator produced.
+            sources_marker = "(Sources:"
+            sources = ""
+            if sources_marker in content:
+                idx = content.index(sources_marker)
+                sources = " " + content[idx:].rstrip()
+            missing = list(self.state.missing_fields())
+            fallback = _NEXT_FIELD_QUESTION.get(
+                self.state.language,
+                _NEXT_FIELD_QUESTION.get("en", {}),
+            ).get(missing[0], "")
+            self._audit.append({
+                "turn": self.state.turn_count,
+                "event": "p1_2_validator_caught",
+                "note": "P1.2 validators caught issues; falling back to templated continuation.",
+            })
+            content = (fallback + sources).strip()
 
         self._messages.append({"role": "assistant", "content": content})
         # W20: the de-escalation context applied to this turn's LLM call
@@ -2072,6 +2505,10 @@ class FoodPathAgent:
         # Guardrail early-returns above never set the flag, so they have
         # nothing to reset.
         self._hostile_this_turn = False
+        # P0.3: same per-turn lifecycle for the classifier off_topic
+        # steering hint (see _system_prompt). Cleared at the end of
+        # every turn so the next turn gets the stock prompt.
+        self._classifier_off_topic_this_turn = False
         return content
 
 

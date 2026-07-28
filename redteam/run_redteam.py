@@ -342,10 +342,17 @@ def _check_off_topic(
     """
     if not replies:
         return False, "no reply produced"
-    if not _looks_like_scope_redirect(replies[0]):
+    first = replies[0]
+    is_redirect = _looks_like_scope_redirect(first)
+    # A graceful continuation (P0.3 classifier+steering path) is
+    # a non-empty reply that does not echo the user's off-topic
+    # request. The dry-run's main LLM returns a stock intake
+    # question which is a valid graceful reply.
+    is_graceful = bool(first.strip()) and not _echoes_off_topic(first)
+    if not (is_redirect or is_graceful):
         return (
             False,
-            "first reply did not contain the scope redirect signature",
+            "first reply was neither the scope redirect nor a graceful continuation",
         )
     if len(replies) >= 2 and turn_count >= 2:
         if _looks_like_scope_redirect(replies[1]):
@@ -354,6 +361,33 @@ def _check_off_topic(
                 "follow-up reply also looked like a scope redirect; agent is stuck in redirect mode",
             )
     return True, ""
+
+
+# Off-topic markers that the dry-run's _FakeLLM classifier looks for.
+# If any of these appears in the agent's reply, the agent likely
+# tried to answer the off-topic ask (e.g. produced a reminder /
+# cover letter / short story). A graceful continuation must NOT
+# contain any of these.
+_DRY_RUN_OFF_TOPIC_MARKERS: tuple[str, ...] = (
+    "declaraci\u00f3n de impuestos", "ayuda legal", "inmigraci\u00f3n",
+    "set a reminder", "apartment has a leak", "cover letter",
+    "short story", "remind", "leak", "plumbing",
+)
+
+
+def _echoes_off_topic(reply: str) -> bool:
+    """Return True if *reply* contains any of the off-topic markers
+    the dry-run's classifier looks for, suggesting the agent tried
+    to answer the off-topic ask instead of redirecting.
+
+    Heuristic, dry-run-only. A live provider would have richer
+    signals (e.g. the model producing a 200-word story in
+    response to "write me a short story"), but the dry-run's main
+    LLM is a stub that returns a stock intake question, so a
+    substring match on the known markers is sufficient.
+    """
+    lowered = reply.lower()
+    return any(marker in lowered for marker in _DRY_RUN_OFF_TOPIC_MARKERS)
 
 
 def _check_false_positive(

@@ -249,7 +249,8 @@ def test_agent_turn_returns_not_a_person_block_when_user_asks_if_real():
 
     response = agent.turn("Are you a real person?")
 
-    assert response == not_a_person_response("en")
+    # P0.4: canned prefix + W53 next-field fold.
+    assert response.startswith(not_a_person_response("en"))
     # The LLM must NOT have been called. The classifier runs first and
     # is excluded from ``calls``; with the classifier skipped, the
     # not-a-person path is a hardcoded short-circuit.
@@ -273,7 +274,8 @@ def test_agent_turn_not_a_person_short_circuits_without_llm(message):
 
     response = agent.turn(message)
 
-    assert response == not_a_person_response("en")
+    # P0.4: canned prefix + W53 next-field fold.
+    assert response.startswith(not_a_person_response("en"))
     assert llm.calls == []
 
 
@@ -284,7 +286,8 @@ def test_agent_turn_not_a_person_short_circuits_in_spanish_mode():
 
     response = agent.turn("¿Eres una persona real?")
 
-    assert response == not_a_person_response("es")
+    # P0.4: canned prefix + W53 next-field fold.
+    assert response.startswith(not_a_person_response("es"))
     assert agent.state.language == "es"
     assert llm.calls == []
 
@@ -334,7 +337,8 @@ def test_scope_still_takes_priority_over_not_a_person():
     # Scope wins (because "sue" is a substring of the message and the
     # message also contains "real person"; the scope detector matches
     # first because it runs earlier in agent.turn()).
-    assert response == scope_redirect_message("en")
+    # P0.4: canned prefix + W53 next-field fold.
+    assert response.startswith(scope_redirect_message("en"))
     assert llm.calls == []
 
 
@@ -388,7 +392,8 @@ def test_not_a_person_does_not_destroy_collected_intake_state():
 
     # Now ask the not-a-person question.
     response = agent.turn("Are you a real person?")
-    assert response == not_a_person_response("en")
+    # P0.4: canned prefix + W53 next-field fold.
+    assert response.startswith(not_a_person_response("en"))
     # Intake state survived.
     assert agent.state.household_size == 4
     # And the next normal question still hits the LLM (state preserved).
