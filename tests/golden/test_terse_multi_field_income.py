@@ -316,3 +316,94 @@ def test_w61_parametrized_multi_number_shapes(bad_reply):
         f"reduced to a leading number; "
         f"got gross_monthly_income={agent.state.gross_monthly_income!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# W67: a bare "income" MENTION elsewhere in the message is not the same as
+# an income cue ADJACENT to a number.
+# ---------------------------------------------------------------------------
+#
+# Live human review, 2026-07-28. "1,000 people, and then 0 montly income"
+# has has_income_cue == True (the word "income" appears in the message at
+# all) but "income" is not adjacent to either number -- W61's original
+# guard was `len(numbers) >= 2 and not has_income_cue and not
+# _has_role_bearing_number(text)`, so the bare presence of the word
+# "income" anywhere in the message short-circuited the whole guard to
+# False, and the parser fell through to grab the LEADING number (1,000,
+# the household size the user had just restated) as income, silently
+# dropping the actually-stated $0. The fix drops the `not has_income_cue`
+# term entirely -- role-bearing-ness (a number adjacent to $, k,
+# "income"/"pay" directly followed by a digit, or a deduction word) is
+# the only signal that should let a multi-number reply through.
+
+
+def test_w67_bare_income_word_without_adjacency_still_declines_to_guess():
+    """"1,000 people, and then 0 montly income" must not resolve to $1,000.
+
+    This is the exact live-review bug: the leading number (the household
+    size, restated) must not be misfiled as income just because the word
+    "income" appears somewhere later in the same message.
+    """
+    agent = FoodPathAgent(llm_client=_NoToolCallForIncomeLLM())
+    agent.turn("There are 3 of us in the house.")
+    agent.turn("No elderly or disabled in our household.")
+    assert agent.state.gross_monthly_income is None
+
+    agent.turn("1,000 people, and then 0 montly income")
+
+    assert agent.state.gross_monthly_income is None, (
+        "W67: a bare mention of the word 'income' elsewhere in a "
+        "multi-number reply must not make the leading number (1,000) "
+        "resolve as income when neither number is actually adjacent to "
+        "an income cue; "
+        f"got gross_monthly_income={agent.state.gross_monthly_income!r}"
+    )
+
+
+@pytest.mark.parametrize(
+    "bad_reply",
+    [
+        "1,000 people, and then 0 montly income",
+        "2,000 people and 500 income",
+    ],
+)
+def test_w67_parametrized_bare_income_word_shapes(bad_reply):
+    """Same guard, several shapes of "a number, then a distant 'income'"."""
+    agent = FoodPathAgent(llm_client=_NoToolCallForIncomeLLM())
+    agent.turn("There are 3 of us in the house.")
+    agent.turn("No elderly or disabled in our household.")
+    assert agent.state.gross_monthly_income is None
+
+    agent.turn(bad_reply)
+    assert agent.state.gross_monthly_income is None, (
+        f"W67: multi-number reply with a non-adjacent 'income' mention "
+        f"{bad_reply!r} must not be silently reduced to a leading number; "
+        f"got gross_monthly_income={agent.state.gross_monthly_income!r}"
+    )
+
+
+def test_w67_role_bearing_income_adjacency_still_works():
+    """The W67 fix must not regress genuinely adjacent income cues.
+
+    "1800 and I pay 400 for daycare" has 2 numbers, but the second is
+    anchored to "I pay ... for daycare" -- a role-bearing adjacency that
+    _has_role_bearing_number recognizes. This must still be allowed
+    through the multi-number guard (it may still fail to resolve for
+    other, unrelated reasons downstream, but it must NOT be caught by
+    the is_unstructured_multi_number decline-to-guess branch, and must
+    NOT appear in the ambiguous-income audit log).
+    """
+    from src.agent import _has_role_bearing_number
+
+    assert _has_role_bearing_number("1800 and I pay 400 for daycare") is True
+
+    agent = FoodPathAgent(llm_client=_NoToolCallForIncomeLLM())
+    agent.turn("There are 3 of us in the house.")
+    agent.turn("No elderly or disabled in our household.")
+    agent.turn("1800 and I pay 400 for daycare")
+
+    log = getattr(agent, "_terse_income_ambiguous_log", [])
+    assert not any("1800" in entry for entry in log), (
+        "W67: a role-bearing multi-number reply must not be logged as "
+        f"ambiguous; got log={log!r}"
+    )
