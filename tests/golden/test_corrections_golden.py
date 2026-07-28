@@ -256,3 +256,83 @@ def test_first_time_provision_is_not_a_correction():
     )
     assert result.corrections == []
     assert_universal_invariants(result)
+
+
+# ---------------------------------------------------------------------------
+# Post-verdict correction has no deterministic fallback (2026-07-28)
+# ---------------------------------------------------------------------------
+
+
+def test_post_verdict_income_correction_applies_even_without_a_model_tool_call():
+    """Live human review, 2026-07-28: every OTHER correction path in this
+    file has a deterministic backstop for when the model fails to emit a
+    tool call. The post-verdict path had none -- reproduced live: "actually
+    wait, my income is really 1500" after a $2,200 verdict silently did
+    nothing in 1 of 6 live runs (model returned no tool call at all), and
+    the stale $2,200 verdict stayed on screen with no sign the correction
+    was dropped. This scripts that exact model failure directly: a
+    post-verdict reply with prose but zero tool calls."""
+    from src.agent import FoodPathAgent
+
+    class NoToolCallOnCorrection:
+        def __init__(self):
+            self.n = 0
+
+        def chat(self, messages, system=None, tools=None):
+            self.n += 1
+            if self.n == 1:
+                return update(household_size=3)
+            if self.n == 2:
+                return update(gross_monthly_income=2200)
+            if self.n == 3:
+                return update(has_elderly_or_disabled_member=False)
+            # Turn 4 (the correction): model acknowledges in prose but
+            # emits no tool call at all -- the exact live failure shape.
+            return {
+                "content": "Screening result: likely eligible based on $2,200.",
+                "tool_calls": [],
+            }
+
+    agent = FoodPathAgent(llm_client=NoToolCallOnCorrection())
+    agent.turn("3")
+    agent.turn("2200")
+    agent.turn("no")
+    agent.turn("actually wait, my income is really 1500")
+
+    assert agent.state.gross_monthly_income == 1500.0, (
+        "the correction was silently dropped -- state still shows the old figure"
+    )
+    assert agent.eligibility_result["income_considered"] == 1500.0, (
+        "state updated but the cached verdict is stale"
+    )
+
+
+def test_post_verdict_deduction_mention_does_not_get_misread_as_income():
+    """The deterministic backstop must respect the same deduction-cue
+    guard as the mid-intake W64 correction path: "my rent went up" must
+    never overwrite gross_monthly_income."""
+    from src.agent import FoodPathAgent
+
+    class NoToolCallEver:
+        def __init__(self):
+            self.n = 0
+
+        def chat(self, messages, system=None, tools=None):
+            self.n += 1
+            if self.n == 1:
+                return update(household_size=3)
+            if self.n == 2:
+                return update(gross_monthly_income=2200)
+            if self.n == 3:
+                return update(has_elderly_or_disabled_member=False)
+            return {"content": "Noted.", "tool_calls": []}
+
+    agent = FoodPathAgent(llm_client=NoToolCallEver())
+    agent.turn("3")
+    agent.turn("2200")
+    agent.turn("no")
+    agent.turn("actually wait, my rent is $1500 now")
+
+    assert agent.state.gross_monthly_income == 2200.0, (
+        "a rent mention was misread as an income correction"
+    )
