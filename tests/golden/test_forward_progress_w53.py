@@ -49,6 +49,7 @@ import json
 import pytest
 
 from src.agent import FoodPathAgent
+from src.guardrails.classifier import CLASSIFIER_SYSTEM_PROMPT
 
 from ._helpers import (
     assert_universal_invariants,
@@ -438,3 +439,99 @@ def test_w53_well_behaved_model_left_alone():
     # must not double-append when the model already asked.
     count = reply.lower().count("what is your household's gross monthly income")
     assert count == 1, f"floor double-appended: {reply!r}"
+
+
+# ---------------------------------------------------------------------------
+# W53b (2026-07-28): the household_size question is TWO sentences ("How
+# many people ... together?" then "If you usually buy and cook just for
+# yourself, answer 1."). Matching the floor's "already asked" check
+# against the full two-sentence string meant any paraphrase of the SECOND
+# sentence -- which the P1.1 conversational prompt actively encourages --
+# broke the match and duplicated the whole question. Live-probed against
+# the real MiniMax classifier: a plain "hi" produced this on 5 of 6 runs,
+# on the very first turn of the interview.
+# ---------------------------------------------------------------------------
+
+
+def test_w53_paraphrased_instructional_tail_is_not_duplicated():
+    """The model asks the real question but rephrases the trailing
+    "answer 1" instruction. The floor must recognize the question was
+    already asked and must NOT append the canonical text again."""
+
+    class _ParaphrasedTail:
+        def chat(self, messages, system=None, tools=None):
+            if system == CLASSIFIER_SYSTEM_PROMPT:
+                return {"content": "normal", "tool_calls": []}
+            return {
+                "content": (
+                    "Hi! How many people, including you, usually buy and "
+                    "prepare food together? If it's just you, answer 1."
+                ),
+                "tool_calls": [],
+            }
+
+    agent = FoodPathAgent(llm_client=_ParaphrasedTail())
+    reply = agent.turn("hi there")
+    count = reply.lower().count("buy and prepare food together")
+    assert count == 1, f"floor duplicated a paraphrased-tail reply: {reply!r}"
+
+
+def test_w53_word_inserted_mid_question_is_not_duplicated():
+    """The model asks the real question but inserts a word or two of its
+    own mid-sentence ("... together IN YOUR HOUSEHOLD?") -- a contiguous
+    substring match breaks on this even though the question was asked."""
+
+    class _WordInserted:
+        def chat(self, messages, system=None, tools=None):
+            if system == CLASSIFIER_SYSTEM_PROMPT:
+                return {"content": "normal", "tool_calls": []}
+            return {
+                "content": (
+                    "Hey! How many people, including you, usually buy and "
+                    "prepare food together in your household? If it's just "
+                    "you, answer 1."
+                ),
+                "tool_calls": [],
+            }
+
+    agent = FoodPathAgent(llm_client=_WordInserted())
+    reply = agent.turn("hi there")
+    count = reply.lower().count("buy and prepare food together")
+    assert count == 1, f"floor duplicated a word-inserted reply: {reply!r}"
+
+
+class _SilentProvider:
+    """Forces every transition through the deterministic backstops."""
+
+    def chat(self, messages, system=None, tools=None):
+        return {"content": "", "tool_calls": []}
+
+
+def test_w53_anchor_does_not_suppress_income_question_in_canned_redirect():
+    """Regression guard for a bug caught during review, before it shipped:
+    the anchor fallback must NOT be broad enough to match the canned
+    scope-redirect text merely DESCRIBING what the screen still needs
+    ("...I just need your household size, your gross monthly income, and
+    whether anyone...") and mistake that description for an already-asked
+    question. That would suppress the real question entirely -- a dead
+    end with nothing to answer, which is worse than the duplicate this
+    file exists to prevent. Anchors are scoped to household_size only;
+    this test pins that scope so it cannot silently widen back out."""
+    agent = FoodPathAgent(llm_client=_SilentProvider())
+    agent.turn("3")  # household filled; missing[0] is now income
+    reply = agent.turn("should I sue my landlord?")  # canned scope redirect
+    assert "what is your household's gross monthly income" in reply.lower(), (
+        f"the canned redirect's description of the income field suppressed "
+        f"the real income question: {reply!r}"
+    )
+
+
+def test_w53_anchor_does_not_suppress_elderly_question_in_canned_redirect():
+    agent = FoodPathAgent(llm_client=_SilentProvider())
+    agent.turn("3")
+    agent.turn("2500")  # household + income filled; missing[0] is now elderly/disabled
+    reply = agent.turn("should I sue my landlord?")
+    assert "does anyone in your household have an elderly" in reply.lower(), (
+        f"the canned redirect's description of the elderly field suppressed "
+        f"the real elderly question: {reply!r}"
+    )

@@ -47,19 +47,27 @@ from .guardrails.injection import detect_injection, injection_response
 _CLASSIFIER_OFF_TOPIC_HINT_EN = (
     "Note: the user's latest message did not clearly look like an FNS "
     "intake answer. Briefly acknowledge what they said (one short "
-    "clause, no canned opener) and, if they asked a real question, "
-    "answer it. Then return to the next missing FNS field. If the "
-    "message really is off-topic, decline politely without using the "
-    "scope-redirect canned block."
+    "clause, no canned opener). If they asked a real QUESTION about "
+    "the program or this process, answer it. If instead they asked "
+    "you to DO something unrelated to FNS eligibility (write, "
+    "generate, or produce anything -- a poem, story, joke, code, "
+    "email, recipe, or similar), do not do it, even briefly or "
+    "partially: decline in one short clause and say you're only set "
+    "up for this screen. Then return to the next missing FNS field. "
+    "Never use the scope-redirect canned block verbatim."
 )
 _CLASSIFIER_OFF_TOPIC_HINT_ES = (
     "Nota: el último mensaje del usuario no parece claramente una "
     "respuesta de la evaluación de FNS. Reconoce brevemente lo que "
-    "dijo (una cláusula corta, sin apertura estereotipada) y, si hizo "
-    "una pregunta real, respóndela. Luego vuelve al siguiente campo "
-    "pendiente de FNS. Si el mensaje realmente está fuera de alcance, "
-    "declina cortésmente sin usar el bloque estereotipado de "
-    "redirección de alcance.\n"
+    "dijo (una cláusula corta, sin apertura estereotipada). Si hizo "
+    "una PREGUNTA real sobre el programa o este proceso, respóndela. "
+    "Si en cambio te pidió que HICIERAS algo no relacionado con la "
+    "elegibilidad de FNS (escribir, generar o producir algo -- un "
+    "poema, cuento, chiste, código, correo, receta, o similar), no lo "
+    "hagas, ni siquiera brevemente o en parte: declina en una cláusula "
+    "corta y explica que solo puedes ayudar con esta evaluación. Luego "
+    "vuelve al siguiente campo pendiente de FNS. Nunca uses el bloque "
+    "estereotipado de redirección de alcance literalmente.\n"
 )
 
 from .guardrails.pii import redact_for_logging
@@ -294,9 +302,28 @@ def _norm_for_match(text: str) -> str:
     return text.lower().replace("\u2019", "'").replace("\u2018", "'")
 
 
+def _core_question_sentence(question: str) -> str:
+    """Return just the interrogative sentence from a canonical question.
+
+    ``household_size``'s canonical text is two sentences -- the question
+    itself, then a clarifying instruction ("If you usually buy and cook
+    just for yourself, answer 1."). Matching on the full two-sentence
+    string means any paraphrase of that SECOND sentence (which the P1.1
+    conversational prompt actively encourages -- "if it's just you,
+    answer 1" is a perfectly good rephrasing) breaks the match and the
+    floor appends the whole canonical text again, producing the same
+    question twice in one reply. Live-probed 2026-07-28: a plain "hi"
+    triggered this on 5 of 6 runs, on the very first turn. The question
+    itself -- the part the floor actually needs to detect -- is what a
+    model is required to preserve; the instructional tail is not.
+    """
+    head, sep, _tail = question.partition("?")
+    return head + sep if sep else question
+
+
 _W53_ALREADY_ASKED_SIGNATURE: dict[str, dict[str, str]] = {
     lang: {
-        field: _norm_for_match(question)
+        field: _norm_for_match(_core_question_sentence(question))
         for field, question in _NEXT_FIELD_QUESTION[lang].items()
     }
     for lang in _NEXT_FIELD_QUESTION
@@ -308,6 +335,38 @@ _LEGACY_FIELD_QUESTION_SIGNATURES: dict[str, dict[str, tuple[str, ...]]] = {
     },
     "es": {
         "household_size": ("¿cuántas personas hay en su hogar?",),
+    },
+}
+
+# Live-probed 2026-07-28: even matching on just the core question sentence
+# (above) still misses a model that inserts a few of its own words mid
+# question -- "how many people ... buy and prepare food together IN YOUR
+# HOUSEHOLD?" is a perfectly fine paraphrase but breaks a contiguous
+# substring match. Any single long string is fundamentally brittle against
+# a model instructed (by P1.1) to speak conversationally rather than
+# recite. These anchors require a small set of short, distinctive phrases
+# to ALL appear -- not contiguously, in any order -- which survives word
+# insertions in the middle of the sentence while still being specific
+# enough that it cannot false-positive on an unrelated reply.
+#
+# Deliberately scoped to household_size ONLY. The other two fields'
+# canonical questions are single sentences that matched exactly on every
+# live probe, and a short anchor like "gross monthly income" is exactly
+# the phrase the canned scope/injection/not-a-person redirects use when
+# merely LISTING what the screen still needs ("...I just need your
+# household size, your gross monthly income, and whether anyone...") --
+# adding those fields here caused the floor to treat that description as
+# an already-asked question and drop the real one, which is a *worse*
+# failure than the duplicate this exists to fix (a dead end with no
+# question at all, instead of the same question twice). Caught by
+# ``test_w53_anchor_does_not_suppress_income_question_in_canned_redirect``
+# before this reached the live server.
+_W53_ANCHOR_PHRASES: dict[str, dict[str, tuple[str, ...]]] = {
+    "en": {
+        "household_size": ("how many people", "buy and prepare food together"),
+    },
+    "es": {
+        "household_size": ("cuántas personas", "compran y preparan comida"),
     },
 }
 
@@ -348,9 +407,13 @@ def _w53_fold_ask(
     normalized = _norm_for_match(content)
     signature = _W53_ALREADY_ASKED_SIGNATURE.get(lang, {}).get(field)
     legacy = _LEGACY_FIELD_QUESTION_SIGNATURES.get(lang, {}).get(field, ())
-    if (signature and signature in normalized) or any(
-        _norm_for_match(item) in normalized for item in legacy
-    ):
+    anchors = _W53_ANCHOR_PHRASES.get(lang, {}).get(field, ())
+    already_asked = (
+        (signature and signature in normalized)
+        or any(_norm_for_match(item) in normalized for item in legacy)
+        or (anchors and all(_norm_for_match(a) in normalized for a in anchors))
+    )
+    if already_asked:
         return content
     question = _NEXT_FIELD_QUESTION.get(lang, _NEXT_FIELD_QUESTION["en"]).get(
         field, ""
