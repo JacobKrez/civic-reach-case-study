@@ -1791,6 +1791,17 @@ class FoodPathAgent:
         # floor keeps a stable frame of reference.
         if detect_restart_request(user_message):
             apply_intake_reset(self.state)
+            # apply_intake_reset() only has access to AssessmentState --
+            # it cannot clear the AGENT's own cached calculator output.
+            # Found live 2026-07-28: after a full restart and providing
+            # entirely new answers, the verdict stayed pinned to the
+            # PRE-restart figures (household 3 / $2,200 restart-then-
+            # refilled to household 10 / $50 still showed $2,200 as the
+            # income considered) because _calculate_once() short-circuits
+            # whenever self._eligibility_result is already set. A stale
+            # verdict surviving an explicit restart is a wrong-verdict
+            # bug, the same severity class as W61/the pay-period fixes.
+            self._eligibility_result = None
             self._audit.append(
                 {
                     "turn": self.state.turn_count,

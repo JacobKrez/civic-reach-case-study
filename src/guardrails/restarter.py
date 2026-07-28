@@ -99,6 +99,25 @@ _RESTART_PATTERNS: tuple[re.Pattern[str], ...] = (
         r"\b(?:never\s+mind|forget\s+it)[,.]?\s*(?:start\s+(?:over|fresh|again)|begin\s+again)\b",
         re.IGNORECASE,
     ),
+    # Bare/direct request with no leading qualifier -- "start over",
+    # "restart", "start again" sent as the whole message. Live human
+    # review, 2026-07-28: this is the single most natural phrasing a
+    # real user types, and every pattern above requires a lead-in
+    # ("can we...", "let's...", "actually...") that a bare request
+    # doesn't have. Reproduced: 0 of 5 live runs of a bare "start over"
+    # reset state; the LLM fell through to handling it in free-form
+    # prose and never once actually cleared the intake. Anchored to the
+    # whole message (allowing "please" and trailing punctuation) rather
+    # than matched anywhere in text, so an incidental mention buried in
+    # an unrelated sentence still can't fire by accident -- the
+    # conservative design principle in this module's docstring.
+    re.compile(
+        r"^\s*(?:please\s+)?(?:start\s+over|start\s+again|begin\s+again|"
+        r"restart(?:\s+(?:this|that|the\s+screen|the\s+screening))?|"
+        r"redo\s+(?:this|that|the\s+screen|the\s+screening))"
+        r"\s*(?:please)?\s*[.!]?\s*$",
+        re.IGNORECASE,
+    ),
 )
 
 
