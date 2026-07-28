@@ -740,6 +740,21 @@ _MULTI_NUMBER_TOKEN_RE = re.compile(
     r"(?<![,\d])\d+(?:\.\d+)?(?!\d)"
 )
 
+# W68b: bare rejection of the recorded household_size ("no not 1 person",
+# "no, that's not 1") with no replacement number anywhere else in the
+# message. Comma-aware (\d{1,3}(?:,\d{3})*) so it matches the whole
+# number, consistent with the household_size fallback parser fix.
+_HOUSEHOLD_BARE_REJECTION_RE = re.compile(
+    r"\bno\b.{0,15}?\bnot\s+\$?\s*(\d{1,3}(?:,\d{3})*)\b",
+    re.IGNORECASE,
+)
+# Every distinct number mentioned anywhere in a message, comma-grouping
+# collapsed to one token (unlike _MULTI_NUMBER_TOKEN_RE, which
+# deliberately treats "1,000" as just "1" for the income-ambiguity gate).
+# Used to confirm a bare rejection carries no OTHER number that could be
+# a real replacement value.
+_ALL_NUMBER_TOKENS_RE = re.compile(r"\d{1,3}(?:,\d{3})*(?:\.\d+)?")
+
 # W61: role-bearing tokens that, when adjacent to a bare number in a
 # terse reply, signal that the number has a clear semantic role --
 # income vs expense, gross vs deduction. The presence of any of these
@@ -1300,6 +1315,69 @@ class FoodPathAgent:
                 self._eligibility_result = None
             new_corrections.extend(call_corrections)
         return new_corrections
+
+    def _try_household_bare_rejection_clear(self, user_message: str, lang: str) -> str | None:
+        """W68b: detect a BARE rejection of the recorded household_size
+        (e.g. "no not 1 person") with no replacement number anywhere else
+        in the message, and if found, clear the field (and any cached
+        verdict) and return a deterministic, code-templated re-ask reply.
+        Returns ``None`` when the guard does not fire, so callers can fall
+        through to their normal turn processing.
+
+        Live human review, 2026-07-28: after a misparse recorded
+        household_size=1, the user replied "no not 1 person" -- an
+        unambiguous rejection -- but it matched neither the mid-intake
+        `correction_cue` (needs "actually"/"sorry"/"no wait"/etc., not a
+        bare "no") nor `household_phrase_cue` (needs "of us"/"there
+        are"/etc.), so the wrong 1 silently survived to the final verdict,
+        and the model's own attempt to reconcile the contradiction on the
+        next turn produced a duplicate question (household size AND
+        income asked together). There is no new number to apply here, so
+        the only correct response is to clear the field and re-ask -- and
+        the reply is code-templated rather than left to the model for the
+        same reason the W60 restart/recap replies are: the model
+        improvising here is exactly what produced the duplicate-question
+        bug. Shared by both the mid-intake out-of-order-correction path
+        and the post-verdict early-return path, since a bare rejection is
+        equally possible (and was observed) in both.
+        """
+        if self.state.household_size is None:
+            return None
+        bare_reject = _HOUSEHOLD_BARE_REJECTION_RE.search(user_message)
+        if not bare_reject:
+            return None
+        rejected_value = int(bare_reject.group(1).replace(",", ""))
+        if rejected_value != self.state.household_size:
+            return None
+        other_numbers = {
+            tok.replace(",", "") for tok in _ALL_NUMBER_TOKENS_RE.findall(user_message)
+        }
+        other_numbers.discard(str(rejected_value))
+        if other_numbers:
+            return None
+        self.state.household_size = None
+        self._eligibility_result = None
+        self._audit.append(
+            {
+                "turn": self.state.turn_count,
+                "event": "field_cleared",
+                "note": (
+                    "[FoodPath audit] User rejected the recorded "
+                    "household_size with no replacement value; field "
+                    "(and any cached verdict) cleared for re-ask."
+                ),
+            }
+        )
+        self._guardrail_source = "keyword"
+        ack = (
+            "Entendido, ese número no es correcto. "
+            "Empecemos de nuevo con esa pregunta."
+            if lang == "es"
+            else "Got it, that number wasn't right -- let's fix it."
+        )
+        content = _w53_fold_ask(ack, lang, list(self.state.missing_fields()))
+        self._messages.append({"role": "assistant", "content": content})
+        return content
 
     # Bare yes/no tokens for the elderly/disabled field fallback below.
     # English-only: Spanish-mode conversations rely on the LLM tool call
@@ -2103,6 +2181,18 @@ class FoodPathAgent:
         # Without this branch, post-verdict corrections silently no-op
         # and the agent keeps re-rendering the stale verdict.
         if self._eligibility_result is not None:
+            # W68b: check for a bare household_size rejection BEFORE
+            # calling the model at all -- the live duplicate-question bug
+            # came from trusting the model's own prose to reconcile a
+            # rejection it had no clean way to express. See
+            # _try_household_bare_rejection_clear for the full writeup.
+            bare_rejection_reply = self._try_household_bare_rejection_clear(
+                user_message, lang
+            )
+            if bare_rejection_reply is not None:
+                self._hostile_this_turn = False
+                self._classifier_off_topic_this_turn = False
+                return bare_rejection_reply
             response = self.llm_client.chat(
                 [*self._messages, {"role": "user", "content": self._context(user_message)}],
                 system=self._system_prompt(),
@@ -2485,6 +2575,19 @@ class FoodPathAgent:
                         fallback_applied = True
                     except ValueError:
                         pass
+
+            # W68b: a bare rejection of the recorded household_size, with
+            # no replacement number anywhere else in the message, must not
+            # be silently ignored -- see _try_household_bare_rejection_clear
+            # for the full live-bug writeup. Gated by `not fallback_applied`
+            # like the rest of this section: a real correction that already
+            # landed above wins.
+            if not fallback_applied:
+                bare_rejection_reply = self._try_household_bare_rejection_clear(
+                    user_message, lang
+                )
+                if bare_rejection_reply is not None:
+                    return bare_rejection_reply
 
         had_result = self._eligibility_result is not None
         self._calculate_once()
