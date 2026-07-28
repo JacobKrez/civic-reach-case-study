@@ -10,6 +10,11 @@ redteam/report_latest.json
 # machine; not something a reviewer cloning this repo needs to see.
 .hermes/
 
+# Claude Code local settings and project-local skills — reference internal
+# build-loop tooling (launchd jobs, simulator internals) not meant for a
+# reviewer cloning this repo.
+.claude/
+
 # Self-improvement queue script — hardcodes the author's local machine
 # paths and a personal Mission Control DB that doesn't exist outside it;
 # excluded so a fresh clone's test suite/file tree stay self-contained.
