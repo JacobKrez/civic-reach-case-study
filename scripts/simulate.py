@@ -248,6 +248,17 @@ class ConversationState:
     # Hostile persona: a free-text insult count, used to keep the
     # hostility confined to the first 1\u20132 turns.
     insult_count: int = 0
+    # W71 improv persona: the persona-LLM's own running message history
+    # (its "user"/"assistant" turns are inverted from the agent's, since
+    # here the persona plays the human and the agent's replies are what
+    # it responds TO). Kept on ConversationState so it survives across
+    # the per-turn persona.reply() calls the same way the other fields
+    # do, without needing a new plumbing path through _run_one.
+    improv_messages: list[dict[str, str]] = field(default_factory=list)
+    # Which randomly-sampled behavioral flavors this conversation drew,
+    # fixed once at turn 1 so the persona stays internally consistent
+    # turn-to-turn rather than re-rolling a new personality every reply.
+    improv_flavors: list[str] = field(default_factory=list)
 
 
 # ----- Terse: one-token answers, no punctuation -----------------------
@@ -900,6 +911,139 @@ def _restarter_reply(
     return "ok thanks"
 
 
+# ---------------------------------------------------------------------------
+# W71 — LLM-driven improv persona
+#
+# Every persona above is a Python template: a fixed function that returns
+# one of a small, hand-written set of phrasings in a fixed field order
+# (household -> income -> elderly). That gives real STYLE variety (terse,
+# rambling, hostile, ...) but the underlying CONVERSATIONAL SHAPE is
+# always the same script -- it can never do something the author didn't
+# think to write, like answering two fields in one message, answering
+# out of the order asked, asking the agent a question before answering,
+# or restating something it already said. Real users do all of that
+# constantly, and it's exactly the class of input most likely to surface
+# a genuinely new bug (as opposed to re-confirming an already-known one).
+#
+# This persona replaces the template with a live LLM call: the model is
+# given the scenario's TRUE facts and told to play a real, unpredictable
+# person -- free to reveal the facts in whatever order and shape it
+# wants, ask its own questions, express confusion, or restate things --
+# as long as it does not invent DIFFERENT facts and does eventually get
+# all three required fields across to the agent. A small set of
+# behavioral "flavors" is sampled per-conversation (not per-turn, so the
+# persona stays internally consistent) to widen the space further
+# without needing a new named persona for every combination.
+# ---------------------------------------------------------------------------
+
+_IMPROV_FLAVORS: tuple[str, ...] = (
+    "Sometimes give TWO facts in the same message instead of one at a time.",
+    "Answer the fields in whatever order feels natural to you, not necessarily "
+    "the order the assistant asked -- e.g. volunteer your income before it's asked.",
+    "Occasionally ask the assistant a clarifying question of your own before "
+    "answering (e.g. \"does that include my partner's income?\") and then answer.",
+    "Once or twice, restate a fact you already gave, in different words, as if "
+    "making sure it was heard.",
+    "Use casual, imperfect typing sometimes -- lowercase, a missing apostrophe, "
+    "a stray typo -- but stay easily readable.",
+    "Show a little mild impatience or confusion partway through, then cooperate.",
+    "Occasionally phrase a number in an unusual but valid way (spelled out, "
+    "with 'ish' or 'about', as a range, etc.) instead of a bare digit.",
+    "Once, acknowledge the assistant's last message without adding any new "
+    "information before continuing on the next turn.",
+)
+
+
+def _improv_reply(
+    agent_reply: str, scenario: Scenario, rng: random.Random, state: ConversationState
+) -> str:
+    """LLM-driven freeform user turn. See module section header above."""
+    state.turn_index += 1
+    if state.turn_index > 9:
+        # Turn budget exhausted -- end of script, same contract as every
+        # other persona returning "". _run_one's max_turns=12 is the
+        # hard backstop; this keeps improv conversations from eating the
+        # whole budget when the model gets chatty.
+        return ""
+
+    if not state.improv_flavors:
+        state.improv_flavors = rng.sample(_IMPROV_FLAVORS, k=min(3, len(_IMPROV_FLAVORS)))
+
+    if agent_reply and agent_reply.strip().lower().startswith("screening result:"):
+        # A verdict just landed. One short, natural reaction, then done --
+        # _run_one's own completion check (eligibility_result is not None
+        # and turn_index >= 3) ends the loop after this turn either way.
+        return rng.choice((
+            "oh okay, thank you",
+            "got it, thanks for explaining that",
+            "that's helpful, thank you",
+            "okay that makes sense, appreciate it",
+        ))
+
+    deduction_facts = []
+    if scenario.rent:
+        deduction_facts.append(f"you pay ${int(scenario.rent)}/month in rent")
+    if scenario.childcare:
+        deduction_facts.append(f"you pay ${int(scenario.childcare)}/month in childcare")
+    if scenario.medical:
+        deduction_facts.append(f"you have ${int(scenario.medical)}/month in medical expenses")
+    deduction_block = (
+        "You may ALSO mention (but are not required to): " + "; ".join(deduction_facts) + "."
+        if deduction_facts
+        else ""
+    )
+
+    system_prompt = (
+        "You are role-playing a real person applying for SNAP/FNS food "
+        "assistance in a text chat with an AI screening assistant called "
+        "FoodPath. Reply with ONLY your next chat message as this person -- "
+        "no narration, no stage directions, no quotation marks around it.\n\n"
+        "Your TRUE facts, which you must never contradict by the end of the "
+        "conversation (though you may reveal them gradually, out of order, "
+        "or in your own words):\n"
+        f"- Household size: {scenario.household_size} "
+        "(the people who live together and buy/prepare food together)\n"
+        f"- Gross monthly income: ${int(scenario.gross_monthly_income)}\n"
+        "- Elderly (60+) or disabled household member: "
+        f"{'yes' if scenario.has_elderly_or_disabled else 'no'}\n"
+        f"{deduction_block}\n\n"
+        "Behave like a genuinely unpredictable real human, not a scripted "
+        "test case. This conversation's specific quirks: "
+        + " ".join(state.improv_flavors) + "\n\n"
+        "Hard rules: never state a DIFFERENT number or answer than your true "
+        "facts above (typos in phrasing are fine; wrong facts are not). By "
+        "the end of the conversation you must have clearly communicated all "
+        "three required facts (household size, income, elderly/disabled "
+        "status) so the assistant can give you a result -- don't stall "
+        "forever or refuse to answer. Keep each message realistically short "
+        "(a real chat message, not an essay)."
+    )
+
+    from src.llm_client import LLMClient
+
+    client = LLMClient()
+    user_turn = (
+        f"[The assistant just said]: {agent_reply}"
+        if agent_reply
+        else "[Start the conversation -- the assistant hasn't said anything yet.]"
+    )
+    messages = state.improv_messages + [{"role": "user", "content": user_turn}]
+    try:
+        response = client.chat(messages, system=system_prompt)
+    except Exception:
+        # A provider hiccup here is a simulator-infra failure, not a
+        # product bug -- end the script cleanly rather than raising out
+        # of persona.reply() and being misfiled as a no_traceback finding
+        # against the AGENT.
+        return ""
+    text = (response.get("content") or "").strip()
+    if not text:
+        return ""
+    state.improv_messages.append({"role": "user", "content": user_turn})
+    state.improv_messages.append({"role": "assistant", "content": text})
+    return text
+
+
 PERSONAS: dict[str, Persona] = {
     "social": Persona(
         name="social",
@@ -990,6 +1134,22 @@ PERSONAS: dict[str, Persona] = {
         name="pii-oversharer",
         description="Volunteers SSN, address, phone.",
         reply=_pii_oversharer_reply,
+    ),
+    "improv": Persona(
+        name="improv",
+        description=(
+            "W71: LLM-driven freeform user, not a fixed template. Genuinely "
+            "improvises order, phrasing, and shape turn to turn -- multi-fact "
+            "messages, out-of-order answers, its own questions, restatements, "
+            "casual typing -- while staying faithful to the scenario's facts. "
+            "Needs a live LLM call per turn (not just per conversation like "
+            "every other persona's agent side): --dry-run and no-API-key "
+            "environments don't crash, but degenerate to a near-empty "
+            "conversation, since there is no offline model to improvise "
+            "against. Not meant to run under --dry-run; use scripts/sim_daemon.py "
+            "or scripts/simulate.py against a live provider."
+        ),
+        reply=_improv_reply,
     ),
 }
 
