@@ -837,7 +837,18 @@ def _assemble_page(lang: str) -> str:
         if lang == "es"
         else "Independent initial eligibility screener for North Carolina FNS / SNAP. Not an application."
     )
-    placeholder_progress = _steps_html(0, lang)
+    # The client-side renderStepIndicator() looks up the wrapper via
+    # `document.querySelector('.progress')`, then the <ol> as its child,
+    # then toggles the wrapper's `hidden` attribute once the screen
+    # completes -- but _steps_html() only ever returned the bare <ol>,
+    # with no element anywhere in the page actually carrying
+    # class="progress". `if(!progress) return;` therefore fired on
+    # every single call, silently, for as long as this indicator has
+    # existed: the step highlight never advanced for any user, on any
+    # session, ever. There's even dedicated `.progress` CSS (padding,
+    # `.progress[hidden]{display:none}`) that's been dead code the
+    # whole time for the same reason. Found live, 2026-07-28.
+    placeholder_progress = '<div class="progress">' + _steps_html(0, lang) + "</div>"
     placeholder_panel = (
         _panel_chrome(lang)
     )

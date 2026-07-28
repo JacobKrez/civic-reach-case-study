@@ -1451,9 +1451,19 @@ class FoodPathAgent:
                 r"\s*\$?\s*\d{1,3}(?:,\d{3})+(?:\.\d+)?(?:\s*[kK])?\s*",
                 text,
             )
+            # A bare "income" mention elsewhere in the message is NOT
+            # enough to trust the leading number -- found live 2026-07-28:
+            # "1,000 people, and then 0 montly income" has has_income_cue
+            # True (the word "income" appears) but "income" isn't adjacent
+            # to either number, so the OLD "not has_income_cue" escape
+            # hatch let this through and grabbed the leading 1,000 as
+            # income, silently dropping the actually-stated 0. Role-
+            # bearing-ness (a number adjacent to $, k, "income"/"pay" DIRECTLY
+            # followed by a digit, or a deduction word) is the real test
+            # for "this multi-number reply is structured enough to trust,"
+            # not merely containing the word "income" somewhere.
             is_unstructured_multi_number = (
                 len(numbers) >= 2
-                and not has_income_cue
                 and not _has_role_bearing_number(text)
             )
             if is_unstructured_multi_number:

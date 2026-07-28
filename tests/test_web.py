@@ -53,6 +53,34 @@ def test_root_includes_mobile_and_high_stakes_message_treatments(client):
     assert "#handoff-summary" in html
 
 
+def test_root_step_indicator_ol_is_wrapped_in_progress_div(client):
+    """W67 regression: the client-side renderStepIndicator() looks up its
+    wrapper via ``document.querySelector('.progress')`` before touching the
+    inner ``<ol class="steps">``. The initial server-rendered page used to
+    emit only the bare ``<ol>`` with no ancestor carrying ``class="progress"``,
+    so that lookup always returned null and ``if(!progress) return;`` fired
+    on every call -- the step indicator never advanced for any user, on any
+    session, ever. Found live 2026-07-28.
+
+    This asserts the actual nesting relationship, not just substring
+    presence, so a future edit that moves the class onto an unrelated
+    element (or removes the wrapper again) still fails the test.
+    """
+    html = client.get("/").text
+    import re
+
+    match = re.search(
+        r'<div class="progress">\s*<ol class="steps"[^>]*>.*?</ol>\s*</div>',
+        html,
+        re.DOTALL,
+    )
+    assert match is not None, (
+        "expected <ol class=\"steps\"> to be nested inside "
+        "<div class=\"progress\">...</div> so document.querySelector('.progress') "
+        "resolves; step indicator will silently never update otherwise"
+    )
+
+
 def test_chat_round_trips_state_within_session(client):
     first = client.post("/chat", json={"session_id": "same", "message": "household 4"})
     assert first.status_code == 200
