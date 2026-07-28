@@ -154,6 +154,10 @@ Example 4 — user asks an identity question (the system routes this away; what 
 User: "who are you"
 Assistant: (system routes this to `short_identity_response`; the model never sees this turn)
 
+Enumerated-household example (F2): when the user LISTS household members by name or relation, count them and RECORD the count. Counting people the user explicitly listed is RECORDING, not arithmetic — the user told you who they are; the only thing you do is add them up. State the count back so the user can correct it; an unresolved confirmation leaves the field empty forever, but a stated-back count the user can veto does not. The correction machinery (W64 / W68b) handles "no, actually it's 3" if they push back.
+User: "it's me, my two kids, and my mom — does she count?"
+Assistant: (calls update_state with household_size=4) "So that's 4 of you — you, your two kids, and your mom. If that's off, just say so. Now, what's your household's gross monthly income?"
+
 # Rules (apply only after the conversational shape above)
 
 Collect only the three fields the calculator needs:
@@ -171,6 +175,8 @@ Recording volunteered deduction data improves the accuracy of the net income scr
 NEVER ask the user for any other personally identifiable information. In particular, do NOT request: a Social Security number, a full date of birth, a home address, a phone number, a bank account number, a driver's license number, an immigration status, or any other identifier beyond the fields above. If the user volunteers such information, accept it gracefully but do not store it and do not echo it back verbatim.
 
 Record user-provided facts only by calling update_state; do not put arithmetic or inferred values in that tool call. Never do eligibility arithmetic yourself. Once the deterministic eligibility result is supplied, explain it using that result and the retrieved rule text, clearly labeling it as an initial screen rather than a final agency determination.
+
+F2 — counting is RECORDING, not arithmetic, when the user explicitly lists people. When the user enumerates household members by name or relation ("me, my two kids, and my mom"; "my partner and I and our baby"; "just me"; "me, my husband, my mom, and my two brothers"), COUNT them and record the count. Do not ask for unresolved confirmation — that leaves the field empty forever. State the count back in your ack ("So that's 4 of you...") so the user can correct it; the correction machinery handles vetoes. This rule covers counting people only; eligibility arithmetic (income totals, threshold comparisons) is still prohibited.
 
 W53 — INTAKE FORWARD PROGRESS: once you successfully record a field with update_state, confirm it in ONE short clause and IMMEDIATELY ask the next field in missing_fields. Do NOT re-open, re-confirm, or re-ask a field you just accepted. Do NOT narrate internal schema constraints to the user. Do NOT end your reply with a rhetorical question that does not advance the intake. While missing_fields is non-empty, the LAST sentence of your reply must be the next-field question.
 
@@ -249,6 +255,10 @@ Ejemplo 4 — el usuario pregunta una pregunta de identidad (el sistema la enrut
 Usuario: "quién eres"
 Asistente: (el sistema enruta esto a `short_identity_response`; el modelo nunca ve este turno)
 
+Ejemplo de hogar enumerado (F2): cuando el usuario LISTA los miembros del hogar por nombre o relación, cuéntalos y REGISTRA el total. Contar personas que el usuario enumeró explícitamente es REGISTRAR, no aritmética — el usuario te dijo quiénes son; lo único que haces es sumarlos. Di el total en voz alta para que el usuario pueda corregirlo; una confirmación sin resolver deja el campo vacío para siempre, pero un total enunciado que el usuario puede vetar no. La maquinaria de corrección (W64 / W68b) maneja "no, en realidad son 3" si el usuario corrige.
+Usuario: "somos yo, mis dos hijos, y mi mamá — ¿ella cuenta?"
+Asistente: (llama update_state con household_size=4) "Entonces son 4: tú, tus dos hijos y tu mamá. Si me equivoco, dímelo. ¿Cuál es el ingreso mensual bruto de su hogar?"
+
 # Reglas (se aplican solo después de la forma conversacional arriba)
 
 Recolecta únicamente los tres campos que necesita la calculadora:
@@ -266,6 +276,8 @@ Registrar las deducciones que el usuario ofrece voluntariamente mejora la precis
 NUNCA pidas al usuario ninguna otra información de identificación personal. En particular, NO solicites: un número de Seguro Social, una fecha de nacimiento completa, una dirección de domicilio, un número de teléfono, un número de cuenta bancaria, un número de licencia de conducir, un estatus migratorio, ni ningún otro identificador más allá de los campos anteriores. Si el usuario ofrece esa información por su cuenta, acéptala con cortesía pero no la almacenes ni la repitas textualmente.
 
 Registra los datos que proporciona el usuario únicamente llamando a update_state; no pongas cálculos aritméticos ni valores inferidos en esa llamada de herramienta. Nunca hagas la aritmética de elegibilidad tú mismo. Cuando se te proporcione el resultado determinista de elegibilidad, explícalo usando ese resultado y el texto de las reglas recuperado, aclarando claramente que se trata de una evaluación inicial y no de una determinación final de la agencia.
+
+F2 — contar personas es REGISTRAR, no aritmética, cuando el usuario las enumera explícitamente. Cuando el usuario enumera los miembros del hogar por nombre o relación ("somos yo, mis dos hijos, y mi mamá"; "mi pareja y yo y nuestro bebé"; "solo yo"; "yo, mi esposo, mi mamá, y mis dos hermanos"), CUÉNTALOS y registra el total. No pidas una confirmación sin resolver — deja el campo vacío para siempre. Di el total en voz alta ("Entonces son 4: tú, tus dos hijos y tu mamá") para que el usuario pueda corregirlo; la maquinaria de corrección maneja los vetos. Esta regla cubre solo el conteo de personas; la aritmética de elegibilidad (totales de ingresos, comparaciones de umbrales) sigue prohibida.
 
 W53 — PROGRESO DE LA RECOLECCIÓN: una vez que registres exitosamente un campo con update_state, confírmalo en UNA cláusula corta e INMEDIATAMENTE pregunta por el siguiente campo en missing_fields. NO vuelvas a abrir, re-confirmar ni re-preguntar un campo que acabas de aceptar. NO narres restricciones internas del esquema. NO termines tu respuesta con una pregunta retórica que no avance la recolección. Mientras missing_fields no esté vacío, la ÚLTIMA oración de tu respuesta debe ser la pregunta del siguiente campo.
 
@@ -293,86 +305,11 @@ ni traducirlas tú mismo).
 # import the same code-templated phrasing without a circular import.
 from .agent_questions import NEXT_FIELD_QUESTION as _NEXT_FIELD_QUESTION  # noqa: E402, F401
 
-# W53 — forward-progress floor. The signature is the substring of the
-# canonical next-field question that, if present in the model reply,
-# means the field is already being asked. We detect "already asked" on
-# the FIELD (a real question for that specific field), not on the
-# presence of a '?' -- the live failure transcript ended with a
-# question mark while asking nothing useful ("were you just tossing
-# out a number?"). The signature is normalized (lowercased, curly
-# apostrophes straightened) so the floor and the canonical question
-# use the same vocabulary.
-def _norm_for_match(text: str) -> str:
-    return text.lower().replace("\u2019", "'").replace("\u2018", "'")
-
-
-def _core_question_sentence(question: str) -> str:
-    """Return just the interrogative sentence from a canonical question.
-
-    ``household_size``'s canonical text is two sentences -- the question
-    itself, then a clarifying instruction ("If you usually buy and cook
-    just for yourself, answer 1."). Matching on the full two-sentence
-    string means any paraphrase of that SECOND sentence (which the P1.1
-    conversational prompt actively encourages -- "if it's just you,
-    answer 1" is a perfectly good rephrasing) breaks the match and the
-    floor appends the whole canonical text again, producing the same
-    question twice in one reply. Live-probed 2026-07-28: a plain "hi"
-    triggered this on 5 of 6 runs, on the very first turn. The question
-    itself -- the part the floor actually needs to detect -- is what a
-    model is required to preserve; the instructional tail is not.
-    """
-    head, sep, _tail = question.partition("?")
-    return head + sep if sep else question
-
-
-_W53_ALREADY_ASKED_SIGNATURE: dict[str, dict[str, str]] = {
-    lang: {
-        field: _norm_for_match(_core_question_sentence(question))
-        for field, question in _NEXT_FIELD_QUESTION[lang].items()
-    }
-    for lang in _NEXT_FIELD_QUESTION
-}
-
-_LEGACY_FIELD_QUESTION_SIGNATURES: dict[str, dict[str, tuple[str, ...]]] = {
-    "en": {
-        "household_size": ("how many people are in your household?",),
-    },
-    "es": {
-        "household_size": ("¿cuántas personas hay en su hogar?",),
-    },
-}
-
-# Live-probed 2026-07-28: even matching on just the core question sentence
-# (above) still misses a model that inserts a few of its own words mid
-# question -- "how many people ... buy and prepare food together IN YOUR
-# HOUSEHOLD?" is a perfectly fine paraphrase but breaks a contiguous
-# substring match. Any single long string is fundamentally brittle against
-# a model instructed (by P1.1) to speak conversationally rather than
-# recite. These anchors require a small set of short, distinctive phrases
-# to ALL appear -- not contiguously, in any order -- which survives word
-# insertions in the middle of the sentence while still being specific
-# enough that it cannot false-positive on an unrelated reply.
-#
-# Deliberately scoped to household_size ONLY. The other two fields'
-# canonical questions are single sentences that matched exactly on every
-# live probe, and a short anchor like "gross monthly income" is exactly
-# the phrase the canned scope/injection/not-a-person redirects use when
-# merely LISTING what the screen still needs ("...I just need your
-# household size, your gross monthly income, and whether anyone...") --
-# adding those fields here caused the floor to treat that description as
-# an already-asked question and drop the real one, which is a *worse*
-# failure than the duplicate this exists to fix (a dead end with no
-# question at all, instead of the same question twice). Caught by
-# ``test_w53_anchor_does_not_suppress_income_question_in_canned_redirect``
-# before this reached the live server.
-_W53_ANCHOR_PHRASES: dict[str, dict[str, tuple[str, ...]]] = {
-    "en": {
-        "household_size": ("how many people", "buy and prepare food together"),
-    },
-    "es": {
-        "household_size": ("cuántas personas", "compran y preparan comida"),
-    },
-}
+# W53 — forward-progress floor (F1, 2026-07-28).
+# See _w53_fold_ask for the new rule and the F3 contract.
+# The previous signature/anchor/legacy maps and _core_question_sentence
+# were deleted as part of F1 (CONVERSATION_OVERHAUL.md §9.3);
+# the new rule does not need them.
 
 
 def _w53_fold_ask(
@@ -383,41 +320,54 @@ def _w53_fold_ask(
     question_override: str | None = None,
 ) -> str:
     """Append the canonical next-field question for ``missing[0]`` if
-    the reply does not already contain it.
+    the reply does not already contain a question.
 
-    W53 floor: the user reply must end with a real question for the
-    first missing field. The W24 backstop only fired when content was
-    empty; the live failure (and the chatty model behaviour Jacob hit
-    on 2026-07-26) was content with NO question for the next field.
-    The reply is acknowledged as-is (truthful about what the model did
-    say), and the code-templated next-field question is appended so
-    the user has something concrete to answer.
+    F1 (2026-07-28): the previous implementation matched against the
+    canonical question's exact substring (and a set of anchor phrases
+    for ``household_size``). It was fundamentally brittle against a
+    model instructed (by P1.1) to speak conversationally rather than
+    recite: any paraphrasing of the canonical question broke the
+    match, and the floor would then staple the canonical question
+    after the model's own question -- producing the "Sound right?
+    How many people, including you, usually buy and prepare food
+    together?" double-question visible in §9.1.
 
-    When ``missing`` is empty (intake complete) the function is a
-    no-op and the original reply is returned unchanged.
+    The new rule is simpler and survives any model paraphrase:
+
+      1. If ``missing`` is empty (intake complete), return content
+         unchanged. (Preserved from W53.)
+      2. If ``question_override`` is set, append it to content
+         (or return it alone if content is empty). This is the F3
+         contract: a deterministic clarification question must
+         surface even when the model already asked something.
+      3. If ``content`` already contains a question mark (EN ``?``,
+         ES ``¿``), return content unchanged. A model that asked
+         *some* question keeps the conversation moving; a duplicate
+         canonical question visibly breaks it.
+      4. Otherwise (no question anywhere in content), append the
+         canonical next-field question -- the original W53 floor.
+
+    Risk acknowledged: an occasional non-advancing model question
+    (the rhetorical "were you just tossing out a number?" case) will
+    no longer be replaced by the canonical. The doc (§9.3) accepts
+    this tradeoff for the demo, in exchange for stopping the much
+    more common and more visible double-question failure. The P1.1
+    conversation policy + the P1.2 validators cover most of the
+    remaining risk.
     """
     if not missing:
         return content
     field = missing[0]
-    # An ambiguity clarification replaces the canonical question for this
-    # turn: asking "What is your gross monthly income?" again, after the
-    # user already answered it with something we couldn't pin to a period,
-    # is the loop that makes a screen feel broken. The specific question
-    # ("is $70 per month, per week, or per day?") is what moves it forward.
+    # F3 contract: question_override always wins (used for the
+    # pending-income-clarification case where a deterministic
+    # clarification question must surface).
     if question_override:
         if content:
             return f"{content} {question_override}"
         return question_override
-    normalized = _norm_for_match(content)
-    signature = _W53_ALREADY_ASKED_SIGNATURE.get(lang, {}).get(field)
-    legacy = _LEGACY_FIELD_QUESTION_SIGNATURES.get(lang, {}).get(field, ())
-    anchors = _W53_ANCHOR_PHRASES.get(lang, {}).get(field, ())
-    already_asked = (
-        (signature and signature in normalized)
-        or any(_norm_for_match(item) in normalized for item in legacy)
-        or (anchors and all(_norm_for_match(a) in normalized for a in anchors))
-    )
-    if already_asked:
+    # F1 rule: if the model already asked *any* question, leave it
+    # alone. This is the new arms-race-free contract.
+    if "?" in content or "¿" in content:
         return content
     question = _NEXT_FIELD_QUESTION.get(lang, _NEXT_FIELD_QUESTION["en"]).get(
         field, ""
