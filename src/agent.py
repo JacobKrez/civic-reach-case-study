@@ -469,6 +469,47 @@ _OUTCOME_LABELS: dict[str, dict[str, str]] = {
 }
 
 
+# W71b: Spanish equivalent of the calculator's income-vs-limit fact
+# sentence, used ONLY by the fallback branch of _outcome_label_floor
+# below (language == "es"). ``calculator.calculate_eligibility``'s
+# ``notes`` field is English-only prose with several branches (rule
+# note, deduction note, boundary note, outcome note); it has no
+# ``language`` parameter, and its docstring commits to "byte-identical
+# output to the pre-W14 screener" for existing callers, so threading a
+# language switch through that function risks a much larger surface
+# than this bug warrants. Found live 2026-07-28: when a Spanish
+# conversation's own model reply is empty or lacks a recognized outcome
+# term, this floor used to append the RAW ENGLISH notes after a
+# correctly-Spanish outcome label, producing a mixed-language reply
+# ("Resultado de evaluación: probablemente califica. Household has no
+# elderly (60+) or disabled member and is screened under..."). This
+# builds a short, fully-Spanish sentence instead, using only the
+# already-computed, language-neutral numeric fields from ``result``
+# (income_considered, limit, household_size, test_used) -- it loses the
+# English notes' extra detail (deduction breakdown, boundary note) in
+# this fallback path, but a shorter, fully-correct Spanish sentence is
+# strictly better than a longer, mixed-language one.
+_TEST_USED_LABEL_ES: dict[str, str] = {
+    "gross": "bruto",
+    "net": "neto",
+    "expanded": "bruto ampliado (BBCE)",
+}
+
+
+def _outcome_notes_es(result: dict[str, Any]) -> str:
+    income_considered = result.get("income_considered")
+    limit = result.get("limit")
+    household_size = result.get("household_size")
+    test_used = str(result.get("test_used") or "")
+    test_label = _TEST_USED_LABEL_ES.get(test_used, test_used or "bruto")
+    if income_considered is None or limit is None or household_size is None:
+        return ""
+    return (
+        f"Ingreso mensual considerado ${income_considered:,.2f} vs límite "
+        f"{test_label} de ${limit:,.2f} para un hogar de {household_size}."
+    )
+
+
 def _outcome_label_floor(
     content: str,
     result: dict[str, Any] | None,
@@ -483,8 +524,11 @@ def _outcome_label_floor(
     route their user-visible reply through this function so the
     outcome-bearing sentence the user sees is a single source of
     truth across the agent. The fallback uses bilingual
-    ``_OUTCOME_LABELS`` and appends the calculator's notes so the
-    user always sees the reason alongside the outcome.
+    ``_OUTCOME_LABELS`` and appends an explanation sentence so the
+    user always sees the reason alongside the outcome -- the
+    calculator's own (English-only) ``notes`` for English, or the
+    shorter, fully-Spanish ``_outcome_notes_es`` summary for Spanish
+    (see the comment above it for why these aren't the same text).
 
     The ``_purpose`` argument is reserved for future per-branch
     debugging and is intentionally unused today; it lets callers
@@ -495,12 +539,12 @@ def _outcome_label_floor(
     if result is None:
         return content
     outcome = str(result.get("outcome") or "")
-    notes = str(result.get("notes") or "")
     terms = _OUTCOME_TERMS.get(outcome, (outcome.replace("_", " "),))
     if content.strip() and any(term in content.lower() for term in terms):
         return content
     label_table = _OUTCOME_LABELS.get(language, _OUTCOME_LABELS["en"])
     label = label_table.get(outcome, outcome)
+    notes = _outcome_notes_es(result) if language == "es" else str(result.get("notes") or "")
     return f"{label} {notes}".strip()
 
 
