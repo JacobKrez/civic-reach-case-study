@@ -279,3 +279,33 @@ def test_clarification_is_audited():
     agent = _drive(["3", "70"])
     events = [entry.get("event") for entry in agent._audit]
     assert "income_ambiguous_clarification_requested" in events
+
+
+# ---------------------------------------------------------------------------
+# PII-shaped digit runs must not corrupt income parsing (2026-07-28).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        # The reported bug: an SSN's leading "123" was extracted as the
+        # income instead of the actually-stated 2000, because the
+        # explicit "income" cue bypassed the multi-number-ambiguity
+        # guard that would otherwise have caught this. A wrong income
+        # silently produces a wrong eligibility verdict -- the single
+        # most harmful class of bug this tool can have, and it's
+        # reachable by exactly the scenario Jacob worried about: a user
+        # pasting their SSN "just in case" alongside their real answer.
+        ("my ssn is 123-45-6789 and income is 2000", 2000.0),
+        ("account number 12345678, income is 1500 a month", 1500.0),
+        ("call me at 555-123-4567, my income is 3200", 3200.0),
+        ("routing number 021000021, income 2200 a month", 2200.0),
+    ],
+)
+def test_pii_shaped_digits_do_not_corrupt_income_parsing(text, expected):
+    agent = _drive(["3", text])
+    assert agent.state.gross_monthly_income == pytest.approx(expected, abs=0.01), (
+        f"a PII-shaped number in the message was misparsed as income: "
+        f"{agent.state.gross_monthly_income!r}"
+    )

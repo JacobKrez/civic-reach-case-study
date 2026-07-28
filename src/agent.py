@@ -1228,7 +1228,7 @@ class FoodPathAgent:
                 # denial is the most harmful output this tool has.
                 ambiguity = (
                     classify_income_ambiguity(
-                        user_message,
+                        redact_for_logging(user_message),
                         value=normalize_income(updates["gross_monthly_income"]),
                     )
                     if user_message is not None
@@ -1365,6 +1365,19 @@ class FoodPathAgent:
                     return value
             return None
         if field == "gross_monthly_income":
+            # Redact PII-shaped digit runs before any income parsing. Found
+            # live 2026-07-28: "my ssn is 123-45-6789 and income is 2000"
+            # has an explicit income cue, so the multi-number-ambiguity
+            # guard below doesn't fire, and normalize_income() grabbed the
+            # SSN's leading "123" as the monthly income instead of the
+            # actually-stated 2000 -- a wrong income silently produces a
+            # wrong eligibility verdict, which is the single most harmful
+            # class of bug this tool can have. Legitimate income figures
+            # (dollar amounts, up to a few hundred thousand) don't collide
+            # with any of redact_for_logging's patterns (9-digit/dashed
+            # SSN, area-code phone, 8+-digit labeled account, 10+-digit
+            # bare run), so this is safe for every real answer.
+            text = redact_for_logging(text)
             # If we asked a clarifying question last turn ("how many hours a
             # week?"), this turn's reply is only half the answer. Rejoin it
             # with the half the user already gave so "$15/hr" + "40 hours a
@@ -2198,11 +2211,11 @@ class FoodPathAgent:
                     # raises the clarification. Catch them here instead of
                     # letting the turn fall through to a verbatim re-ask of
                     # the question the user just tried to answer.
-                    ambiguity = classify_income_ambiguity(user_message)
+                    ambiguity = classify_income_ambiguity(redact_for_logging(user_message))
                     if ambiguity is not None:
                         self._pending_income_clarification = ambiguity
                         self._pending_income_context = self._accumulate_income_context(
-                            user_message
+                            redact_for_logging(user_message)
                         )
                         self._pending_income_context_turn = self.state.turn_count
                         self._audit.append({
