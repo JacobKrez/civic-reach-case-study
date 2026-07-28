@@ -21,8 +21,8 @@ helping a resident find a path through an initial food-benefits screen.
 
 The core deliverable is a three-field initial screen: a deterministic
 eligibility calculator wrapped in a layered guardrail chain. Everything beyond
-that — the simulator, telemetry, self-improvement loop, and evaluation
-harness — exists to prove the core is correct, not to add product surface. The
+that — the simulator, telemetry, and evaluation harness — exists to prove the
+core is correct, not to add product surface. The
 evaluation apparatus is larger than the agent because failure-mode reasoning
 is a graded criterion; the harness is the evidence for those claims. That is a
 deliberate trade, not a second product.
@@ -56,7 +56,10 @@ The scope cuts are intentional:
 
 ## Quickstart
 
-Five steps, no external services to set up — just Python and one LLM API key.
+Five steps, no external services to set up — just Python 3.11+ and one LLM
+API key. Commands differ slightly by platform; use the block for yours.
+
+**macOS / Linux:**
 
 ```bash
 # 1. Create and activate a virtualenv
@@ -70,6 +73,25 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 
+**Windows (PowerShell):**
+
+```powershell
+# 1. Create and activate a virtualenv
+py -m venv .venv
+.venv\Scripts\Activate.ps1
+
+# 2. Install pinned dependencies
+pip install -r requirements.txt
+
+# 3. Configure your environment
+Copy-Item .env.example .env
+```
+
+If PowerShell blocks the activation script with an execution-policy error,
+run `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass` first (this
+only affects the current terminal session), or use `.venv\Scripts\activate.bat`
+in `cmd.exe` instead.
+
 Now open `.env` and do two things:
 
 1. Fill in **exactly one** provider key: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`,
@@ -81,13 +103,14 @@ Now open `.env` and do two things:
 That's it — everything else in `.env` is optional (see **Troubleshooting**
 below for `LLM_FALLBACK_PROVIDER`).
 
-```bash
-# 4a. Talk to the agent in the terminal
-python3 -m src.cli
+```
+4a. Talk to the agent in the terminal
+    macOS/Linux: python3 -m src.cli
+    Windows:     python -m src.cli
 
-# 4b. OR run the local web UI (single-process, sessions live in memory)
-uvicorn src.web:app --reload
-# then open http://127.0.0.1:8000
+4b. OR run the local web UI (single-process, sessions live in memory)
+    uvicorn src.web:app --reload
+    then open http://127.0.0.1:8000
 ```
 
 ### Try it
@@ -364,7 +387,7 @@ src/
 knowledge_base/       # FY2026 NC FNS rules (English); 01 is also translated to Spanish
 redteam/              # attack_cases.jsonl (corpus) + failures_queue.jsonl (local triage) + run_redteam + file_failures + findings/ (gitignored)
 tests/                # pytest suite (calculator, guardrails, agent, web, golden transcripts, red-team signatures)
-scripts/              # KB table generator, simulator daemon, live red-team runner, self-improve queue
+scripts/              # KB table generator, simulator daemon, live red-team runner
 static/               # web UI static assets (manifest + service worker)
 ```
 

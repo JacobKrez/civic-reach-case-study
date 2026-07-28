@@ -5,6 +5,17 @@ __pycache__/
 logs/
 redteam/report_latest.json
 
+# Internal build-loop tooling notes — reference the local Hermes/Mission
+# Control setup (paths, agent identities) that only exists on the author's
+# machine; not something a reviewer cloning this repo needs to see.
+.hermes/
+
+# Self-improvement queue script — hardcodes the author's local machine
+# paths and a personal Mission Control DB that doesn't exist outside it;
+# excluded so a fresh clone's test suite/file tree stay self-contained.
+scripts/self_improve.py
+tests/test_self_improve_idempotency.py
+
 # Private planning notes — keep local, never publish
 LOOP_PLAN.md
 ROADMAP.md

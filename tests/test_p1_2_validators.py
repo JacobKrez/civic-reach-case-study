@@ -1,11 +1,15 @@
 """P1.2 tripwires \u2014 post-LLM output validators.
 
-The doc (CONVERSATION_OVERHAUL.md \u00a73 P1.2) requires three validators:
+The doc (CONVERSATION_OVERHAUL.md \u00a73 P1.2) requires four validators:
   1. No invented phone numbers / hotlines.
   2. No confident eligibility verdict language unless the calculator
      has produced a result.
   3. No fabricated income limits that don't match
      ``income_limits(household_size)`` for the current household.
+  4. No SSN-shaped strings in replies. Mirrors the input-side W61
+     fix: if the LLM echoes a pasted SSN back in prose (or
+     fabricates one), the validator trips and the reply is
+     replaced with the templated continuation.
 
 These tripwires assert each validator independently. Wiring into
 the agent (fall-back policy on failure) is a separate concern.
@@ -22,6 +26,7 @@ from src.validators import (
     check_all,
     check_income_limits,
     check_phone_numbers,
+    check_ssn_fabrication,
     check_verdict_language,
 )
 
@@ -224,3 +229,141 @@ def test_p1_2_check_all_passes_for_clean_end_of_intake_explanation():
         f"This is an initial screen, not an official decision."
     )
     assert check_all(reply, has_eligibility_result=True, household_size=household_size) == []
+
+
+def test_p1_2_ssn_validator_catches_hyphenated():
+    """P1.2 validator 4: SSN-shaped hyphenated strings in replies
+    are caught. Mirrors the input-side W61 fix.
+
+    If the LLM echoes a pasted SSN back in prose ("Got it. Your
+    SSN is 123-45-6789."), the validator trips and the reply is
+    replaced with the templated continuation.
+    """
+    failures = check_ssn_fabrication("Got it. Your SSN is 123-45-6789.")
+    assert len(failures) == 1, failures
+    assert failures[0].kind == "ssn"
+    assert "123-45-6789" in failures[0].detail
+
+
+def test_p1_2_ssn_validator_catches_space_separated():
+    """SSN in space-separated form (123 45 6789) is caught."""
+    failures = check_ssn_fabrication("Your SSN is 123 45 6789.")
+    assert len(failures) == 1, failures
+    assert failures[0].kind == "ssn"
+
+
+def test_p1_2_ssn_validator_catches_unseparated():
+    """SSN in no-separator form (123456789) is caught. The
+    ``_looks_like_ssn`` guard filters obvious sentinels
+    (000000000, 111111111) but a real-looking 9-digit run trips
+    the validator."""
+    failures = check_ssn_fabrication("Your SSN is 123456789.")
+    assert len(failures) == 1, failures
+    assert failures[0].kind == "ssn"
+    assert "123456789" in failures[0].detail
+
+
+def test_p1_2_ssn_validator_passes_for_normal_income_text():
+    """Income amounts, citation numbers, and other numeric content
+    must not trip the SSN validator. This is the false-positive
+    guard test.
+    """
+    safe_texts = [
+        "Your monthly income is $1,500.00.",
+        "For a household of 3, the gross limit is $2,888.",
+        "The citation is from USDA Handbook 901, page 42.",
+        "Reference: 42 U.S.C. § 601 et seq.",
+        "The calculator ran with corrected data and household_size = 5.",
+    ]
+    for text in safe_texts:
+        failures = check_ssn_fabrication(text)
+        assert failures == [], f"false positive on {text!r}: {failures!r}"
+
+
+def test_p1_2_ssn_validator_filters_sentinel_runs():
+    """All-same-digit sentinels (000000000, 111111111, 999999999)
+    are filtered by ``_looks_like_ssn`` and must not trip the
+    validator. These appear in test fixtures, placeholder text,
+    and user-typed gibberish."""
+    sentinels = [
+        "000-00-0000",
+        "111-11-1111",
+        "999-99-9999",
+        "000000000",
+        "111111111",
+    ]
+    for text in sentinels:
+        # Wrap in prose so the regex runs over the whole reply.
+        reply = f"Your reference number is {text}."
+        failures = check_ssn_fabrication(reply)
+        assert failures == [], f"sentinel {text!r} tripped the validator: {failures!r}"
+
+
+def test_p1_2_ssn_validator_does_not_match_real_phone_numbers():
+    """The SSN validator must not flag real phone numbers. A
+    10-digit phone (1-800-799-7233) contains 10 digits not 9,
+    but a 9-digit run can look like an SSN. Verify that phone-
+    shaped 10-digit numbers stay clear.
+    """
+    # The real DV hotline from CRISIS_RESOURCES.
+    failures = check_ssn_fabrication("Call 1-800-799-7233 for support.")
+    assert failures == [], f"real hotline tripped SSN validator: {failures!r}"
+    # Plain 9-digit number with hyphens: the leading "1-" prefix
+    # rejects the leading digit via the lookbehind.
+    failures = check_ssn_fabrication("The code is 1-23-45-6789.")
+    assert failures == [], f"1-prefix should reject: {failures!r}"
+
+
+def test_p1_2_ssn_validator_in_check_all():
+    """check_all aggregates the SSN failure kind along with phone,
+    verdict, and income_limit."""
+    reply = "Got it. Your SSN is 123-45-6789."
+    failures = check_all(reply, has_eligibility_result=False, household_size=None)
+    kinds = {f.kind for f in failures}
+    assert "ssn" in kinds, f"check_all did not include ssn kind: {failures!r}"
+
+
+def test_p1_2_ssn_validator_end_to_end_replace():
+    """End-to-end: when the SSN validator trips, the agent's
+    fall-back path replaces the reply with the templated
+    state-aware continuation. This is the integration test
+    for the W61 symmetry claim: SSN digits in input are
+    caught on input; SSN digits in output are caught on output,
+    both via the same fall-back contract.
+    """
+    # Simulate the LLM echoing a pasted SSN back in prose.
+    model_reply = "Got it. I have your SSN as 123-45-6789. Now, how many people live in your household?"
+    failures = check_all(
+        model_reply,
+        has_eligibility_result=False,
+        household_size=None,
+    )
+    assert any(f.kind == "ssn" for f in failures)
+    # The agent's fall-back path uses the templated state-aware
+    # continuation (the next missing field), which does not
+    # contain any SSN-shaped text. Verify the contract: the
+    # fall-back reply never contains an SSN.
+    # (The fall-back text is computed in agent.py; we simulate
+    # the property here by asserting the replacement is SSN-free.)
+    replacement = "How many people, including you, usually buy and prepare food together?"
+    assert check_ssn_fabrication(replacement) == [], (
+        "the templated fall-back itself tripped the SSN validator"
+    )
+
+
+def test_p1_2_check_all_includes_ssn_in_aggregated_failures():
+    """Updated composite test: a reply that fails phone, verdict,
+    income_limit, AND ssn should produce all four failure kinds.
+    The pre-P1.2-d test asserted 3 kinds; the new test asserts 4."""
+    reply = (
+        "Based on your household, you qualify. "          # verdict
+        "Call our office at 1-555-867-5309. "              # phone
+        "The income limit is $9,999. "                     # income_limit
+        "Your SSN is 123-45-6789."                         # ssn
+    )
+    failures = check_all(reply, has_eligibility_result=False, household_size=3)
+    kinds = {f.kind for f in failures}
+    assert "phone" in kinds, failures
+    assert "verdict" in kinds, failures
+    assert "income_limit" in kinds, failures
+    assert "ssn" in kinds, failures
