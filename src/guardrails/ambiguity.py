@@ -61,6 +61,28 @@ _MONEY_NUMBER_PATTERN = re.compile(
     re.VERBOSE,
 )
 
+# W70: a money-shaped number specifically adjacent to an UNAMBIGUOUS
+# income-bearing word ("income is 300", "I make 300", "I earn 300").
+# When a message has MULTIPLE money-shaped numbers, _extract_money_number's
+# plain "first match wins" behavior can grab the wrong one -- found live
+# 2026-07-28: normalize_income("500 household members, income is 300")
+# returned 500.0 (the household count, positionally first) instead of
+# 300.0 (the number actually adjacent to "income"). This pattern lets
+# _extract_money_number prefer the income-adjacent number over a merely
+# earlier one when both are present and differ.
+#
+# Deliberately EXCLUDES "pay"/"pays"/"paid": that verb is ambiguous
+# between earning ("they pay me 1800") and an expense ("I pay 400 for
+# daycare"), and preferring it here risks grabbing a deduction amount
+# instead of income -- the same class of wrong-verdict bug this fix is
+# meant to close, not open. Only words that mean income in every
+# ordinary reading are included.
+_INCOME_ADJACENT_MONEY_PATTERN = re.compile(
+    r"\b(?:income|make|makes|earn|earns|earned|salary|salaries|wages?)\b"
+    r"[^.\n]{0,20}?\$?\s*(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)",
+    re.IGNORECASE,
+)
+
 
 def _to_float(token: str) -> Optional[float]:
     """Convert a matched money token like ``"$2,500"`` or ``"2.5"`` to a float.
@@ -487,17 +509,28 @@ def income_clarification_question(
 
 
 def _extract_money_number(text: str) -> Optional[float]:
-    """Return the first money-shaped number in *text*, or ``None``.
+    """Return the money-shaped number in *text* most likely to be income,
+    or ``None``.
 
     Used for plain monthly and weekly phrasings. We don't reach here
     when the input contains a k- or m-shorthand (those are handled
     by their own branches) so we don't have to worry about a stray
     ``"2.5k"`` being misread as ``2.5``.
+
+    W70: when a number is directly adjacent to an income-bearing word
+    ("income is 300", "I make 300"), that number wins over a merely
+    earlier one in the text -- otherwise a message like "500 household
+    members, income is 300" would silently resolve to 500 (the
+    positionally-first number) instead of the actually-stated 300.
     """
     # Strip the k- and m-shorthand patterns so _MONEY_NUMBER_PATTERN
     # doesn't accidentally bite into "2.5k" and return 2.5.
     scrubbed = _K_SCALE_PATTERN.sub(" ", text)
     scrubbed = _M_SCALE_PATTERN.sub(" ", scrubbed)
+
+    income_adjacent = _INCOME_ADJACENT_MONEY_PATTERN.search(scrubbed)
+    if income_adjacent:
+        return _to_float(income_adjacent.group(1))
 
     match = _MONEY_NUMBER_PATTERN.search(scrubbed)
     if not match:
