@@ -33,6 +33,10 @@ from .guardrails.hostility import (
     HOSTILITY_CONTEXT_ES,
     detect_hostility,
 )
+from .guardrails.household_size_question import (
+    detect_max_household_size_question,
+    max_household_size_response,
+)
 from .guardrails.injection import detect_injection, injection_response
 # P0.3: classifier-off-topic steering hint. Prepended to the system
 # prompt for ONE turn only when the LLM intent classifier flags the
@@ -1865,6 +1869,22 @@ class FoodPathAgent:
 
         if detect_application_status_question(user_message):
             content = application_status_response(lang)
+            self._messages.append({"role": "assistant", "content": content})
+            return content
+
+        # W69: "what's the max household size?" must not be improvised.
+        # Live human review, 2026-07-28: the model answered "no max...
+        # tops out around 8 to 10 people" -- a fabricated figure with no
+        # grounding (the real screener cap is calculator.max_household_size()
+        # == 20, and SNAP itself has no statutory maximum). See
+        # household_size_question.py for the full writeup. Folded with the
+        # next pending question (rather than a terminal reply) so intake
+        # keeps moving, same as the process-question handler above.
+        if detect_max_household_size_question(user_message):
+            content = max_household_size_response(lang)
+            content = _w53_fold_ask(
+                content, self.state.language, list(self.state.missing_fields())
+            )
             self._messages.append({"role": "assistant", "content": content})
             return content
 
