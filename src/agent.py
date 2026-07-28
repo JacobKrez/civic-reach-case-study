@@ -665,8 +665,9 @@ def _intake_progress_reply(
         field = newly_recorded[0]
         value = getattr(state, field)
         if lang == "es":
+            persona_word = "persona" if field == "household_size" and value == 1 else "personas"
             tail_es = {
-                "household_size": f"{value} personas compran y preparan comida juntas.",
+                "household_size": f"{value} {persona_word} compran y preparan comida juntas.",
                 "gross_monthly_income": f"${float(value):,.0f} al mes.",
                 "has_elderly_or_disabled_member": (
                     "hay una persona de 60 años o más, o con discapacidad."
@@ -675,8 +676,11 @@ def _intake_progress_reply(
                 ),
             }.get(field, "dato registrado.")
         else:
+            is_singular_household = field == "household_size" and value == 1
+            person_word = "person" if is_singular_household else "people"
+            verb_phrase = "buys and prepares" if is_singular_household else "buy and prepare"
             tail_en = {
-                "household_size": f"{value} people buy and prepare food together.",
+                "household_size": f"{value} {person_word} {verb_phrase} food together.",
                 "gross_monthly_income": f"${float(value):,.0f} per month.",
                 "has_elderly_or_disabled_member": (
                     "someone is age 60 or older or disabled."
@@ -1467,6 +1471,38 @@ class FoodPathAgent:
                 return False
             if token in FoodPathAgent._POSITIVE_WORDS:
                 return True
+            # A LEADING yes/no is still an unambiguous answer even with
+            # trailing content -- "yes all 150", "yeah definitely",
+            # "nope none of them" all open with a clear answer; the rest
+            # is emphasis or (confused) elaboration, not a correction.
+            # Live human review, 2026-07-28: the exact-match check above
+            # required the ENTIRE reply to be a single bare word, so any
+            # trailing text at all made the field silently fail to parse
+            # -- and it kept failing across three consecutive tries with
+            # three different trailing numbers/phrases, none of which
+            # were ever recorded. This is a general pattern (any trailing
+            # content), not specific to any one number or phrase, so the
+            # fix generalizes rather than special-casing what was typed
+            # tonight. Callers that need "is the user correcting a
+            # DIFFERENT field" already suppress this fallback entirely
+            # via the correction-cue check upstream (e.g. "no wait, I
+            # meant 3 people"), so a leading "no" here is never reached
+            # in that case.
+            # Guard: if the trailing content carries an income cue ("yes,
+            # $1,800" restating income after the elderly question became
+            # the currently-asked field), the "yes" is affirming a
+            # DIFFERENT field's value, not answering this one -- don't
+            # guess across fields. This is the exact shape of the W61
+            # income-leading-number bug, one field over: a conversational
+            # "yes" that means "yes, correct" rather than "yes, elderly."
+            if not re.search(FoodPathAgent._INCOME_CUE_PATTERN, text, re.I):
+                leading = re.match(r"^(\w+)\b", token)
+                if leading:
+                    word = leading.group(1)
+                    if word in FoodPathAgent._NEGATIVE_WORDS:
+                        return False
+                    if word in FoodPathAgent._POSITIVE_WORDS:
+                        return True
             return None
         return None
 
