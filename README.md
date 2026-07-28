@@ -56,8 +56,17 @@ The scope cuts are intentional:
 
 ## Quickstart
 
-Five steps, no external services to set up — just Python 3.11+ and one LLM
-API key. Commands differ slightly by platform; use the block for yours.
+**Easiest: double-click `setup.bat` (Windows) or run `./setup.sh` (macOS/Linux).**
+Either one creates the virtualenv, installs dependencies, prompts you for an
+LLM API key on first run (writes it into `.env` — nothing to edit by hand),
+runs the test suite as a smoke check, and launches the web UI at
+`http://127.0.0.1:8000`. `setup.bat` is verified on every push against a real
+Windows runner in CI (`.github/workflows/windows-setup.yml`), not just written
+and hoped for.
+
+Already have a key in `.env`, or want to run things by hand / from the CLI
+instead of the web UI? The five manual steps below are the same thing spelled
+out, no external services required beyond Python 3.11+ and one LLM API key.
 
 **macOS / Linux:**
 

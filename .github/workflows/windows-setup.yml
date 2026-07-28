@@ -1,0 +1,29 @@
+# Verifies setup.bat -- the one-file Windows onboarding script -- actually
+# works on real Windows. Runs the literal shipped file (not a
+# re-implementation of its logic) with FOODPATH_SETUP_NONINTERACTIVE=1, which
+# skips every prompt/pause and the final server launch so it can run
+# unattended in CI, but exercises every other step exactly as a user
+# double-clicking it would: Python detection, venv creation, dependency
+# install, .env creation, and the full pytest suite.
+
+name: windows-setup
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  setup-bat:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Run setup.bat end to end (non-interactive)
+        shell: cmd
+        env:
+          FOODPATH_SETUP_NONINTERACTIVE: "1"
+        run: setup.bat
