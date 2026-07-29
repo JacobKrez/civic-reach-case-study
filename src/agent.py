@@ -13,9 +13,11 @@ from pydantic import ValidationError
 from .branding import PRODUCT_NAME
 from .calculator import calculate_eligibility, income_limits, max_household_size
 from .guardrails.ambiguity import (
+    AMBIGUITY_TWO_FIGURES,
     classify_income_ambiguity,
     income_clarification_question,
     normalize_income,
+    resolve_two_figures_answer,
 )
 from .guardrails.application_status import (
     application_status_response,
@@ -310,6 +312,30 @@ from .agent_questions import NEXT_FIELD_QUESTION as _NEXT_FIELD_QUESTION  # noqa
 # The previous signature/anchor/legacy maps and _core_question_sentence
 # were deleted as part of F1 (CONVERSATION_OVERHAUL.md §9.3);
 # the new rule does not need them.
+
+
+# Vocabulary that marks a message as being about a NON-income intake field
+# -- household composition or the elderly/disabled question. Used to stop a
+# held income clarification from swallowing a message that answers a
+# different question ("my mom is 68 does that matter"). Deliberately paired
+# with an income-cue check at the call site, so a message that names a
+# relative AND an income ("my husband makes 2000") is still readable as
+# income.
+_OTHER_INTAKE_FIELD_RE = re.compile(
+    r"\b(?:mom|mother|mama|dad|father|papa|grandma|grandmother|grandpa|"
+    r"grandfather|son|daughter|kid|kids|child|children|baby|husband|wife|"
+    r"spouse|partner|brother|sister|aunt|uncle|cousin|roommate|"
+    r"years?\s+old|yrs?\s+old|age[ds]?\b|elderly|disabled|disability|"
+    r"mamá|papá|abuela|abuelo|hij[oa]s?|espos[oa]|herman[oa]s?|"
+    r"años|discapacidad|discapacitad[oa])\b",
+    re.IGNORECASE,
+)
+
+
+def _mentions_other_intake_field(text: str) -> bool:
+    """True when *text* is plainly about household members or the
+    elderly/disabled question rather than about money."""
+    return bool(_OTHER_INTAKE_FIELD_RE.search(text or ""))
 
 
 def _w53_fold_ask(
@@ -1010,6 +1036,13 @@ class FoodPathAgent:
         # original half ("$15/hr") -- reading the answer on its own turns
         # a $2,600/month wage into a $173/month one.
         self._pending_income_context: str | None = None
+        # The reason code that raised the clarification, kept alongside the
+        # context (``_pending_income_clarification`` is consumed and cleared
+        # on the turn it is rendered). The RESOLUTION path needs it a turn
+        # later: a two-figures clarification is resolved by selecting one of
+        # the offered figures, which is a different operation from rejoining
+        # the two halves of a single figure. See _fallback_parse_terse_reply.
+        self._pending_income_reason: str | None = None
         # Per-turn: True when this turn's income came from rejoining the
         # reply with the held context, so the ambiguity check must not
         # re-flag the (deliberately partial) reply.
@@ -1424,6 +1457,7 @@ class FoodPathAgent:
                 )
                 if ambiguity is not None:
                     self._pending_income_clarification = ambiguity
+                    self._pending_income_reason = ambiguity
                     self._pending_income_context = self._accumulate_income_context(
                         user_message
                     )
@@ -1444,6 +1478,7 @@ class FoodPathAgent:
                         # holding is spent and must not leak into a later
                         # income correction.
                         self._pending_income_context = None
+                        self._pending_income_reason = None
             if not updates:
                 continue
             # Detect intake-field corrections (non-None -> DIFFERENT
@@ -1650,6 +1685,41 @@ class FoodPathAgent:
                 and self._pending_income_context_turn != self.state.turn_count
             ):
                 context = self._pending_income_context
+                # F3b (2026-07-28): a TWO-FIGURES clarification is resolved
+                # by SELECTING one of the two figures we offered, never by
+                # re-parsing "context, answer" as one string. The two
+                # operations look similar and are not: rejoining completes
+                # ONE figure whose halves arrived separately ("$15/hr" +
+                # "40 hours"), while two-figures must CHOOSE between two
+                # complete figures. Live-probed at 723e795: the rejoin read
+                # the period cue attached to the second figure ("300 a
+                # week") and applied it to the first (2500), producing a
+                # fabricated $10,833/month -- and it produced that same
+                # value for EVERY answer, including the correct "the 300
+                # one", because the answer never actually participated.
+                # The agent then issued a confident false denial, which is
+                # the most harmful output this tool has.
+                if self._pending_income_reason == AMBIGUITY_TWO_FIGURES:
+                    selected = resolve_two_figures_answer(context, text)
+                    if selected is not None:
+                        self._income_resolved_via_context = True
+                        return selected
+                    # The answer did not choose a figure. Resolve NOTHING
+                    # and let the message be handled as whatever it
+                    # actually was -- "my mom is 68 does that matter" is an
+                    # elderly-field fact, not an income answer.
+                    return None
+                # The reply must plausibly carry the missing half before it
+                # is allowed to complete a held figure. Same failure shape
+                # as the two-figures bug above: an unrelated message that
+                # merely contains a number ("my mom is 68") would otherwise
+                # be multiplied into the held rate. A message whose numbers
+                # belong to another intake field, and which carries no
+                # income cue of its own, cannot be the answer we asked for.
+                if _mentions_other_intake_field(text) and not re.search(
+                    FoodPathAgent._INCOME_CUE_PATTERN, text, re.I
+                ):
+                    return None
                 candidates = [f"{context}, {text}"]
                 # A bare "40" answering "how many hours a week?" carries the
                 # unit only in the question we asked, so restore it before
@@ -2714,15 +2784,19 @@ class FoodPathAgent:
         # gates, so the §8 no-prose-scan invariant is preserved.
         # See _f4_out_of_order_extraction for the full writeup.
         #
-        # Opt-in via F4_EXTRACTION=1 env var (default OFF). The
-        # test suite has multiple call-count contract assertions
-        # (e.g. test_classifier.py) that pre-date F4 and would
-        # have to be updated everywhere; production deployment
-        # wants F4 on by default. The env var lets us turn it on
-        # here and in deploy configs without rewriting every
-        # caller-side test. F4 tripwires opt in explicitly.
+        # Enabled by DEFAULT; set F4_EXTRACTION=0 to disable. It shipped
+        # opt-in (default OFF) so it would not disturb the call-count
+        # assertions that pre-date it, but nothing ever turned it on --
+        # not .env, not the setup scripts, not the server -- so the fix
+        # for the dropped-fact failure in §9.1 was dead code in every
+        # real run. A guardrail nobody enables is not a guardrail. The
+        # call-count tests that need the old behaviour now opt OUT
+        # explicitly, which is the correct direction for the default:
+        # the safe-for-users setting should not depend on remembering
+        # to set an env var.
         if (
-            _os.environ.get("F4_EXTRACTION", "").strip().lower() in ("1", "true", "yes", "on")
+            _os.environ.get("F4_EXTRACTION", "1").strip().lower()
+            not in ("0", "false", "no", "off")
             and self.state.missing_fields()
             and not (extract_response.get("tool_calls") or [])
             and self._message_plausibly_has_intake_content(user_message)
@@ -2802,6 +2876,7 @@ class FoodPathAgent:
                     ambiguity = classify_income_ambiguity(redact_for_logging(user_message))
                     if ambiguity is not None:
                         self._pending_income_clarification = ambiguity
+                        self._pending_income_reason = ambiguity
                         self._pending_income_context = self._accumulate_income_context(
                             redact_for_logging(user_message)
                         )

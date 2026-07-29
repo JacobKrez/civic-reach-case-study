@@ -34,10 +34,13 @@ __all__ = [
     "normalize_income",
     "classify_income_ambiguity",
     "income_clarification_question",
+    "extract_two_figures",
+    "resolve_two_figures_answer",
     "AMBIGUITY_HOURLY_NO_HOURS",
     "AMBIGUITY_DAILY_NO_DAYS",
     "AMBIGUITY_PERIOD_UNCLEAR_HIGH",
     "AMBIGUITY_PERIOD_UNCLEAR_LOW",
+    "AMBIGUITY_TWO_FIGURES",
 ]
 
 
@@ -469,6 +472,148 @@ def _extract_two_figures(text: str) -> "tuple[float, float] | None":
         if len(seen) >= 2:
             return (seen[0], seen[1])
     return None
+
+
+def extract_two_figures(text: str) -> "tuple[float, float] | None":
+    """Public wrapper over :func:`_extract_two_figures`.
+
+    The agent needs the same two candidate figures the clarification
+    question quoted back, so it can later match the user's answer
+    against them. Exposed rather than duplicated so the question and
+    the resolver can never disagree about what was offered.
+    """
+    return _extract_two_figures(text)
+
+
+# Words that pick the EARLIER figure ("I was making $2,500") versus the
+# LATER one ("now I just get $300 a week"). The two-figures question is
+# always phrased "$X before, and $Y now", so "before"/"first"/"was" mean
+# the first figure and "now"/"current"/"second" mean the second. Kept
+# deliberately small: an answer that matches nothing here and names no
+# number resolves NOTHING (see ``resolve_two_figures_answer``), which is
+# the safe outcome -- a wrong income silently produces a wrong verdict.
+_SELECT_FIRST_PATTERN = re.compile(
+    r"\b(?:before|first|former|earlier|old|was|used\s+to|previous(?:ly)?|"
+    r"antes|primer[oa]?|anterior)\b",
+    re.IGNORECASE,
+)
+_SELECT_SECOND_PATTERN = re.compile(
+    r"\b(?:now|current(?:ly)?|second|latter|later|new|these\s+days|"
+    r"unemployment|right\s+now|today|"
+    r"ahora|actual(?:mente)?|segund[oa]?|desempleo)\b",
+    re.IGNORECASE,
+)
+
+
+def _slice_around_figure(text: str, value: float) -> Optional[str]:
+    """Return the fragment of *text* that belongs to *value*.
+
+    The fragment runs from the matched number up to (not including) the
+    next money-shaped number, so the period cue the user attached to
+    THAT figure travels with it: in "was making 2500 but now i just get
+    unemployment, like 300 a week i think", the fragment for ``300`` is
+    "300 a week i think" and normalizing it yields $1,300/month.
+
+    Reading the period off the whole message instead is exactly the F3
+    resolution bug: "a week" belonged to 300, but a whole-string parse
+    applied it to 2500 and produced a fabricated $10,833/month.
+    """
+    if not isinstance(text, str):
+        return None
+    matches = list(_MONEY_TOKEN_PATTERN.finditer(text))
+    for index, match in enumerate(matches):
+        raw = match.group(1).replace(",", "")
+        try:
+            found = float(raw)
+        except ValueError:
+            continue
+        if abs(found - value) >= 0.5:
+            continue
+        start = match.start()
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+        fragment = text[start:end].strip()
+        return fragment or None
+    return None
+
+
+def resolve_two_figures_answer(
+    context: str, answer: str
+) -> Optional[float]:
+    """Resolve a two-figures clarification into ONE monthly income.
+
+    *context* is the original message that stated both figures;
+    *answer* is the user's reply to "which one is current?".
+
+    Returns the selected figure normalized to a monthly total, or
+    ``None`` when the answer does not clearly select one. ``None`` is
+    the important case: the caller MUST then leave income unset and let
+    the message be handled as whatever it actually was. Live-probed
+    2026-07-28: without this, "my mom is 68 does that matter" resolved
+    the pending income question to a fabricated $10,833/month and the
+    agent issued a confident false denial.
+
+    Resolution order:
+      1. The answer names one of the two figures -> that one.
+      2. The answer names a fresh, fully-specified income -> that value
+         (the user restated rather than chose).
+      3. The answer uses a selection word ("the now one", "before") ->
+         the corresponding figure.
+      4. Anything else -> ``None``.
+    """
+    figures = _extract_two_figures(context or "")
+    if figures is None:
+        return None
+    first, second = figures
+    text = (answer or "").strip()
+    if not text:
+        return None
+
+    def _monthly(value: float) -> Optional[float]:
+        fragment = _slice_around_figure(context, value)
+        if fragment:
+            resolved = normalize_income(fragment)
+            if resolved is not None:
+                return resolved
+        # No period cue travelled with the figure; a bare number in an
+        # income answer is read as monthly, the same reading
+        # ``normalize_income`` gives a bare figure on its own.
+        return float(value)
+
+    # 1. The answer restates one of the two figures ("the 300 one").
+    named = [
+        float(match.group(1).replace(",", ""))
+        for match in _MONEY_TOKEN_PATTERN.finditer(text)
+        if match.group(1).strip(",.")
+    ]
+    for value in named:
+        if abs(value - second) < 0.5:
+            return _monthly(second)
+        if abs(value - first) < 0.5:
+            return _monthly(first)
+
+    # 2. The answer states a fresh figure with its own period
+    #    ("it's about $1,300 a month now"). Trust the explicit answer --
+    #    but ONLY when it is unmistakably about money. A bare number
+    #    that matches neither figure is far more likely to belong to
+    #    another field than to be a restated income: "my mom is 68 does
+    #    that matter" is an age, and reading it as $68/month is the
+    #    live-probed false-denial bug this guard exists to stop.
+    if named and ("$" in text or _explicit_period_stated(text.casefold())):
+        restated = normalize_income(text)
+        if restated is not None:
+            return restated
+
+    # 3. A selection word, with no number at all.
+    picks_second = _SELECT_SECOND_PATTERN.search(text)
+    picks_first = _SELECT_FIRST_PATTERN.search(text)
+    if picks_second and not picks_first:
+        return _monthly(second)
+    if picks_first and not picks_second:
+        return _monthly(first)
+
+    # 4. Ambiguous or unrelated -- resolve nothing.
+    return None
+
 
 # A bare number below this is far more likely a daily/weekly figure (or an
 # hourly rate) than a real monthly income, so we ask instead of assuming.

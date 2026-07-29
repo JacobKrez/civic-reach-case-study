@@ -770,6 +770,57 @@ def _w53_norm_for_match(text: str) -> str:
     return text.lower().replace("\u2019", "'").replace("\u2018", "'")
 
 
+# Vocabulary that marks a question as being about the FNS intake rather
+# than a rhetorical aside or an off-topic ask. Used by the F1-aligned
+# branch of the forward-progress invariant below.
+_W53_INTAKE_QUESTION_VOCAB: dict[str, tuple[str, ...]] = {
+    "en": (
+        "people", "household", "buy and prepare", "live with", "family",
+        "income", "make", "makes", "earn", "money", "paid", "pay",
+        "monthly", "a month", "per month", "week", "hour", "year",
+        "elderly", "disabled", "60", "older", "age",
+    ),
+    "es": (
+        "personas", "hogar", "compran y preparan", "familia", "viven",
+        "ingreso", "ingresos", "gana", "ganan", "dinero", "sueldo",
+        "mensual", "al mes", "por mes", "semana", "hora", "año",
+        "mayor", "discapacidad", "discapacitado", "60", "edad",
+    ),
+}
+
+
+def _w53_asks_an_intake_question(reply: str, language: str) -> bool:
+    """True when *reply* asks a question that is plainly about the intake.
+
+    F1 (2026-07-28) changed the agent's shipped contract: the fold-ask
+    floor no longer staples the canonical next-field question onto a
+    reply that already contains a question of its own. That was the fix
+    for the double-question failure, and it means a perfectly good reply
+    may now ask for the next field in the model's OWN words, or ask a
+    deterministic clarification instead:
+
+        "Sounds like two different figures - $2,500 before, and $300
+         now. Which one is your current gross monthly income?"
+
+    That reply advances the intake and contains no canonical sentence,
+    so the strict field-match below rejects it. Left unsynced, this
+    invariant reports a violation on the exact behaviour F1 intended --
+    and because the simulator runs these same helpers, it would file a
+    stream of false findings against correct replies. (Same drift class
+    as W70b, which mirrored the anchor table here for the same reason.)
+
+    Teeth preserved: a reply must still contain a question that mentions
+    intake vocabulary. "Got it, 17 people." (no question), "What's your
+    ZIP code?" (wrong topic) and "Were you just tossing out a number?"
+    (rhetorical) all still fail.
+    """
+    if "?" not in reply and "¿" not in reply:
+        return False
+    normalized = _w53_norm_for_match(reply)
+    vocab = _W53_INTAKE_QUESTION_VOCAB.get(language) or _W53_INTAKE_QUESTION_VOCAB["en"]
+    return any(token in normalized for token in vocab)
+
+
 def _w53_asks_for_field(reply: str, field: str, language: str) -> bool:
     """True when *reply* already contains a real question for *field*.
 
@@ -857,9 +908,15 @@ def assert_forward_progress(result: TranscriptResult) -> None:
         else:
             language = fallback_language
         target = missing[0]
-        assert _w53_asks_for_field(reply, target, language), (
+        # Either the canonical/anchor match for the specific next field
+        # (the pre-F1 contract, still the common case), or -- since F1 --
+        # any question that is plainly about the intake. See
+        # _w53_asks_an_intake_question for why the second branch exists.
+        if _w53_asks_for_field(reply, target, language):
+            continue
+        assert _w53_asks_an_intake_question(reply, language), (
             f"W53 forward-progress: turn {turn_index} left missing_fields={missing!r} "
-            f"but the reply does not ask for the next field ({target!r}). "
+            f"but the reply asks no intake question at all (next field: {target!r}). "
             f"reply={reply!r}"
         )
 

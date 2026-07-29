@@ -92,3 +92,34 @@ def _pin_guardrail_classifier(monkeypatch: pytest.MonkeyPatch):
     # which runs after this fixture and therefore wins.
     monkeypatch.delenv("GUARDRAIL_CLASSIFIER", raising=False)
     yield
+
+
+@pytest.fixture(autouse=True)
+def _pin_f4_extraction(monkeypatch: pytest.MonkeyPatch):
+    """Pin ``F4_EXTRACTION`` OFF for every test unless a test opts in.
+
+    F4's out-of-order extraction pass makes ONE extra provider call on
+    turns where the main model emitted no tool call. That is correct in
+    production (it is on by default there), but it breaks two classes of
+    test that pre-date it:
+
+    * call-count contracts (``assert len(llm.calls) == 2``), and
+    * the golden harness, which hands out ``scripted_responses`` in
+      order regardless of which prompt was sent -- so the extra call
+      consumes the NEXT scripted reply and shifts every later turn by
+      one. That is what made ``test_false_positive_sue_personal_name``
+      record income 1500 for the user message "4": a harness artifact,
+      not an agent regression.
+
+    Same pattern and same reasoning as ``_pin_guardrail_classifier``
+    above: the suite's result must not depend on the ambient shell, and
+    the tests that exercise the feature opt in explicitly (see
+    ``tests/test_p1_x_f4_out_of_order_fact_extraction.py``), which runs
+    after this fixture and therefore wins.
+
+    NOTE: this makes the pytest suite blind to F4 by construction. The
+    place F4 is exercised end-to-end is the simulator, which runs the
+    real agent with production defaults -- see ``scripts/sim_daemon.py``.
+    """
+    monkeypatch.setenv("F4_EXTRACTION", "0")
+    yield
