@@ -1528,6 +1528,70 @@ class FoodPathAgent:
         # structured and unstructured multi-number input.
         return _has_role_bearing_number(user_message)
 
+    # Vocabulary that identifies which intake field an assistant question
+    # was about. Used to accept a bare answer to a question the agent
+    # actually asked, even when that field already holds a value.
+    _QUESTION_TOPIC_PATTERNS: dict[str, str] = {
+        "gross_monthly_income": (
+            r"gross\s+monthly\s+income|monthly\s+income|income\s+right\s+now|"
+            r"ingreso\s+mensual|ingresos"
+        ),
+        "household_size": (
+            r"how\s+many\s+people|buy\s+and\s+prepare|household\s+size|"
+            r"cu[áa]ntas\s+personas"
+        ),
+        "has_elderly_or_disabled_member": (
+            r"60\s+or\s+older|age\s+60|elderly|disabilit|discapacidad|"
+            r"60\s+a[ñn]os"
+        ),
+    }
+
+    # A message that is nothing but a number is an answer to whatever
+    # numeric question was just asked. "0", "$1,000", "1k", "1,500.00".
+    _BARE_NUMERIC_ANSWER_RE = re.compile(
+        r"^\s*\$?\s*\d[\d,]*(?:\.\d+)?\s*(?:k|dollars?|bucks?)?\s*[.!]?\s*$",
+        re.IGNORECASE,
+    )
+
+    def _answers_the_question_just_asked(self, field: str, user_message: str) -> bool:
+        """True when *user_message* is a bare answer to a question the
+        assistant asked about *field* on the previous turn.
+
+        The W55 cue gate exists to stop a number in an unrelated message
+        being filed as income ("she's 72"). It requires income vocabulary
+        in the user's own words, and the ``asked_field`` escape hatch only
+        covers fields that are still MISSING.
+
+        Neither covers the case found live, 2026-07-29: income was already
+        recorded as $1,000, the user then said they had lost their job, the
+        agent asked "what's your gross monthly income now — unemployment,
+        other earnings, or $0?", and the user answered **"0"**. A bare zero
+        carries no income cue, and income was not in ``missing_fields``, so
+        the model's correct ``update_state`` call was filtered out. The
+        agent had asked the question and then discarded the answer — and
+        because the model's prose said "I'll update it", the reply claimed
+        a change that never happened while the state pane still read
+        $1,000.
+
+        Zero is the value this matters most for: it is the answer of
+        someone with no income at all, which is the household most likely
+        to qualify.
+        """
+        if not user_message or not self._BARE_NUMERIC_ANSWER_RE.match(user_message):
+            return False
+        pattern = self._QUESTION_TOPIC_PATTERNS.get(field)
+        if not pattern:
+            return False
+        # The most recent assistant turn is what the user is replying to.
+        for message in reversed(self._messages):
+            if message.get("role") != "assistant":
+                continue
+            content = str(message.get("content") or "")
+            if "?" not in content:
+                return False
+            return bool(re.search(pattern, content, re.IGNORECASE))
+        return False
+
     def _apply_tool_calls(
         self,
         calls: list[dict[str, Any]],
@@ -1563,6 +1627,7 @@ class FoodPathAgent:
                         field == asked_field
                         and self._fallback_parse_terse_reply(field, user_message) is not None
                     )
+                    or self._answers_the_question_just_asked(field, user_message)
                 }
             if not updates:
                 continue

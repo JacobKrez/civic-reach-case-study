@@ -24,6 +24,8 @@ dialog — never from this code.
 
 from __future__ import annotations
 
+from .branding import PRODUCT_NAME
+
 from typing import Any
 
 from .state import AssessmentState
@@ -64,7 +66,13 @@ def handoff_summary(
     assert elderly is not None
 
     lines: list[str] = []
-    lines.append("CIVICREACH — CASE-WORKER HANDOFF SUMMARY")
+    # The product name comes from branding.PRODUCT_NAME like every other
+    # user-visible string. This line hardcoded "CIVICREACH" -- the name of
+    # an organization this tool is not affiliated with and does not act
+    # for. On a page a case worker reads as a record of a screening, that
+    # reads as provenance, which is exactly the implied endorsement
+    # branding.py exists to avoid.
+    lines.append(f"{PRODUCT_NAME.upper()} — CASE-WORKER HANDOFF SUMMARY")
     lines.append("NC Food & Nutrition Services (FNS) initial eligibility screen")
     lines.append("=" * 60)
     lines.append("")
