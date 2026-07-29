@@ -15,8 +15,25 @@ from ..branding import PRODUCT_NAME
 # as "ignore" can produce false positives, which is an acceptable trade-off
 # for this narrow scope.
 _INJECTION_PATTERNS: tuple[re.Pattern[str], ...] = (
-    re.compile(r"\bignore\s+(?:all\s+|any\s+)?(?:of\s+)?(?:my\s+|your\s+|the\s+|previous\s+|prior\s+|earlier\s+)?(?:instructions|system\s+messages?)\b", re.IGNORECASE),
-    re.compile(r"\bdisregard\s+(?:all\s+)?(?:of\s+)?(?:the\s+|your\s+|my\s+|previous\s+|prior\s+|earlier\s+)?(?:system\s+prompt|instructions?)\b", re.IGNORECASE),
+    # The determiner and the ordinal are SEPARATE optional groups, and both
+    # may appear. Written as one alternation, each modifier could only be
+    # used once, so "ignore your instructions" and "ignore previous
+    # instructions" matched but "ignore your previous instructions" -- which
+    # needs both -- did not, and fell through to the scope redirect. That is
+    # the single most common phrasing of this attack, and a near-verbatim
+    # quote of the case study's own example, so it is exactly what a
+    # reviewer types first. It never reached the model (scope declined it),
+    # but it was misattributed: ``is_injection_attempt`` stayed False and
+    # the user got "I appreciate you sharing that", which is the wrong
+    # register for someone attempting an override.
+    re.compile(
+        r"\b(?:ignore|disregard)\s+"
+        r"(?:all\s+|any\s+)?(?:of\s+)?"
+        r"(?:my\s+|your\s+|our\s+|the\s+|these\s+|those\s+)?"
+        r"(?:previous\s+|prior\s+|earlier\s+|above\s+|preceding\s+|last\s+|original\s+)?"
+        r"(?:system\s+prompt|system\s+messages?|instructions?|directives?|rules?)\b",
+        re.IGNORECASE,
+    ),
     re.compile(r"\bdo\s+not\s+follow\s+(?:the\s+)?(?:original\s+|previous\s+|prior\s+)?instructions\b", re.IGNORECASE),
     re.compile(r"\byou\s+are\s+now\b", re.IGNORECASE),
     re.compile(r"\byour\s+new\s+(?:role|objective|task)\b", re.IGNORECASE),
