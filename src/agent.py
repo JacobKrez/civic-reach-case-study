@@ -621,10 +621,13 @@ _ACK_OPENERS_EN_SINGLE: tuple[str, ...] = (
     "Right",
     "OK",
 )
+# The multi-field confirmation now names each value it recorded, so the
+# opener no longer carries the "I recorded those" phrasing -- it would
+# just restate what the sentences after it already say.
 _ACK_OPENERS_EN_MULTI: tuple[str, ...] = (
     "Got it",
     "Thanks",
-    "I recorded those",
+    "Noted",
     "OK",
 )
 _ACK_OPENERS_ES_SINGLE: tuple[str, ...] = (
@@ -636,7 +639,7 @@ _ACK_OPENERS_ES_SINGLE: tuple[str, ...] = (
 _ACK_OPENERS_ES_MULTI: tuple[str, ...] = (
     "Entendido",
     "Gracias",
-    "Registré esos datos",
+    "Perfecto",
     "Anotado",
 )
 
@@ -652,6 +655,40 @@ def _ack_opener(turn_count: int, lang: str, *, multi: bool) -> str:
     else:
         lst = _ACK_OPENERS_EN_MULTI if multi else _ACK_OPENERS_EN_SINGLE
     return lst[turn_count % len(lst)]
+
+
+def _intake_field_phrase(state: AssessmentState, field: str, lang: str) -> str:
+    """Return the human sentence confirming *field*'s stored value.
+
+    Shared by the single-field and multi-field confirmation branches so
+    the two can never drift into describing the same value differently.
+    """
+    value = getattr(state, field, None)
+    if value is None:
+        return ""
+    if lang == "es":
+        persona_word = "persona" if field == "household_size" and value == 1 else "personas"
+        return {
+            "household_size": f"{value} {persona_word} compran y preparan comida juntas.",
+            "gross_monthly_income": f"${float(value):,.0f} al mes.",
+            "has_elderly_or_disabled_member": (
+                "hay una persona de 60 años o más, o con discapacidad."
+                if value else
+                "no hay una persona de 60 años o más, ni con discapacidad."
+            ),
+        }.get(field, "dato registrado.")
+    is_singular_household = field == "household_size" and value == 1
+    person_word = "person" if is_singular_household else "people"
+    verb_phrase = "buys and prepares" if is_singular_household else "buy and prepare"
+    return {
+        "household_size": f"{value} {person_word} {verb_phrase} food together.",
+        "gross_monthly_income": f"${float(value):,.0f} per month.",
+        "has_elderly_or_disabled_member": (
+            "someone is age 60 or older or disabled."
+            if value else
+            "no one is age 60 or older or disabled."
+        ),
+    }.get(field, "I recorded that.")
 
 
 def _intake_progress_reply(
@@ -670,50 +707,35 @@ def _intake_progress_reply(
     is_multi = len(newly_recorded) > 1
     opener = _ack_opener(state.turn_count, lang, multi=is_multi)
     if is_multi:
-        # Multi-field: opener + "I recorded those details." /
-        # equivalent. The opener rotates independently so the
-        # multi-field message reads as a different sentence shape
-        # on the next multi-field turn.
-        if lang == "es":
-            tail = (
-                "registré esos datos." if opener != "Registré esos datos"
-                else "datos registrados."
-            )
-        else:
-            tail = (
-                "I recorded those details." if opener != "I recorded those"
-                else "details recorded."
-            )
-        confirmation = f"{opener} — {tail}"
+        # Multi-field: name every field that landed, the same way the
+        # single-field branch does.
+        #
+        # The previous wording was content-free ("I recorded those
+        # details.") and, when the rotation picked the matching opener,
+        # redundant on top of that ("I recorded those — details
+        # recorded."). Worse than clumsy: a turn like "it's me and my
+        # two kids, and my mom stays with us" can land BOTH
+        # household_size and has_elderly_or_disabled_member, and the
+        # user was never told the second one was recorded -- so an
+        # inference drawn from "my mom" (whose age was never stated)
+        # became invisible and therefore uncorrectable. Stating each
+        # value back is the same veto principle the enumerated-count
+        # confirmation relies on: a value the user can see is a value
+        # the user can fix.
+        parts = [_intake_field_phrase(state, field, lang) for field in newly_recorded]
+        parts = [part for part in parts if part]
+        if not parts:
+            return ""
+        # The first phrase continues the opener's clause ("Got it — 4
+        # people buy and prepare food together."), so it stays lowercase;
+        # every later phrase begins a new sentence and must be capitalized.
+        sentences = [parts[0]] + [part[0].upper() + part[1:] for part in parts[1:]]
+        confirmation = f"{opener} — {' '.join(sentences)}"
     else:
-        field = newly_recorded[0]
-        value = getattr(state, field)
-        if lang == "es":
-            persona_word = "persona" if field == "household_size" and value == 1 else "personas"
-            tail_es = {
-                "household_size": f"{value} {persona_word} compran y preparan comida juntas.",
-                "gross_monthly_income": f"${float(value):,.0f} al mes.",
-                "has_elderly_or_disabled_member": (
-                    "hay una persona de 60 años o más, o con discapacidad."
-                    if value else
-                    "no hay una persona de 60 años o más, ni con discapacidad."
-                ),
-            }.get(field, "dato registrado.")
-        else:
-            is_singular_household = field == "household_size" and value == 1
-            person_word = "person" if is_singular_household else "people"
-            verb_phrase = "buys and prepares" if is_singular_household else "buy and prepare"
-            tail_en = {
-                "household_size": f"{value} {person_word} {verb_phrase} food together.",
-                "gross_monthly_income": f"${float(value):,.0f} per month.",
-                "has_elderly_or_disabled_member": (
-                    "someone is age 60 or older or disabled."
-                    if value else
-                    "no one is age 60 or older or disabled."
-                ),
-            }.get(field, "I recorded that.")
-            tail = tail_en
-        confirmation = f"{opener} — {tail_es if lang == 'es' else tail_en}"
+        tail = _intake_field_phrase(state, newly_recorded[0], lang)
+        if not tail:
+            return ""
+        confirmation = f"{opener} — {tail}"
     return f"{confirmation} {_NEXT_FIELD_QUESTION[lang][missing[0]]}"
 
 
