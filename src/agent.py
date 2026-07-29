@@ -401,6 +401,38 @@ def _range_error_message(field: str, value: Any, lang: str) -> str:
     return ""
 
 
+# Marks an income change as happening NOW rather than being recounted as
+# background. Paired with the change detector so a household describing
+# how it got here ("my partner lost his job in March") is not treated as
+# withdrawing the figure it just gave.
+_INCOME_CHANGE_IS_CURRENT_RE = re.compile(
+    r"\b(?:just|now|right\s+now|currently|recently|today|this\s+week|"
+    r"no\s+longer|as\s+of\s+now|going\s+forward|anymore|any\s+more|"
+    r"ahora|acabo\s+de|ya\s+no)\b",
+    re.IGNORECASE,
+)
+
+
+# A past-time anchor inside a job-loss claim disqualifies it as a current
+# status change: "my partner lost his job in March" is the household
+# describing how it got to where it is, not withdrawing the figure it just
+# gave. The simulator caught this exact shape as a re-ask of a filled
+# field across 10 transcripts (rambling persona, seed=2, every scenario).
+# Dates, named months, and "X years/months ago" all carry the same signal:
+# the event is in the past, and the user is recounting it, not announcing
+# a new change to the income figure on file.
+_NARRATIVE_TIME_RE = re.compile(
+    r"\b("
+    r"\d{4}|"  # a year like 2025
+    r"in (?:January|February|March|April|May|June|July|August|"
+    r"September|October|November|December)\b"
+    r"|\d+\s+(?:years?|months?)\s+ago\b"
+    r"|back\s+in\b|years?\s+back\b|months?\s+back\b"
+    r")",
+    re.IGNORECASE,
+)
+
+
 def _mentions_other_intake_field(text: str) -> bool:
     """True when *text* is plainly about household members or the
     elderly/disabled question rather than about money."""
@@ -1794,6 +1826,116 @@ class FoodPathAgent:
             new_corrections.extend(call_corrections)
         return new_corrections
 
+    # The household's income situation has just changed: a job ended, hours
+    # were cut, a benefit stopped. Anchored to the household's own income,
+    # so "my landlord lost his job" or a past-tense aside does not fire it.
+    #
+    # The subject must be the applicant or someone whose income is part of
+    # this household. A bare "my <anyone>" was too loose: "my landlord lost
+    # his job" cleared the household's income, which is both wrong and the
+    # kind of off-topic aside people actually make mid-intake.
+    _INCOME_NOW_STALE_RE = re.compile(
+        # Subject must be the applicant or someone whose income belongs to
+        # this household. A looser subject ("my <anyone>", or a bare
+        # passive "laid off") fired on ordinary mid-intake asides --
+        # "my landlord lost his job", "my neighbor got laid off" -- and
+        # cleared the household's income on the strength of someone
+        # else's news.
+        r"\b(?:i|we|"
+        r"my\s+(?:husband|wife|spouse|partner|son|daughter|kid|mom|mother|"
+        r"dad|father|brother|sister|roommate)"
+        r")\s+"
+        r"(?:"
+        r"(?:just\s+|recently\s+)?(?:lost|quit|left)\s+"
+        r"(?:my|our|his|her|their|the)?\s*job\b"
+        r"|(?:just\s+|recently\s+)?(?:got|was|were|been|am|are)\s+"
+        r"(?:laid\s+off|fired|let\s+go)\b"
+        r"|(?:am|are|is)\s+no\s+longer\s+(?:working|employed)\b"
+        r"|(?:had\s+)?hours\s+(?:got\s+)?(?:cut|reduced)\b"
+        r")"
+        r"|\bmy\s+hours\s+(?:got\s+|were\s+|have\s+been\s+)?(?:cut|reduced)\b"
+        r"|\b(?:perd[ií]|perdimos)\s+(?:mi|el|nuestro)\s+trabajo\b"
+        r"|\bme\s+despidieron\b",
+        re.IGNORECASE,
+    )
+
+    def _try_income_staleness_clear(self, user_message: str, lang: str) -> str | None:
+        """Re-open ``gross_monthly_income`` when the user says it is no
+        longer accurate but gives no replacement figure.
+
+        Live, 2026-07-29. Income was recorded as $1,000. The user then said
+        "wait i just lost my job, what time frame do i use for income?" The
+        agent explained the rule correctly and then, because income was
+        already filled and the next missing field was the elderly question,
+        **moved on** -- it never re-asked for the number it had just told
+        the user was wrong. The user typed "0" meaning income; the agent's
+        last question had been about age, so the answer had nowhere to go
+        and $1,000 survived into the verdict.
+
+        A figure the user has just disowned is worse than a missing one: it
+        is wrong, it looks confirmed, and here it is wrong in the direction
+        that denies benefits to someone who has just lost their income.
+        Clearing it puts income back at the front of ``missing_fields`` so
+        the ordinary intake asks for it again.
+
+        Returns ``None`` (no action) when the message carries a usable new
+        figure -- "I lost my job, now I get $300 a week" is a correction
+        the existing paths handle, and clearing would throw that away.
+        """
+        if self.state.gross_monthly_income is None:
+            return None
+        message = user_message or ""
+        if not self._INCOME_NOW_STALE_RE.search(message):
+            return None
+        # A job loss mentioned as BACKGROUND is not a claim that the
+        # recorded figure is wrong. Two signals identify "background":
+        #   (1) a past-time anchor that places the event in the past
+        #       ("my partner lost his job in March", "she quit last
+        #       year") -- the simulator caught this exact shape as a
+        #       re-ask of a filled field across 10 transcripts. Paired
+        #       with the live failure below, requiring *both* signals
+        #       (current-time OR `?`) AND no past-time anchor rules out
+        #       the rambling-aside false positive without weakening
+        #       the live disowned-income case.
+        #   (2) the user is visibly unsure what to report
+        #       ("...what time frame do i use?") -- already covered by
+        #       the `?` check below.
+        #
+        # What distinguishes the live failure is that the change is
+        # CURRENT ("i JUST lost my job") or the user is visibly unsure
+        # what to report ("...what time frame do i use?"). Requiring one
+        # of those keeps the fix pointed at the case it was written for
+        # and leaves ordinary conversational context alone. A missed
+        # re-open costs a re-ask the user can trigger themselves by
+        # saying so; a wrong re-open discards an answer they already
+        # gave.
+        if _NARRATIVE_TIME_RE.search(message):
+            return None
+        if not (
+            _INCOME_CHANGE_IS_CURRENT_RE.search(message) or "?" in message
+        ):
+            return None
+        # A replacement figure in the same message is a correction, not a
+        # request to re-open.
+        if normalize_income(user_message) is not None:
+            return None
+        self.state.gross_monthly_income = None
+        self._eligibility_result = None
+        self._pending_income_context = None
+        self._pending_income_reason = None
+        self._audit.append({
+            "turn": self.state.turn_count,
+            "event": "income_reopened_after_change",
+            "note": (
+                "[FoodPath audit] The user reported a change that makes the "
+                "recorded income stale (job loss, reduced hours). The value "
+                "was cleared so the intake asks for the current figure "
+                "instead of carrying the old one into the verdict."
+            ),
+        })
+        self._guardrail_source = "keyword"
+        return None
+
     def _try_household_bare_rejection_clear(self, user_message: str, lang: str) -> str | None:
         """W68b: detect a BARE rejection of the recorded household_size
         (e.g. "no not 1 person") with no replacement number anywhere else
@@ -2905,6 +3047,15 @@ class FoodPathAgent:
             self.state.is_out_of_scope = True
             self._guardrail_source = "classifier"
             self._classifier_off_topic_this_turn = True
+
+        # Re-open a recorded income the user has just disowned, BEFORE the
+        # next-field capture below, so the rest of the turn -- the model's
+        # context, the question the fold appends, the deterministic
+        # fallback's target field -- all agree that income is what is
+        # being asked for. Doing this after would leave the agent
+        # explaining that the old figure is wrong and then asking about
+        # something else. See _try_income_staleness_clear.
+        self._try_income_staleness_clear(user_message, lang)
 
         # Captured BEFORE the LLM call: the single field this turn's
         # question was actually about, if the intake isn't complete yet,
