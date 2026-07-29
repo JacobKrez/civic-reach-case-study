@@ -64,6 +64,37 @@ runs the test suite as a smoke check, and launches the web UI at
 Windows runner in CI (`.github/workflows/windows-setup.yml`), not just written
 and hoped for.
 
+**All you need is Python 3.11+ and one LLM API key.** The script creates the
+virtualenv and installs everything in `requirements.txt` itself — there is
+nothing to install by hand, no database to provision, and no external service
+to sign up for beyond the model provider you choose.
+
+### Stopping it
+
+The server runs in the foreground of the window you started it from. There is
+no daemon, service, or background job to chase down:
+
+* **Press `Ctrl+C`** in that window (or just close it) and the app is stopped.
+* Nothing persists. Sessions live in process memory only, so ending the
+  process ends the conversation — there is no database and no transcript file
+  to clean up. (See **Known limitations**; this is a deliberate scope cut.)
+* If a window was killed uncleanly and port 8000 is still held, find and end
+  the stray process:
+
+  ```bash
+  # macOS / Linux
+  lsof -ti:8000 | xargs kill
+  ```
+
+  ```powershell
+  # Windows
+  netstat -ano | findstr :8000
+  taskkill /PID <pid> /F
+  ```
+
+To remove the app entirely, delete the cloned folder — the virtualenv (`.venv`)
+and your key (`.env`) live inside it and go with it.
+
 Already have a key in `.env`, or want to run things by hand / from the CLI
 instead of the web UI? The five manual steps below are the same thing spelled
 out, no external services required beyond Python 3.11+ and one LLM API key.
