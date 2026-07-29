@@ -461,6 +461,46 @@ def _dollar_amount_is_user_income_echo(reply: str, dollar_match_start: int) -> b
     return any(marker in window for marker in _USER_INCOME_ECHO_MARKERS)
 
 
+# Wording that presents a dollar figure AS A THRESHOLD. The validator's
+# job is to stop the model inventing an eligibility limit; a dollar figure
+# used to explain something ("if you just lost your job you'd use $0 right
+# now") asserts no threshold and is not in scope.
+#
+# Live, 2026-07-29: the model answered "what time frame is my income?" with
+# a genuinely good explanation that happened to contain "$0", the whole
+# reply was discarded as a fabricated limit, and the user got a bare re-ask
+# of the question they had just asked around -- twice. Flagging every
+# dollar amount made the validator a frequent destroyer of exactly the
+# conversational answers this agent is graded on, while its real
+# protection (a made-up threshold) needs only these framings.
+#
+# The asymmetry is deliberate. A missed fabrication here costs a wrong
+# number in chat prose; the verdict itself is code-templated from the
+# calculator and cannot be influenced by the model. A false positive costs
+# the answer entirely.
+_LIMIT_ASSERTION_RE = re.compile(
+    r"(?:\b(?:limit|threshold|cut\s*-?\s*off|maximum|max|cap|ceiling|"
+    r"allowance|standard|l[ií]mite|m[áa]ximo|tope)\b"
+    r"|\b(?:under|below|less\s+than|more\s+than|over|above|up\s+to|"
+    r"at\s+or\s+below|at\s+or\s+under|no\s+more\s+than|exceeds?|"
+    r"menos\s+de|m[áa]s\s+de|hasta)\b)",
+    re.IGNORECASE,
+)
+
+
+def _dollar_amount_is_asserted_as_a_limit(reply: str, start: int, end: int) -> bool:
+    """True when the amount at *start* is framed as an eligibility limit.
+
+    Looks just before the figure (where the framing almost always sits --
+    "the limit is $X", "under $X") and a short way after it (for "$X is the
+    cutoff"). The windows are deliberately tight: the wider they are, the
+    more ordinary sentences get swept in, which is the failure being fixed.
+    """
+    before = reply[max(0, start - 55):start]
+    after = reply[end:end + 25]
+    return bool(_LIMIT_ASSERTION_RE.search(before) or _LIMIT_ASSERTION_RE.search(after))
+
+
 def check_income_limits(reply: str, *, household_size: int | None) -> list[ValidationFailure]:
     """P1.2 validator 3: no fabricated income limits.
 
@@ -500,6 +540,9 @@ def check_income_limits(reply: str, *, household_size: int | None) -> list[Valid
         # Skip user-income echoes (the model echoing back what the
         # user told them). These are not fabricated limits.
         if _dollar_amount_is_user_income_echo(reply, m.start()):
+            continue
+        # Only amounts presented as a threshold are limit claims.
+        if not _dollar_amount_is_asserted_as_a_limit(reply, m.start(), m.end()):
             continue
         value = _normalize_money(m.group(1))
         if value not in allowed:

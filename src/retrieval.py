@@ -132,7 +132,22 @@ def _tokenize(text: str) -> List[str]:
         "hogar": "household", "bruto": "gross", "mensual": "monthly",
     }
     expanded = [aliases[t] if t in aliases else t for t in tokens]
-    return [t for t in expanded if t not in _STOPWORDS and len(t) > 1]
+    # Single-character LETTERS are noise ("a", "i", a stray initial) and
+    # stay dropped. Single-character DIGITS are not: household sizes 1-9
+    # are the most common values in this domain, and the income-limit
+    # tables are indexed by exactly those numbers. Dropping them meant a
+    # query like "household size 2" carried no token for the "2", so the
+    # row for a two-person household could not outrank any other row.
+    #
+    # Low impact in practice -- the calculator, not retrieval, selects the
+    # threshold, and the exact figure is templated into the explanation
+    # from calculator code -- but a retriever that cannot see the number
+    # in the question is a sharp edge waiting for someone to lean on it.
+    return [
+        t
+        for t in expanded
+        if t not in _STOPWORDS and (len(t) > 1 or t.isdigit())
+    ]
 
 
 def _split_chunks(text: str) -> List[str]:
