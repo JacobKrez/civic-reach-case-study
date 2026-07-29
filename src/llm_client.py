@@ -14,7 +14,24 @@ from dotenv import load_dotenv
 class LLMClient:
     """Dispatch chat requests according to the LLM_PROVIDER environment variable."""
 
-    VALID_PROVIDERS = ("anthropic", "openai", "minimax", "openrouter")
+    # Providers a reviewer can plausibly already have a key for. Anthropic
+    # and MiniMax speak their own APIs; everything else below is
+    # OpenAI-wire-compatible and shares one implementation, differing only
+    # in base URL, key, and default model (see OPENAI_COMPATIBLE).
+    #
+    # ``ollama`` is the outlier worth calling out: it runs a local model
+    # and needs no API key at all, so the app is runnable by someone who
+    # has no account with any vendor.
+    VALID_PROVIDERS = (
+        "anthropic",
+        "openai",
+        "minimax",
+        "openrouter",
+        "google",
+        "groq",
+        "deepseek",
+        "ollama",
+    )
     # Canonical provider -> API key env-var mapping. The CLI derives its
     # own map from this so the two surfaces cannot drift (W28).
     PROVIDER_KEY_ENV = {
@@ -22,6 +39,40 @@ class LLMClient:
         "openai": "OPENAI_API_KEY",
         "minimax": "MINIMAX_API_KEY",
         "openrouter": "OPENROUTER_API_KEY",
+        "google": "GOOGLE_API_KEY",
+        "groq": "GROQ_API_KEY",
+        "deepseek": "DEEPSEEK_API_KEY",
+        # Ollama is local and unauthenticated. The env var exists so the
+        # key-presence checks have something to read; setup writes the
+        # literal "local" into it so a reviewer running Ollama passes the
+        # same validation path as everyone else instead of needing a
+        # special case in the CLI, the setup script, and the fallback
+        # chooser.
+        "ollama": "OLLAMA_HOST",
+    }
+
+    # base URL + default model for the OpenAI-wire-compatible providers.
+    # These all work through ``_chat_openai_compatible``; only these three
+    # values differ. Base URLs are overridable per provider via
+    # ``<PROVIDER>_BASE_URL`` for self-hosted gateways and non-default
+    # Ollama ports.
+    OPENAI_COMPATIBLE = {
+        "openai": ("https://api.openai.com/v1", "gpt-4.1-mini"),
+        "openrouter": ("https://openrouter.ai/api/v1", "moonshotai/kimi-k3"),
+        # Google's OpenAI-compatibility endpoint. Flash is the free-tier
+        # model most reviewers will already have access to, and it
+        # supports the function calling this agent depends on.
+        "google": (
+            "https://generativelanguage.googleapis.com/v1beta/openai/",
+            "gemini-2.5-flash",
+        ),
+        "groq": ("https://api.groq.com/openai/v1", "llama-3.3-70b-versatile"),
+        "deepseek": ("https://api.deepseek.com/v1", "deepseek-chat"),
+        # Local. The model must be pulled first (``ollama pull llama3.1``)
+        # and must be one that supports tool calling -- the agent records
+        # every fact through an update_state tool call, so a model without
+        # tool support degrades to the deterministic parsers only.
+        "ollama": ("http://localhost:11434/v1", "llama3.1"),
     }
     # W28 refresh: 'claude-3-5-sonnet-latest' was two generations behind
     # (current stable Sonnet is the 4.5 line); 'moonshotai/kimi-k3' is
@@ -31,11 +82,13 @@ class LLMClient:
     #   - openai:     gpt-4.1-mini      (OpenAI / OpenRouter, current mini)
     #   - minimax:    MiniMax-M3        (minimax platform docs, current frontier)
     #   - openrouter: moonshotai/kimi-k3 (OpenRouter /models, listed)
+    # The OpenAI-compatible providers take their default from
+    # OPENAI_COMPATIBLE above so the base URL and the model it was chosen
+    # for can never drift apart.
     DEFAULT_MODELS = {
         "anthropic": "claude-sonnet-4-5",
-        "openai": "gpt-4.1-mini",
         "minimax": "MiniMax-M3",
-        "openrouter": "moonshotai/kimi-k3",
+        **{name: model for name, (_url, model) in OPENAI_COMPATIBLE.items()},
     }
 
     # Keys .env is allowed to fill in even when already present in the
@@ -48,10 +101,14 @@ class LLMClient:
     # clear the specific empty-string case before the normal (non-override)
     # load.
     _ENV_KEYS = (
-        "LLM_PROVIDER", "LLM_MODEL",
-        "ANTHROPIC_API_KEY", "OPENAI_API_KEY",
+        "LLM_PROVIDER", "LLM_MODEL", "LLM_FALLBACK_PROVIDER",
+        "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "OPENAI_BASE_URL",
         "MINIMAX_API_KEY", "MINIMAX_BASE_URL",
         "OPENROUTER_API_KEY", "OPENROUTER_BASE_URL",
+        "GOOGLE_API_KEY", "GOOGLE_BASE_URL",
+        "GROQ_API_KEY", "GROQ_BASE_URL",
+        "DEEPSEEK_API_KEY", "DEEPSEEK_BASE_URL",
+        "OLLAMA_HOST", "OLLAMA_BASE_URL",
     )
 
     def __init__(self) -> None:
@@ -217,23 +274,49 @@ class LLMClient:
                 )
         return {"content": "".join(text_parts), "tool_calls": tool_calls}
 
-    def _chat_openai(
-        self, messages: list[dict], system: str | None, tools: list | None
+    def _base_url(self, provider: str) -> str:
+        """Base URL for an OpenAI-compatible provider.
+
+        ``<PROVIDER>_BASE_URL`` overrides the built-in default, which is
+        what a self-hosted gateway or a non-default Ollama port needs.
+        """
+        override = os.getenv(f"{provider.upper()}_BASE_URL", "").strip()
+        if override:
+            return override
+        return self.OPENAI_COMPATIBLE[provider][0]
+
+    def _chat_openai_compatible(
+        self,
+        provider: str,
+        messages: list[dict],
+        system: str | None,
+        tools: list | None,
     ) -> dict:
+        """One implementation for every provider that speaks the OpenAI wire
+        format: OpenAI itself, OpenRouter, Google (via its compatibility
+        endpoint), Groq, DeepSeek, and a local Ollama server.
+
+        They differ only in base URL, API key, and default model, so they
+        share this body rather than four near-identical copies that would
+        drift the moment one of them needed a fix.
+        """
         from openai import OpenAI
 
         outgoing = list(messages)
         if system is not None:
             outgoing = [{"role": "system", "content": system}, *outgoing]
         kwargs: dict[str, Any] = {
-            "model": self._model("openai"),
+            "model": self._model(provider),
             "messages": outgoing,
         }
         if tools is not None:
             kwargs["tools"] = self._to_openai_tools(tools)
-        response = OpenAI(api_key=os.getenv("OPENAI_API_KEY")).chat.completions.create(
-            **kwargs
-        )
+        # Ollama is unauthenticated; the SDK still requires a non-empty
+        # string, so send a placeholder rather than special-casing the
+        # call site.
+        api_key = os.getenv(self.PROVIDER_KEY_ENV[provider], "") or "local"
+        client = OpenAI(api_key=api_key, base_url=self._base_url(provider))
+        response = client.chat.completions.create(**kwargs)
         message = response.choices[0].message
         tool_calls = []
         for call in getattr(message, "tool_calls", None) or []:
@@ -244,6 +327,35 @@ class LLMClient:
                 parsed = {"raw": arguments}
             tool_calls.append({"name": call.function.name, "input": parsed or {}})
         return {"content": message.content or "", "tool_calls": tool_calls}
+
+    # Dispatch entry points. ``chat`` resolves the handler by name
+    # (``_chat_<provider>``), so each compatible provider needs a method
+    # even though they all share one body.
+
+    def _chat_openai(
+        self, messages: list[dict], system: str | None, tools: list | None
+    ) -> dict:
+        return self._chat_openai_compatible("openai", messages, system, tools)
+
+    def _chat_google(
+        self, messages: list[dict], system: str | None, tools: list | None
+    ) -> dict:
+        return self._chat_openai_compatible("google", messages, system, tools)
+
+    def _chat_groq(
+        self, messages: list[dict], system: str | None, tools: list | None
+    ) -> dict:
+        return self._chat_openai_compatible("groq", messages, system, tools)
+
+    def _chat_deepseek(
+        self, messages: list[dict], system: str | None, tools: list | None
+    ) -> dict:
+        return self._chat_openai_compatible("deepseek", messages, system, tools)
+
+    def _chat_ollama(
+        self, messages: list[dict], system: str | None, tools: list | None
+    ) -> dict:
+        return self._chat_openai_compatible("ollama", messages, system, tools)
 
     def _chat_minimax(
         self, messages: list[dict], system: str | None, tools: list | None

@@ -103,11 +103,34 @@ in `cmd.exe` instead.
 
 Now open `.env` and do two things:
 
-1. Fill in **exactly one** provider key: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`,
-   `MINIMAX_API_KEY`, or `OPENROUTER_API_KEY`.
-2. Set `LLM_PROVIDER` to match that key (`anthropic` / `openai` / `minimax` /
-   `openrouter`). `.env.example` defaults to `anthropic` — change it if you
-   used a different key.
+1. Fill in **exactly one** provider key.
+2. Set `LLM_PROVIDER` to the matching name below. `.env.example` defaults to
+   `anthropic` — change it if you used a different key.
+
+Use whichever you already have. The agent is provider-agnostic; nothing about
+the eligibility logic changes:
+
+| `LLM_PROVIDER` | Key | Where to get one | Default model |
+|---|---|---|---|
+| `anthropic` | `ANTHROPIC_API_KEY` | console.anthropic.com | `claude-sonnet-4-5` |
+| `openai` | `OPENAI_API_KEY` | platform.openai.com | `gpt-4.1-mini` |
+| `google` | `GOOGLE_API_KEY` | aistudio.google.com — **free tier** | `gemini-2.5-flash` |
+| `groq` | `GROQ_API_KEY` | console.groq.com — **free tier** | `llama-3.3-70b-versatile` |
+| `openrouter` | `OPENROUTER_API_KEY` | openrouter.ai — one key, most models | `moonshotai/kimi-k3` |
+| `deepseek` | `DEEPSEEK_API_KEY` | platform.deepseek.com | `deepseek-chat` |
+| `minimax` | `MINIMAX_API_KEY` | minimax.io | `MiniMax-M3` |
+| `ollama` | *none* | **runs locally, no account** | `llama3.1` |
+
+**No API key at all?** Use Ollama. Install it from [ollama.com](https://ollama.com),
+run `ollama pull llama3.1`, then set `LLM_PROVIDER=ollama` and `OLLAMA_HOST=local`
+in `.env`. Everything runs on your machine. Pick a model with **tool-calling
+support** — FoodPath records every answer through a tool call, and a model
+without it falls back to the deterministic parsers only, which degrades the
+conversation.
+
+Override the model for any provider with `LLM_MODEL`, and the endpoint with
+`<PROVIDER>_BASE_URL` (useful for a self-hosted gateway, or an Ollama server on
+a non-default port).
 
 That's it — everything else in `.env` is optional (see **Troubleshooting**
 below for `LLM_FALLBACK_PROVIDER`).
@@ -386,7 +409,7 @@ src/
   agent.py            # conversation loop, tool handling, correction tracking
   calculator.py       # deterministic eligibility arithmetic (FY2026 SNAP standards)
   retrieval.py        # RAG over knowledge_base/
-  llm_client.py       # provider-agnostic client (anthropic / openai / minimax / openrouter)
+  llm_client.py       # provider-agnostic client (8 providers, incl. local Ollama)
   state.py            # typed Pydantic AssessmentState
   cli.py              # `python3 -m src.cli`
   web.py              # FastAPI UI: POST /chat, POST /handoff, GET /, GET /health

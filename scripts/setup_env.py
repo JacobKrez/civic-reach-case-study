@@ -20,12 +20,27 @@ ENV_PATH = REPO_ROOT / ".env"
 ENV_EXAMPLE_PATH = REPO_ROOT / ".env.example"
 
 # (provider name for LLM_PROVIDER=, the .env key it needs)
+#
+# Kept in the order a reviewer is most likely to already have access to.
+# Ollama is last and is the no-account option: it runs a model on the
+# reviewer's own machine, so the app is runnable with no vendor
+# relationship at all.
 PROVIDERS: dict[str, tuple[str, str]] = {
     "1": ("anthropic", "ANTHROPIC_API_KEY"),
     "2": ("openai", "OPENAI_API_KEY"),
-    "3": ("minimax", "MINIMAX_API_KEY"),
-    "4": ("openrouter", "OPENROUTER_API_KEY"),
+    "3": ("google", "GOOGLE_API_KEY"),
+    "4": ("groq", "GROQ_API_KEY"),
+    "5": ("openrouter", "OPENROUTER_API_KEY"),
+    "6": ("deepseek", "DEEPSEEK_API_KEY"),
+    "7": ("minimax", "MINIMAX_API_KEY"),
+    "8": ("ollama", "OLLAMA_HOST"),
 }
+
+# Providers that need no API key. The value written to .env is a
+# placeholder so every downstream key-presence check (the CLI's
+# pre-flight, LLMClient._has_api_key, has_configured_key below) passes
+# without any of them needing an ollama-shaped special case.
+KEYLESS_PROVIDERS = {"ollama": "local"}
 _ALL_KEY_NAMES = {name for _, name in PROVIDERS.values()}
 
 
@@ -81,16 +96,31 @@ def prompt_for_provider_and_key() -> tuple[str, str, str]:
     """Interactively ask which provider and key. Returns (provider, key_name, api_key)."""
     print()
     print("No LLM provider key found in .env yet.")
-    print("FoodPath needs exactly one of the following:")
-    print("  1) Anthropic   (ANTHROPIC_API_KEY)")
-    print("  2) OpenAI      (OPENAI_API_KEY)")
-    print("  3) MiniMax     (MINIMAX_API_KEY)")
-    print("  4) OpenRouter  (OPENROUTER_API_KEY)")
+    print("FoodPath needs exactly ONE of the following. Pick whichever")
+    print("you already have access to -- the agent works with any of them.")
+    print()
+    print("  1) Anthropic   (ANTHROPIC_API_KEY)   console.anthropic.com")
+    print("  2) OpenAI      (OPENAI_API_KEY)      platform.openai.com")
+    print("  3) Google      (GOOGLE_API_KEY)      aistudio.google.com  [free tier]")
+    print("  4) Groq        (GROQ_API_KEY)        console.groq.com     [free tier]")
+    print("  5) OpenRouter  (OPENROUTER_API_KEY)  openrouter.ai        [one key, many models]")
+    print("  6) DeepSeek    (DEEPSEEK_API_KEY)    platform.deepseek.com")
+    print("  7) MiniMax     (MINIMAX_API_KEY)     minimax.io")
+    print("  8) Ollama      (no key needed)       runs locally -- see note below")
+    print()
+    print("  Note on 8: Ollama runs the model on this machine, so it needs no")
+    print("  account and no key. Install it from ollama.com, then run")
+    print("  'ollama pull llama3.1' before starting. Pick a model that supports")
+    print("  tool calling -- FoodPath records every answer through a tool call.")
     print()
     choice = ""
     while choice not in PROVIDERS:
-        choice = input("Choose a provider [1-4]: ").strip()
+        choice = input(f"Choose a provider [1-{len(PROVIDERS)}]: ").strip()
     provider, key_name = PROVIDERS[choice]
+
+    if provider in KEYLESS_PROVIDERS:
+        print(f"\n{provider} needs no API key -- configuring it now.")
+        return provider, key_name, KEYLESS_PROVIDERS[provider]
 
     api_key = ""
     while not api_key:

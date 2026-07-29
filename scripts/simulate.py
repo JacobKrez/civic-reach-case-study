@@ -951,6 +951,31 @@ _IMPROV_FLAVORS: tuple[str, ...] = (
     "with 'ish' or 'about', as a range, etc.) instead of a bare digit.",
     "Once, acknowledge the assistant's last message without adding any new "
     "information before continuing on the next turn.",
+    # The flavors below reproduce the shapes the case-study brief names
+    # explicitly ("ambiguous answers", "self-contradictions across turns")
+    # plus the ones live probing has actually caught the agent on. These
+    # are the messages a reviewer improvises, so they are the ones worth
+    # generating thousands of variations of.
+    "State your income in a pay period that is NOT monthly -- weekly, "
+    "hourly with the hours, per year, or per day -- and phrase the period "
+    "naturally ('300 a week', '300 weekly', 'about 15 an hour, 40 hours').",
+    "Describe your household by listing the people in it rather than "
+    "giving a number ('me, my two kids, and my mom'), and let the "
+    "assistant work out the count.",
+    "Mention a change in your income across the conversation -- what you "
+    "used to make and what you get now -- so two different figures are on "
+    "the table at once, then make the assistant establish which is current.",
+    "Ask whether some detail about a household member matters (their age, "
+    "a disability, that they only stay with you part of the time) at a "
+    "moment when the assistant is asking about something else entirely.",
+    "Contradict yourself once, mid-conversation, then correct it plainly "
+    "('wait, no, I said 3 but it's actually 4') and expect the correction "
+    "to stick.",
+    "Give a number with no units at all at least once ('70', '2200') and "
+    "make the assistant work out what you meant.",
+    "Answer a question with something that is not an answer -- a question "
+    "of your own, or a remark about your situation -- before eventually "
+    "answering it.",
 )
 
 
