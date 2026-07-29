@@ -5,19 +5,18 @@ __pycache__/
 logs/
 redteam/report_latest.json
 
-# Internal build-loop tooling notes — reference the local Hermes/Mission
-# Control setup (paths, agent identities) that only exists on the author's
-# machine; not something a reviewer cloning this repo needs to see.
+# Local tooling notes — machine-specific paths and scratch state that
+# only exist on the author's machine; nothing a reviewer cloning this
+# repo needs to see.
 .hermes/
 
-# Claude Code local settings and project-local skills — reference internal
-# build-loop tooling (launchd jobs, simulator internals) not meant for a
-# reviewer cloning this repo.
+# Editor/assistant local settings and project-local scratch config.
 .claude/
 
-# Self-improvement queue script — hardcodes the author's local machine
-# paths and a personal Mission Control DB that doesn't exist outside it;
-# excluded so a fresh clone's test suite/file tree stay self-contained.
+# Local maintenance script — hardcodes machine-specific paths and a
+# local scratch database that does not exist outside this machine;
+# excluded so a fresh clone's test suite and file tree stay
+# self-contained.
 scripts/self_improve.py
 tests/test_self_improve_idempotency.py
 

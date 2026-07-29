@@ -1666,13 +1666,13 @@ def _run_llm_judge(
     """
     if not outcome.passed:
         return {}
-    # Default ON. It shipped opt-in and nothing ever set the variable --
-    # not the launchd plist, not sim_daemon.py, not .env -- so every
-    # subjective axis (tone, re-asking, reads-as-a-person) was silently
-    # skipped on every run the daemon has ever made, while the downstream
-    # that consumes judge findings (sim_daemon._failed_invariants ->
-    # TOP.md -> self_improve gap-mining) sat wired and waiting. Set
-    # SIMULATOR_JUDGE=0 to turn it back off for a fast rule-only run.
+    # Default ON. The judge shipped opt-in behind this variable and
+    # nothing ever set it, so every subjective axis (tone, re-asking,
+    # reads-as-a-person) was silently skipped on every continuous run
+    # ever made -- while the reporting that consumes judge results sat
+    # wired and waiting for scores that never arrived. A check that
+    # nobody enables reports nothing. Set SIMULATOR_JUDGE=0 for a fast
+    # rule-only run (the dry-run path skips it regardless).
     if os.getenv("SIMULATOR_JUDGE", "1").lower() in ("0", "false", "no", "off"):
         return {}
     if not any(

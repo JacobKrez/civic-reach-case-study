@@ -268,6 +268,8 @@ flowchart TD
 | Not-a-person disambiguation (`detect_not_a_person_request`) | A user who explicitly asks "is this a real person" / "are you calling someone" / "is this 911" / "is this the EBT line" | Hardcoded "what this is NOT" block naming each adjacent real channel — NC DSS (caseworker), 911, 988 live counselors, EBT card-services line — with a one-line pointer to the real channel for each. Runs strictly below crisis / injection / scope in the guardrail chain, so a crisis disclosure still wins. |
 | `update_state` validation (Pydantic) | Out-of-range household_size, malformed income strings, type confusion | Drops the bad update, keeps state valid, re-asks the field next turn. |
 | Income pay-period check (`classify_income_ambiguity`) | An income answer whose pay period is missing or implausible — a bare `70`, `70000`, `$15/hr` with no hours, `$70 a day` with no days | The screen needs a **gross monthly** figure, but people answer in whatever period they are paid in. Where the knowledge base defines a conversion (annual ÷ 12, weekly × 52/12, hourly × hours × 52/12) it is applied deterministically; where it does not, the agent **asks instead of guessing**, naming the specific choice ("is $70 per month, per week, or per day?") and rejoining the answer with the half already given. A confident model guess is overruled: recording a per-year or per-day figure as per-month silently produces the wrong verdict, and a false denial is the most harmful output this tool has. |
+| Two-figures income clarification (`resolve_two_figures_answer`) | One message stating two incomes — "I was making $2,500, now I just get unemployment, about $300 a week" (job loss, a raise, a second job) | Choosing between two complete figures is a different operation from completing one figure whose halves arrived separately, so it has its own resolver. The agent quotes both figures back and asks which is current; the answer selects one — by naming it, by restating a fully specified income, or with a selection word ("the unemployment one", "now", "before") — and the pay period attached to **that** figure is what converts it. Concatenating the question and the answer and re-parsing the result cannot select between two figures: it reads whichever period cue it finds first and applies it to the wrong number. **An answer that selects nothing resolves nothing**, so a reply that turned out to be about something else ("my mom is 68 — does that matter?") is handled as what it actually was instead of silently becoming an income. |
+| Out-of-order fact extraction (`_f4_out_of_order_extraction`) | A fact volunteered for a field the agent did not just ask about, which the main model failed to record — "my mom is 68" while the pending question is income | Users do not answer in the order the form wants. When the main model emits no `update_state` call and the message plausibly carries intake content, one additional extraction-only provider call runs against the same tool schema. Its output flows through the **same** validation, income-cue, and correction gates as any other tool call, so state still changes only via a schema-validated call — raw prose is never scanned into state. Enabled by default; set `F4_EXTRACTION=0` to disable. |
 
 A `GUARDRAIL_CLASSIFIER=off` environment variable disables the classifier
 layer for tests, offline runs, and the model bake-off. The keyword
@@ -278,6 +280,13 @@ installs an autouse fixture that pins ``GUARDRAIL_CLASSIFIER=off`` (the
 documented offline mode) at the start of every test that does not opt
 out, and tests that encode "classifier layer is running" semantics opt
 in explicitly with ``monkeypatch.setenv("GUARDRAIL_CLASSIFIER", "on")``.
+A second autouse fixture pins ``F4_EXTRACTION=0`` for the same reason:
+the extraction pass makes an extra provider call, which shifts the
+scripted-response ordering the golden harness depends on and breaks
+call-count assertions that pre-date it. Its own tripwires opt in
+explicitly. Because that makes the pytest suite blind to the feature by
+construction, the place it is exercised end-to-end is the simulator,
+which drives the real agent with production defaults.
 CI (``.github/workflows/ci.yml``) runs two pytest legs — one with the
 classifier on and one with it off — so a regression in either mode
 breaks the build rather than slipping through as a different test
