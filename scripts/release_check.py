@@ -22,6 +22,22 @@ REQUIRED_TRACKED = (
 )
 
 
+class GitUnavailable(RuntimeError):
+    """Git cannot be used against this checkout in this environment.
+
+    Not a defect in the product: git may be absent, or -- the case a
+    reviewer actually hit on Windows, 2026-07-29 -- it refuses to operate
+    on a directory whose owner differs from the current user:
+
+        fatal: detected dubious ownership in repository at 'C:/Users/...'
+
+    That happens on a perfectly good clone (an elevated shell, or a
+    directory owned by BUILTIN\\Administrators). The clean-export check
+    needs git to do its job, so when git is unusable the honest outcome is
+    "this check could not run here", not "the release is broken".
+    """
+
+
 def _run(command: list[str], cwd: Path, timeout: int = 900) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         command,
@@ -35,9 +51,15 @@ def _run(command: list[str], cwd: Path, timeout: int = 900) -> subprocess.Comple
 
 def export_head(destination: Path) -> None:
     archive = destination / "head.tar"
-    proc = _run(["git", "archive", "--format=tar", "-o", str(archive), "HEAD"], REPO)
+    try:
+        proc = _run(["git", "archive", "--format=tar", "-o", str(archive), "HEAD"], REPO)
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise GitUnavailable(f"could not run git: {exc}") from exc
     if proc.returncode:
-        raise RuntimeError(f"git archive failed:\n{proc.stdout}\n{proc.stderr}")
+        combined = f"{proc.stdout}\n{proc.stderr}"
+        if "dubious ownership" in combined or "not a git repository" in combined:
+            raise GitUnavailable(combined.strip())
+        raise RuntimeError(f"git archive failed:\n{combined}")
     with tarfile.open(archive) as bundle:
         bundle.extractall(destination, filter="data")
     archive.unlink()
@@ -45,16 +67,27 @@ def export_head(destination: Path) -> None:
         raise RuntimeError("clean export unexpectedly contains .git")
 
 
+def _filesystem_contract() -> None:
+    missing = [path for path in REQUIRED_TRACKED if not (REPO / path).is_file()]
+    if missing:
+        raise RuntimeError(f"required reviewer artifacts are missing: {missing}")
+
+
 def _tracked_contract() -> None:
     if not (REPO / ".git").exists():
-        missing = [path for path in REQUIRED_TRACKED if not (REPO / path).is_file()]
-        if missing:
-            raise RuntimeError(f"required reviewer artifacts are missing: {missing}")
+        _filesystem_contract()
         return
 
-    proc = _run(["git", "ls-tree", "-r", "--name-only", "HEAD"], REPO)
+    try:
+        proc = _run(["git", "ls-tree", "-r", "--name-only", "HEAD"], REPO)
+    except (OSError, subprocess.SubprocessError) as exc:  # git not installed
+        raise GitUnavailable(f"could not run git: {exc}") from exc
     if proc.returncode:
-        raise RuntimeError(proc.stderr)
+        # Fall back to the same presence check used when there is no .git
+        # at all, so a reviewer whose environment blocks git still gets the
+        # artifact guarantee, then report the environment problem.
+        _filesystem_contract()
+        raise GitUnavailable(proc.stderr.strip() or "git exited non-zero")
     tracked = set(proc.stdout.splitlines())
     missing = [path for path in REQUIRED_TRACKED if path not in tracked]
     if missing:
