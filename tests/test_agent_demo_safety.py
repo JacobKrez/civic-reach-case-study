@@ -7,6 +7,7 @@ These were found in a full-code review pass, not by the red-team suite:
 """
 
 from src.agent import FoodPathAgent
+from src.calculator import max_household_size
 from src.guardrails.classifier import CLASSIFIER_SYSTEM_PROMPT
 from src.guardrails.crisis import CRISIS_RESOURCES
 
@@ -106,10 +107,14 @@ def test_invalid_tool_call_does_not_crash_turn():
     )
     agent = FoodPathAgent(llm_client=llm)
     reply = agent.turn("we have a huge household")
-    # The reply flows through; the invalid value is dropped, not applied.
-    # W53 forward-progress floor: intake is still incomplete
-    # (household_size never recorded), so the canonical next-field
-    # question is appended to the model content.
-    assert reply.startswith("recording that")
-    assert "buy and prepare food together?" in reply
+    # The turn does not crash and the invalid value is never applied.
     assert agent.state.household_size is None
+    # It must also EXPLAIN itself. This assertion used to require the
+    # model's prose plus a verbatim re-ask, which is what made an
+    # over-cap answer an inescapable loop: the user answered, nothing
+    # visibly happened, and the identical question came back. The reply
+    # now names the number, names the limit, and still asks the question
+    # so the intake can continue.
+    assert "999" in reply
+    assert str(max_household_size()) in reply
+    assert "buy and prepare food with you?" in reply

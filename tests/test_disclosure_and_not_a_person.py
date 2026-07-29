@@ -485,7 +485,9 @@ def test_first_turn_greeting_is_short_friendly_and_asks_household_size():
 
     en = first_turn_greeting("en")
     assert en == FIRST_TURN_GREETING_EN
-    assert "buy and prepare food together" in en.lower()
+    assert "buy and prepare food with you" in en.lower()
+    assert "include yourself" in en.lower()
+    assert "if it is just you, answer 1" in en.lower()
 
     es = first_turn_greeting("es")
     assert es == FIRST_TURN_GREETING_ES

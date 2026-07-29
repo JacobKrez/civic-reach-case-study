@@ -15,12 +15,13 @@ from __future__ import annotations
 NEXT_FIELD_QUESTION: dict[str, dict[str, str]] = {
     "en": {
         "household_size": (
-            "How many people, including you, usually buy and prepare food together? "
-            "If you usually buy and cook just for yourself, answer 1."
+            "How many people usually buy and prepare food with you? "
+            "Include yourself. If it is just you, answer 1."
         ),
         "gross_monthly_income": "What is your household's gross monthly income?",
         "has_elderly_or_disabled_member": (
-            "Does anyone in your household have an elderly (60+) or disabled member?"
+            "Now think about the people you included. "
+            "Is anyone age 60 or older, or does anyone have a disability?"
         ),
     },
     "es": {

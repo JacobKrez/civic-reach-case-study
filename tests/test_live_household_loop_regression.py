@@ -41,7 +41,8 @@ def test_reported_large_household_transcript_moves_forward(monkeypatch):
     assert "17 people" in household
     assert "gross monthly income" in household
     assert "$0" in income
-    assert "elderly" in income
+    assert "age 60 or older" in income
+    assert "disability" in income
     assert "likely eligible" in verdict.lower()
 
     # The FY2026 additional-person amounts continue past the published 1-8

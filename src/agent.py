@@ -17,6 +17,7 @@ from .guardrails.ambiguity import (
     classify_income_ambiguity,
     income_clarification_question,
     normalize_income,
+    period_converted_income,
     resolve_two_figures_answer,
 )
 from .guardrails.application_status import (
@@ -125,17 +126,17 @@ If the user is off-topic, the system routes the turn to a deterministic redirect
 
 Example 1 — happy-path intake, terse reply:
 User: "hi"
-Assistant: "How many people, including you, usually buy and prepare food together? If you usually buy and cook just for yourself, answer 1."
+Assistant: "How many people usually buy and prepare food with you? Include yourself. If it is just you, answer 1."
 User: "3"
 Assistant: "Got it — 3 people. What is your household's gross monthly income?"
 User: "1500"
-Assistant: "Got it — $1,500 a month. Does anyone in your household have an elderly (60+) or disabled member?"
+Assistant: "Got it — $1,500 a month. Now think about the people you included. Is anyone age 60 or older, or does anyone have a disability?"
 User: "no"
 Assistant: (final eligibility explanation follows, with citations)
 
 Example 2 — income where the user stated the pay period:
 User: "we make about 1500 a month"
-Assistant: "Got it — $1,500 a month. Does anyone in your household have an elderly (60+) or disabled member?"
+Assistant: "Got it — $1,500 a month. Now think about the people you included. Is anyone age 60 or older, or does anyone have a disability?"
 
 Example 2b — income where the pay period is MISSING. Never guess it. A
 figure that is really per day or per year, recorded as per month, produces
@@ -150,7 +151,7 @@ Assistant: "Got it. To turn an hourly rate into a monthly total, about how many 
 
 Example 3 — social filler that is NOT a field value:
 User: "thanks"
-Assistant: "You're welcome. Does anyone in your household have an elderly (60+) or disabled member?"
+Assistant: "You're welcome. Now think about the people you included. Is anyone age 60 or older, or does anyone have a disability?"
 
 Example 4 — user asks an identity question (the system routes this away; what you would have said if you did see it is just the next-field question):
 User: "who are you"
@@ -330,6 +331,74 @@ _OTHER_INTAKE_FIELD_RE = re.compile(
     r"años|discapacidad|discapacitad[oa])\b",
     re.IGNORECASE,
 )
+
+
+# Intake fields whose value the schema constrains to a range, and the
+# range itself. Mirrors ``AssessmentState``'s Field(ge=..., le=...) so a
+# rejected value can be explained to the user rather than silently
+# dropped. household_size's ceiling is the calculator's own table size,
+# read from the calculator so the two cannot drift.
+#
+# household_size ONLY. ``gross_monthly_income`` is deliberately absent:
+# it cannot reach this check, because ``normalize_income`` runs first and
+# already refuses a negative number (returning None) or reads "-50" as
+# 50. Listing it here would look like protection while never firing --
+# the same dead-configuration trap as an opt-in guardrail nobody enables.
+_INTAKE_RANGE_LIMITS: dict[str, tuple[float | None, float | None]] = {
+    "household_size": (1, float(max_household_size())),
+}
+
+
+def _range_error_message(field: str, value: Any, lang: str) -> str:
+    """Explain why a value was not accepted, in plain language.
+
+    Honest about whose limit it is: SNAP itself has no maximum household
+    size, so the cap is this screener's, and a household above it is told
+    where to go rather than being made to feel ineligible.
+    """
+    cap = max_household_size()
+    if field == "household_size":
+        try:
+            shown = f"{int(value):,}"
+        except (TypeError, ValueError):
+            shown = str(value)
+        if lang == "es":
+            if isinstance(value, (int, float)) and value < 1:
+                return (
+                    "El hogar tiene que incluir al menos a una persona: tú. "
+                    "¿Cuántas personas compran y preparan comida contigo?"
+                )
+            return (
+                f"Anotaste {shown} personas. Esta evaluación solo llega hasta "
+                f"{cap}. SNAP no tiene un máximo — es un límite de esta "
+                "herramienta. Si tu hogar es más grande, tu oficina local del "
+                "DSS puede evaluarlo directamente. Mientras tanto, ¿cuántas "
+                "personas compran y preparan comida contigo?"
+            )
+        if isinstance(value, (int, float)) and value < 1:
+            return (
+                "A household has to include at least one person — you. "
+                "How many people usually buy and prepare food with you?"
+            )
+        return (
+            f"You said {shown} people. This screen only goes up to {cap}. "
+            "That is a limit of this tool, not of SNAP itself — SNAP has no "
+            "maximum household size. If your household really is larger, "
+            "your county DSS office can screen it directly. Otherwise, how "
+            "many people usually buy and prepare food with you?"
+        )
+    if field == "gross_monthly_income":
+        if lang == "es":
+            return (
+                "El ingreso no puede ser negativo. Si nadie en el hogar tiene "
+                "ingresos ahora, responde 0. ¿Cuál es el ingreso mensual bruto?"
+            )
+        return (
+            "Income can't be a negative number. If no one in the household "
+            "has income right now, answer 0. What is your household's gross "
+            "monthly income?"
+        )
+    return ""
 
 
 def _mentions_other_intake_field(text: str) -> bool:
@@ -534,8 +603,12 @@ def _outcome_label_floor(
 _REASK_PHRASES_BY_LANG: dict[str, tuple[str, ...]] = {
     "en": (
         "how many people are in your household",
+        "how many people usually buy and prepare food with you",
         "what is your household's gross monthly income",
         "what is your household\ufffds gross monthly income",
+        "now think about the people you included",
+        "is anyone age 60 or older",
+        "does anyone have a disability",
         "does anyone in your household have an elderly",
         "does anyone in your household have a disabled",
         "anyone in your household have an elderly",
@@ -897,6 +970,25 @@ _HOUSEHOLD_BARE_REJECTION_RE = re.compile(
 # a real replacement value.
 _ALL_NUMBER_TOKENS_RE = re.compile(r"\d{1,3}(?:,\d{3})*(?:\.\d+)?")
 
+# "just me" and its close variants: a household of exactly one, stated in
+# words rather than as the digit the question asks for.
+#
+# The trailing guard is what makes this safe. "just me and my kid" is a
+# household of TWO, and recording it as one would understate the income
+# limit and could produce a wrong denial -- so any conjunction or second
+# person after the phrase disqualifies it, and the message must END there
+# (allowing only punctuation and mild trailing filler). A message this
+# pattern declines simply falls through to the digit-based parsers below,
+# which is the safe direction.
+_SOLO_HOUSEHOLD_RE = re.compile(
+    r"(?:^|\b)(?:it'?s\s+|its\s+|it\s+is\s+)?"
+    r"(?:just|only|nobody\s+but|no\s+one\s+but)\s+"
+    r"(?:me|myself|i)\b"
+    r"(?!\s*(?:,|\band\b|\bplus\b|\bwith\b|&|\+))"
+    r"[\s.!,]*$",
+    re.IGNORECASE,
+)
+
 # W61: role-bearing tokens that, when adjacent to a bare number in a
 # terse reply, signal that the number has a clear semantic role --
 # income vs expense, gross vs deduction. The presence of any of these
@@ -989,8 +1081,8 @@ FIRST_TURN_DISCLOSURE_ES = (
 )
 
 FIRST_TURN_GREETING_EN = (
-    f"Hi! I'm {PRODUCT_NAME}, here to help. To start, how many people, including you, "
-    "usually buy and prepare food together? If you usually buy and cook just for yourself, answer 1."
+    f"Hi! I'm {PRODUCT_NAME}, here to help. First, "
+    f"{_NEXT_FIELD_QUESTION['en']['household_size']}"
 )
 
 FIRST_TURN_GREETING_ES = (
@@ -1065,6 +1157,11 @@ class FoodPathAgent:
         # the offered figures, which is a different operation from rejoining
         # the two halves of a single figure. See _fallback_parse_terse_reply.
         self._pending_income_reason: str | None = None
+        # Set when a tool call carried an intake value the schema rejects
+        # (household_size above the screener's table, or below 1). The
+        # reply path renders a specific explanation instead of repeating
+        # the question the user just answered. Cleared every turn.
+        self._pending_range_error: tuple[str, Any] | None = None
         # Per-turn: True when this turn's income came from rejoining the
         # reply with the held context, so the ambiguity check must not
         # re-flag the (deliberately partial) reply.
@@ -1363,6 +1460,13 @@ class FoodPathAgent:
             return True
         if cls._F4_HOUSEHOLD_VOCAB.search(user_message):
             return True
+        # "just me" states a household of one without a digit or any
+        # household noun, so neither check above sees it. The
+        # deterministic parser handles it directly now; this keeps the
+        # extraction pass available as the second line of defence for
+        # the same phrasing embedded in a longer sentence.
+        if _SOLO_HOUSEHOLD_RE.search(user_message):
+            return True
         return False
 
     # F4 extraction prompt. Distinct from the main conversational
@@ -1495,6 +1599,49 @@ class FoodPathAgent:
                     if normalized is None:
                         updates.pop("gross_monthly_income", None)
                     else:
+                        # The user's own words beat the model's arithmetic.
+                        # The prompt forbids the model from computing, but
+                        # nothing stopped it smuggling a conversion in
+                        # through the tool-call VALUE: "i get 300 a week"
+                        # arrived as 1200 (300 x 4) instead of 1300
+                        # (300 x 52/12), and the agent confirmed "$1,200
+                        # per month" -- a number the user never said,
+                        # feeding a verdict. Normalizing the model's value
+                        # could never catch this, because 1200 is a
+                        # perfectly plausible monthly figure; only the raw
+                        # message reveals the mistake. Scoped to messages
+                        # that name a converting period, so ordinary
+                        # readings the model does well are left alone.
+                        # Skipped when the value came from rejoining a held
+                        # clarification: there the message is only HALF the
+                        # answer ("40 hours a week" completing "$15/hr"),
+                        # so reading it alone yields 40 x 52/12 = $173 and
+                        # would overrule the correct $2,600. Same guard the
+                        # ambiguity check above uses, for the same reason.
+                        if (
+                            user_message is not None
+                            and not self._income_resolved_via_context
+                        ):
+                            stated = period_converted_income(
+                                redact_for_logging(user_message)
+                            )
+                            if (
+                                stated is not None
+                                and abs(stated - normalized) > 0.01
+                            ):
+                                self._audit.append({
+                                    "turn": self.state.turn_count,
+                                    "event": "model_period_conversion_overruled",
+                                    "model_value": normalized,
+                                    "stated_value": stated,
+                                    "note": (
+                                        "Model reported a monthly figure that "
+                                        "disagrees with the pay period in the "
+                                        "user's own message; used the "
+                                        "deterministic conversion."
+                                    ),
+                                })
+                                normalized = stated
                         updates["gross_monthly_income"] = normalized
                         # A usable figure landed; the half-answer we were
                         # holding is spent and must not leak into a later
@@ -1531,6 +1678,33 @@ class FoodPathAgent:
             # candidate FIRST and only assign on success — assigning before
             # validation would leave an invalid value (e.g. household_size
             # 999) live in state even after the error is caught.
+            # Record an out-of-range intake value BEFORE validation drops
+            # it, so the reply can explain the limit instead of repeating
+            # the question. Without this the turn is a dead end the user
+            # cannot escape: "27" fails ``le=max_household_size()``, the
+            # update is discarded, the field stays None, and the agent
+            # re-asks the identical question -- forever, with no hint that
+            # the number was the problem. Reported from live use,
+            # 2026-07-29: "it keeps asking the question over and over".
+            for field, limits in _INTAKE_RANGE_LIMITS.items():
+                if field not in updates:
+                    continue
+                value = updates[field]
+                if not isinstance(value, (int, float)) or isinstance(value, bool):
+                    continue
+                low, high = limits
+                if (low is not None and value < low) or (
+                    high is not None and value > high
+                ):
+                    self._pending_range_error = (field, value)
+                    self._audit.append({
+                        "turn": self.state.turn_count,
+                        "event": "intake_value_out_of_range",
+                        "field": field,
+                        "value": value,
+                        "limit_low": low,
+                        "limit_high": high,
+                    })
             candidate = self.state.model_copy(update=updates)
             try:
                 self.state = AssessmentState.model_validate(candidate.model_dump())
@@ -1651,6 +1825,19 @@ class FoodPathAgent:
             # would also misread a legitimate value like "1,005 people" as
             # trailing "005" == 5. Commas are stripped before int() so the
             # full number is what actually gets range-checked.
+            # "Just me." -- a household of one, stated in words.
+            #
+            # The question itself says "If it is just you, answer 1", so
+            # this is the phrasing it actively invites, and it is the most
+            # common answer a single-person household gives. It parsed to
+            # NOTHING: no digit for the patterns below to find, and the
+            # extraction pass skipped it too (no digit, no household
+            # noun), leaving the model's tool call as the only path. Live,
+            # that failed 1 run in 3 -- the field stayed empty, the same
+            # question came back, and the screen could not finish.
+            if _SOLO_HOUSEHOLD_RE.search(text):
+                return 1
+
             leading = re.match(r"^\$?(\d{1,3}(?:,\d{3})*)\b", text)
             if leading:
                 value = int(leading.group(1).replace(",", ""))
@@ -2077,6 +2264,10 @@ class FoodPathAgent:
         # ``'classifier'`` when the LLM intent classifier fires.
         self._guardrail_source = None
         self._income_resolved_via_context = False
+        # Per-turn: a range rejection belongs to the turn that caused it.
+        # Left set, it would explain the limit again on an unrelated later
+        # turn.
+        self._pending_range_error = None
         before = self.state.model_dump(mode="json")
         started = time.perf_counter()
         reply = ""
@@ -3214,6 +3405,21 @@ class FoodPathAgent:
         # outcome-bearing floor) and a no-op when the model reply
         # already asked for ``missing[0]``, so existing well-behaved
         # transcripts are unaffected.
+        # An out-of-range value outranks every other continuation for this
+        # turn. The user answered the question; repeating it verbatim tells
+        # them nothing about why their answer did not take, and is the
+        # dead-end loop reported from live use. Consumed once and cleared,
+        # so the next turn behaves normally.
+        if self._pending_range_error is not None:
+            field, value = self._pending_range_error
+            self._pending_range_error = None
+            explanation = _range_error_message(field, value, self.state.language)
+            if explanation:
+                self._messages.append({"role": "assistant", "content": explanation})
+                self._hostile_this_turn = False
+                self._classifier_off_topic_this_turn = False
+                return explanation
+
         # An ambiguous income answer replaces the generic income question
         # with the one that actually resolves it. Consumed once, then
         # cleared, so a later turn re-asks normally.

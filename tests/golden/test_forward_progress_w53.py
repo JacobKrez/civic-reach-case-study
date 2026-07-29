@@ -532,7 +532,7 @@ def test_w53_anchor_does_not_suppress_elderly_question_in_canned_redirect():
     agent.turn("3")
     agent.turn("2500")  # household + income filled; missing[0] is now elderly/disabled
     reply = agent.turn("should I sue my landlord?")
-    assert "does anyone in your household have an elderly" in reply.lower(), (
+    assert "is anyone age 60 or older" in reply.lower(), (
         f"the canned redirect's description of the elderly field suppressed "
         f"the real elderly question: {reply!r}"
     )

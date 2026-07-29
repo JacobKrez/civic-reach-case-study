@@ -696,35 +696,30 @@ def assert_income_changes_only_on_cue(result: TranscriptResult) -> None:
         )
 
 
-# W53: canonical next-field questions, mirrored from
-# ``src.agent._NEXT_FIELD_QUESTION``. Used by the forward-progress
-# invariant to assert "if missing_fields is non-empty, the reply
-# asks for missing_fields[0]." We duplicate the source-of-truth
-# here rather than import from src.agent so the helper file stays
-# import-free of agent internals (it already does a local import of
-# FoodPathAgent inside run_transcript for the same reason).
-_W53_NEXT_FIELD_QUESTION: dict[str, dict[str, str]] = {
-    "en": {
-        "household_size": (
-            "How many people, including you, usually buy and prepare food together? "
-            "If you usually buy and cook just for yourself, answer 1."
-        ),
-        "gross_monthly_income": "What is your household's gross monthly income?",
-        "has_elderly_or_disabled_member": (
-            "Does anyone in your household have an elderly (60+) or disabled member?"
-        ),
-    },
-    "es": {
-        "household_size": (
-            "¿Cuántas personas, incluyéndote, compran y preparan comida juntas? "
-            "Si normalmente compras y cocinas solo para ti, responde 1."
-        ),
-        "gross_monthly_income": "¿Cuál es el ingreso mensual bruto de su hogar?",
-        "has_elderly_or_disabled_member": (
-            "¿Alguna persona en su hogar tiene 60 años o más, o tiene una discapacidad?"
-        ),
-    },
-}
+# W53: canonical next-field questions, used by the forward-progress
+# invariant to assert "if missing_fields is non-empty, the reply asks for
+# missing_fields[0]."
+#
+# IMPORTED, not transcribed. This file used to keep its own copy, on the
+# reasoning that the helper should stay import-free of agent internals.
+# That reasoning does not apply to this particular import:
+# ``src.agent_questions`` exists precisely so any module can read the
+# canonical wording without pulling in the agent -- it imports nothing
+# from the package, which is why ``src.agent`` itself only re-exports it.
+#
+# The copy was a standing trap. Rewording a question for clarity --
+# something anyone may reasonably do, and which happened on 2026-07-28 --
+# desynchronizes the checker from the agent, and the invariant then
+# reports *correct* replies as forward-progress violations. Because this
+# helper is what the continuous simulator grades with, the cost of that
+# drift is a night of false findings against working behaviour. It has
+# already been paid twice (W70b; the F1 contract sync). One source of
+# truth removes the failure mode rather than documenting it.
+#
+# ``test_canonical_questions_satisfy_their_own_matcher`` pins the other
+# half: that whatever the wording becomes, it still satisfies the
+# matchers below.
+from src.agent_questions import NEXT_FIELD_QUESTION as _W53_NEXT_FIELD_QUESTION
 
 
 # W70b: mirrors ``src.agent._W53_ANCHOR_PHRASES``. Live-probed 2026-07-28
@@ -754,7 +749,7 @@ _W53_NEXT_FIELD_QUESTION: dict[str, dict[str, str]] = {
 # fields without actually asking one.
 _W53_ANCHOR_PHRASES: dict[str, dict[str, tuple[str, ...]]] = {
     "en": {
-        "household_size": ("how many people", "buy and prepare food together"),
+        "household_size": ("how many people", "buy and prepare food"),
     },
     "es": {
         "household_size": ("cuántas personas", "compran y preparan comida"),
@@ -930,12 +925,18 @@ def assert_forward_progress(result: TranscriptResult) -> None:
 # would false-positive. We test for "phrase preceded by question-y
 # words OR appearing as the first 200 chars of the reply".
 _REASK_PHRASES_EN: dict[str, tuple[str, ...]] = {
-    "household_size": ("how many people are in your household",),
+    "household_size": (
+        "how many people are in your household",
+        "how many people usually buy and prepare food with you",
+    ),
     "gross_monthly_income": (
         "what is your household's gross monthly income",
         "what is your household\u2019s gross monthly income",
     ),
     "has_elderly_or_disabled_member": (
+        "now think about the people you included",
+        "is anyone age 60 or older",
+        "does anyone have a disability",
         "does anyone in your household",
         "does anyone in your household have",
     ),

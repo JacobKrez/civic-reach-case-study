@@ -128,8 +128,17 @@ _MONTHLY_HINT_PATTERN = re.compile(
 )
 
 # "weekly", "a week", "/wk", "per week", "per wk"
+#
+# ``\bweekly\b`` is a standalone alternative for the same reason the
+# hourly/annual/daily patterns carry ``\bhourly\b`` / ``\byearly\b`` /
+# ``\bdaily\b``: people write the bare adverb. Without it, "300 weekly"
+# matched no period at all and was read as $300 A MONTH -- a quarter of
+# the real figure, and silently a wrong verdict. ``biweekly`` is NOT
+# matched by ``\bweekly\b`` (no word boundary before "weekly" inside it),
+# which is correct: every-two-weeks is a different conversion and is
+# handled as its own ambiguity rather than guessed at here.
 _WEEKLY_HINT_PATTERN = re.compile(
-    r"(?:per|a|each)\s*week(?:ly)?|/week|/wk\b|\bwk\b",
+    r"(?:per|a|each)\s*week(?:ly)?|/week|/wk\b|\bwk\b|\bweekly\b",
     re.IGNORECASE,
 )
 
@@ -472,6 +481,44 @@ def _extract_two_figures(text: str) -> "tuple[float, float] | None":
         if len(seen) >= 2:
             return (seen[0], seen[1])
     return None
+
+
+def period_converted_income(text: str) -> Optional[float]:
+    """Return the monthly income *text* states, but ONLY when it names a
+    non-monthly pay period that requires a conversion.
+
+    This is the deterministic reading of the user's own words, used to
+    overrule a model that did the conversion arithmetic itself and got it
+    wrong. Live probe, 2026-07-28: "i get 300 a week" produced a tool call
+    of ``gross_monthly_income=1200`` (300 x 4) instead of 1300
+    (300 x 52/12), and the agent confirmed "$1,200 per month" -- a figure
+    the user never said, off by a full week's income, feeding a verdict.
+
+    Returns ``None`` when the message states no period, states a monthly
+    period, or cannot be resolved. In all those cases the model's value
+    stands: this function's job is narrowly to catch mis-converted
+    periods, not to second-guess every figure the model records. (A bare
+    "1800", or "1800 and I pay 400 for daycare", must keep flowing
+    through the model's reading -- picking a number out of a multi-number
+    sentence is what the W61 role-bearing logic is for.)
+    """
+    if not isinstance(text, str) or not text.strip():
+        return None
+    lowered = text.casefold()
+    converts = (
+        _WEEKLY_HINT_PATTERN.search(lowered)
+        or _ANNUAL_HINT_PATTERN.search(lowered)
+        or _HOURLY_HINT_PATTERN.search(lowered)
+        or _DAILY_HINT_PATTERN.search(lowered)
+    )
+    if not converts:
+        return None
+    # A message naming BOTH a monthly figure and another period is
+    # ambiguous about which one the income is; leave it to the existing
+    # ambiguity path rather than overriding on a guess.
+    if _MONTHLY_HINT_PATTERN.search(lowered):
+        return None
+    return normalize_income(text)
 
 
 def extract_two_figures(text: str) -> "tuple[float, float] | None":
