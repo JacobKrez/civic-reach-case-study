@@ -1391,6 +1391,24 @@ def _run_one(
     except AssertionError as exc:
         rules["universal_invariants"] = _grade(False, str(exc))
 
+    # 3b. Conversational-shape invariants (CONVERSATION_OVERHAUL §9.4).
+    #
+    # The universal pack above is about STATE correctness. These are about
+    # whether the conversation reads like one. They exist because the
+    # 2026-07-28 live probe produced a transcript that passed every rule
+    # above while being plainly broken: it stapled a canonical question
+    # after the model's own question, and answered a direct user question
+    # with nothing but a re-ask. Objective (severity 2) rather than judge
+    # axes, because both are decidable from the text.
+    rules["no_double_intake_question"] = _grade(
+        *_check_no_double_intake_question(assistant_replies, guardrail_claimed_history)
+    )
+    rules["answers_direct_questions"] = _grade(
+        *_check_answers_direct_questions(
+            user_messages, assistant_replies, guardrail_claimed_history
+        )
+    )
+
     # 4. Persona-specific rules.
     if persona.name == "crisis-mid-intake":
         # The agent must surface 988 and 211 on the crisis response. Do not
@@ -1504,6 +1522,128 @@ def _grade(passed: bool, reason: str) -> dict[str, Any]:
     return {"passed": bool(passed), "reason": reason}
 
 
+# Short, distinctive fragments of the three canonical intake questions.
+# A reply that contains the SAME field's question twice, or two different
+# fields' questions at once, is the double-question failure F1 fixed.
+_INTAKE_QUESTION_MARKERS: dict[str, tuple[str, ...]] = {
+    "household_size": ("how many people", "cuántas personas", "cuantas personas"),
+    "gross_monthly_income": (
+        "gross monthly income",
+        "ingreso mensual bruto",
+        "ingresos mensuales brutos",
+    ),
+    "elderly": (
+        "elderly (60+)",
+        "60 or older",
+        "mayor de 60",
+        "60 años o más",
+    ),
+}
+
+
+# A marker occurrence only counts as a "question form" when followed
+# by '?' within this window. 60 chars covers "gross monthly income?"
+# (immediate) and a paraphrased "How many people are in your household,
+# including yourself?" (longer, but well under 60 chars from the marker
+# to the trailing '?'). A bare mention in a declarative enumeration
+# ("three pieces of information: household size, gross monthly income,
+# and whether anyone is 60+ or disabled") is not a question form, so
+# the W53 floor's appended canonical question does not double it.
+_QUESTION_FORM_WINDOW = 60
+
+
+def _count_question_forms(text: str, markers: tuple[str, ...]) -> int:
+    """Return how many marker occurrences are followed by '?' within
+    ``_QUESTION_FORM_WINDOW`` chars.
+    """
+    lowered = (text or "").lower()
+    total = 0
+    for marker in markers:
+        start = 0
+        while True:
+            idx = lowered.find(marker, start)
+            if idx < 0:
+                break
+            window_end = idx + len(marker) + _QUESTION_FORM_WINDOW
+            if "?" in lowered[idx:window_end]:
+                total += 1
+            start = idx + len(marker)
+    return total
+
+
+def _check_no_double_intake_question(
+    assistant_replies: list[str],
+    guardrail_claimed_history: list[bool],
+) -> tuple[bool, str]:
+    """No single reply may ask for the same intake field twice.
+
+    The live failure (§9.1): the model asked its own household question
+    and the W53 floor stapled the canonical one after it, so the user saw
+    the same question twice in one bubble. The check counts *question
+    forms* (marker occurrences followed by '?' within a short window),
+    not raw mentions -- a declarative enumeration of all three fields
+    (the drifter / process / restarter redirects legitimately say
+    "household size, gross monthly income, and whether anyone is 60+ or
+    disabled" with no '?') is not a duplicate question, and the W53
+    floor's appended canonical question is then the single question the
+    user sees.
+    """
+    for index, reply in enumerate(assistant_replies):
+        if guardrail_claimed_history and index < len(guardrail_claimed_history):
+            if guardrail_claimed_history[index]:
+                continue  # canned blocks legitimately enumerate the fields
+        for field, markers in _INTAKE_QUESTION_MARKERS.items():
+            hits = _count_question_forms(reply, markers)
+            if hits > 1:
+                return (
+                    False,
+                    f"turn {index + 1} asked for {field} {hits} times in one reply: "
+                    f"{reply[:200]!r}",
+                )
+    return (True, "")
+
+
+def _check_answers_direct_questions(
+    user_messages: list[str],
+    assistant_replies: list[str],
+    guardrail_claimed_history: list[bool],
+) -> tuple[bool, str]:
+    """A direct user question must get more than a bare re-ask.
+
+    The live failure (§9.1, turn 4): the user asked "my mom is 68 does
+    that matter" and the entire reply was "What is your household's gross
+    monthly income?" -- the question was ignored. The check is deliberately
+    crude: when the user's message ends in '?', the reply must contain
+    something other than a single question sentence.
+    """
+    for index, message in enumerate(user_messages):
+        if index >= len(assistant_replies):
+            break
+        if guardrail_claimed_history and index < len(guardrail_claimed_history):
+            if guardrail_claimed_history[index]:
+                continue  # canned answers are the answer
+        if not (message or "").strip().endswith("?"):
+            continue
+        reply = (assistant_replies[index] or "").strip()
+        if not reply:
+            continue
+        # Strip the trailing question; something substantive must remain.
+        head, _, _tail = reply.rpartition("?")
+        # rpartition on the LAST '?' leaves everything before it in head.
+        # A reply that is nothing but one question leaves head as a single
+        # question sentence with no preceding statement.
+        remainder = head.strip()
+        if not remainder or remainder.count(".") + remainder.count("—") == 0:
+            if "?" not in remainder:
+                return (
+                    False,
+                    f"turn {index + 1}: user asked a direct question "
+                    f"({message[:80]!r}) and the reply was only a re-ask "
+                    f"({reply[:120]!r})",
+                )
+    return (True, "")
+
+
 def _has_crisis_resources(replies: list[str]) -> bool:
     """Return true when one crisis response contains both required resources."""
     return any(all(literal in reply for literal in ("988", "211")) for reply in replies)
@@ -1526,7 +1666,14 @@ def _run_llm_judge(
     """
     if not outcome.passed:
         return {}
-    if os.getenv("SIMULATOR_JUDGE", "").lower() not in ("1", "true", "yes"):
+    # Default ON. It shipped opt-in and nothing ever set the variable --
+    # not the launchd plist, not sim_daemon.py, not .env -- so every
+    # subjective axis (tone, re-asking, reads-as-a-person) was silently
+    # skipped on every run the daemon has ever made, while the downstream
+    # that consumes judge findings (sim_daemon._failed_invariants ->
+    # TOP.md -> self_improve gap-mining) sat wired and waiting. Set
+    # SIMULATOR_JUDGE=0 to turn it back off for a fast rule-only run.
+    if os.getenv("SIMULATOR_JUDGE", "1").lower() in ("0", "false", "no", "off"):
         return {}
     if not any(
         os.getenv(k) for k in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "MINIMAX_API_KEY")
@@ -1544,12 +1691,17 @@ def _run_llm_judge(
         "Score this civic-eligibility screening conversation on the four axes below.\n"
         "Return JSON only, in the shape:\n"
         '{"tone": 0-2, "re_asked_filled_field": 0-2, "verdict_plain_language": 0-2, '
-        '"reads_as_a_person": 0-2, "notes": "short string"}\n\n'
+        '"reads_as_a_person": 0-2, "acknowledged_user_content": 0-2, '
+        '"answered_user_question": 0-2, "notes": "short string"}\n\n'
         "Axes (0=poor, 1=ok, 2=good):\n"
         "- tone: was the assistant's tone appropriate and warm, never condescending?\n"
         "- re_asked_filled_field: did the assistant avoid re-asking for a value the user already gave?\n"
         "- verdict_plain_language: if a verdict was reached, was it explained in plain English?\n"
-        "- reads_as_a_person: did the conversation read like a real intake (not robotic)?\n\n"
+        "- reads_as_a_person: did the conversation read like a real intake (not robotic)?\n"
+        "- acknowledged_user_content: did replies acknowledge what the user actually said, "
+        "rather than opening with a canned line or jumping straight to the next question?\n"
+        "- answered_user_question: when the user asked something directly, did the assistant "
+        "answer it before moving on?\n\n"
         f"PERSONA: {persona.name}\nSCENARIO: {scenario.sid}\n\n"
         f"TRANSCRIPT:\n{transcript}\n"
     )
@@ -1568,7 +1720,14 @@ def _run_llm_judge(
         return {"_judge_error": {"passed": False, "reason": f"{type(exc).__name__}: {exc}"}}
 
     scored: dict[str, dict[str, Any]] = {}
-    for axis in ("tone", "re_asked_filled_field", "verdict_plain_language", "reads_as_a_person"):
+    for axis in (
+        "tone",
+        "re_asked_filled_field",
+        "verdict_plain_language",
+        "reads_as_a_person",
+        "acknowledged_user_content",
+        "answered_user_question",
+    ):
         val = parsed.get(axis, 0)
         try:
             val = int(val)
