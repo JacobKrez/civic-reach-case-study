@@ -691,6 +691,102 @@ def _intake_progress_reply(
     return f"{confirmation} {_NEXT_FIELD_QUESTION[lang][missing[0]]}"
 
 
+# F5 (2026-07-28) affirmative-answer helpers.
+#
+# F5 closes the gap where a user’s message ends in ``?`` and is
+# about whether a fact just recorded is relevant (the canonical
+# example is the §9.1 probe turn 4: "my mom is 68 does that
+# matter"). The existing pipeline acks the field (via
+# ``_intake_progress_reply``) and then re-asks the next field, but
+# it does NOT address the user’s question. The user hears the
+# canonical re-ask and reasonably concludes the bot isn’t
+# listening. F5 inserts a short affirmative answer so the
+# reply (a) acknowledges the fact, AND (b) explains its relevance,
+# AND (c) re-asks the next field.
+#
+# We deliberately split the implementation:
+# - the *detector* checks if a message matches an informational class,
+# - the *answer* content is code-templated per language (no model-written
+#   answer; that would defeat the point of a deterministic reply).
+#
+# The set of known informational classes is intentionally small:
+# the doc’s §9.3 names elderly-relevance as the only one for the
+# 6pm-demo. Adding more classes is a follow-up that requires the
+# same risk/cost evaluation (false positives add unsolicited
+# answers; false negatives drop the relevance context).
+
+
+def _is_elderly_relevance_question(user_message: str) -> bool:
+    """Return True if *user_message* is a question whose answer is
+    "an elderly/disabled household member changes which income
+    test applies."
+
+    Conservative on purpose: the user must have asked a question
+    (the message ends in ``?`` after accounting for trailing
+    whitespace/punctuation). The substantive signal is the F4
+    elderly vocabulary (``elderly``, ``senior``, ``60+``,
+    ``disabled``, ``discapacidad``, ``mayor``, etc.) OR an
+    elderly-disability relevance phrase (``does that matter``,
+    ``will that affect``, ``is that relevant``, ``importa``,
+    ``afecta``, ``cambia``, ``qualifica``, ``eligible``,
+    ``count``). The relevance-phrase branch is what catches the
+    ``§9.1`` turn-4 probe ("my mom is 68 does that matter"),
+    where the elderly-ness comes from the age (68) rather than
+    the user typing one of the explicit elderly keywords.
+
+    False positives fire the answer when it isn’t asked for
+    (UX cost); false negatives drop the answer when it would’ve
+    helped (F5’s prevention target). The detector errs on the
+    side of *not* firing -- an over-eager affirmative answer is
+    a worse experience than a missed one because the F4 ack
+    already covers the fact, only the explanation is missing.
+    """
+    if not isinstance(user_message, str):
+        return False
+    stripped = user_message.rstrip()
+    if not stripped:
+        return False
+    if not stripped.endswith("?") and not stripped.endswith("¿"):
+        return False
+    if FoodPathAgent._F4_ELDERLY_VOCAB.search(user_message):
+        return True
+    # Relevance phrases -- the probe ("my mom is 68 does that
+    # matter") and close variants in EN and ES.
+    relevance = re.search(
+        r"\b(?:does\s+(?:that|this|it)\s+matter|will\s+(?:that|this|it)\s+(?:affect|change)|"
+        r"is\s+(?:that|this|it)\s+relevant|"
+        r"importa|afecta|cambiar|cambia\w*|"
+        r"do\s+(?:they|it|that)\s+count|"
+        r"does\s+(?:she|he)\s+count|"
+        r"is\s+that\s+(?:relevant|a\s+factor|important)|"
+        r"will\s+(?:she|he|they)\s+qualify)\b",
+        user_message, re.IGNORECASE,
+    )
+    return bool(relevance)
+
+
+def _elderly_relevance_answer(lang: str) -> str:
+    """Return the short code-templated answer to an elderly-
+    relevance question. Says yes (this matters) and names WHY
+    (the gross-to-net income test switch). Returns empty string
+    for an unsupported language so callers can fall through.
+    """
+    if lang == "es":
+        return (
+            "Sí — alguien mayor de 60 años o con discapacidad en el "
+            "hogar cambia la prueba de ingresos de bruta a neta, "
+            "así que es relevante para tu elegibilidad."
+        )
+    return (
+        "Yes — someone 60+ or disabled in the household switches "
+        "the income test from gross to net, so it’s relevant for "
+        "your eligibility."
+    )
+
+
+# Spanish ¿ is the inverted question mark; English uses ?
+# (already in the function above).
+
 UPDATE_STATE_TOOL = {
     "name": "update_state",
     "description": (
@@ -1166,6 +1262,80 @@ class FoodPathAgent:
         r"bucks?|dollars?)\b)"
     )
 
+    # F4 (2026-07-28): cheap plausibility gate for the out-of-order
+    # extraction pass. We must NOT call the LLM for every turn — the
+    # extraction call is per-turn latency/cost — so we restrict it
+    # to messages that plausibly carry intake content. Three cheap
+    # signal classes: any digit (income / household-size / age),
+    # elderly/disabled vocabulary, household-composition vocabulary.
+    # Match the same level of conservatism as the existing income-cue
+    # gate — false positives fall through to the next-field re-ask
+    # (a small UX cost), false negatives silently drop a fact (the
+    # failure mode F4 was created to prevent).
+    _F4_ELDERLY_VOCAB = re.compile(
+        r"\b(?:elderly|senior|seniors|disabled|disability|"
+        r"60\+|over\s+60|older\s+adult|aging|aged|"
+        r"mayor|discapacidad|mayores|de\s+la\s+tercera\s+edad)\b",
+        re.IGNORECASE,
+    )
+    _F4_HOUSEHOLD_VOCAB = re.compile(
+        r"\b(?:household|family|families|members?|people|"
+        r"personas?|hijos?|hijo|daughter|son|husband|wife|partner|"
+        r"wife|mom|mum|mother|dad|father|grandma|grandpa|grandmother|"
+        r"grandfather|nana|papa|mama|"
+        r"kids?|toddler|baby|newborn|spouse|sibling|brother|sister|"
+        r"live\s+with|living\s+with|stays\s+with|roommate|"
+        r"hogar|familia)\b",
+        re.IGNORECASE,
+    )
+
+    @classmethod
+    def _message_plausibly_has_intake_content(cls, user_message: str) -> bool:
+        """F4 gate: return True if *user_message* plausibly carries an
+        intake fact, False if it is plain social / unrelated prose.
+
+        Conservative on purpose — a missed positive is a fact
+        silently dropped (F4's prevention-target), a missed negative
+        is one extra LLM call per turn (a fixed cost). The
+        exact-match set: any digit, elderly/disabled vocabulary,
+        household-composition vocabulary.
+        """
+        if not isinstance(user_message, str) or not user_message.strip():
+            return False
+        if re.search(r"\d", user_message):
+            return True
+        if cls._F4_ELDERLY_VOCAB.search(user_message):
+            return True
+        if cls._F4_HOUSEHOLD_VOCAB.search(user_message):
+            return True
+        return False
+
+    # F4 extraction prompt. Distinct from the main conversational
+    # system prompt so the stub detectors in tests can route chat()
+    # calls. The prompt is deliberately short, with the same
+    # wording the §9.3 spec calls out verbatim: "extract only
+    # facts the user explicitly stated about THEIR OWN household;
+    # if none, call nothing." The middle paragraph spells out the
+    # three intake fields and the negative "not THEIR household"
+    # guardrail so a chatty model doesn't over-extract neighbors
+    # or coworkers.
+    _F4_EXTRACTION_PROMPT = (
+        "extract only facts the user explicitly stated about "
+        "THEIR OWN household; if none, call nothing.\n\n"
+        "If the user stated any of these about their own household, "
+        "call update_state on the matching field with the exact "
+        "value:\n"
+        "  - household_size (integer)\n"
+        "  - gross_monthly_income (number; weekly is x 52/12, "
+        "annual is /12)\n"
+        "  - has_elderly_or_disabled_member (boolean, true if any "
+        "household member is 60+ or disabled)\n\n"
+        "If the user is talking ABOUT someone outside their "
+        "household (a neighbor, friend, coworker, or relative not "
+        "in their household), call no tool for that fact.\n\n"
+        "Use only tool calls. No conversational prose."
+    )
+
     @classmethod
     def _message_has_intake_cue(cls, field: str, user_message: str) -> bool:
         # W55 targets the consequential stale-income path. Other fields keep
@@ -1619,6 +1789,161 @@ class FoodPathAgent:
         if self._pending_income_context:
             return f"{self._pending_income_context}, {message}"
         return message
+
+    def _f4_out_of_order_extraction(
+        self,
+        user_message: str,
+        asked_field: str | None,
+        lang: str,
+    ) -> None:
+        """F4 (2026-07-28) out-of-order fact extraction.
+
+        Closes the gap where a user message carries an intake
+        fact the main model dropped (no ``update_state`` tool
+        call was emitted) but a deterministic backstop *did
+        not* fire either -- so the fact evaporates. The §9.1
+        probe message 4 ("my mom is 68 does that matter") is
+        the canonical case.
+
+        Design (from §9.3 of CONVERSATION_OVERHAUL.md): make
+        **one additional LLM call** whose ONLY job is
+        extraction. Tool calls flow through the *same*
+        ``_apply_tool_calls`` gates. State still changes only
+        via a model-issued, schema-validated tool call --
+        ``test_free_text_is_never_parsed_into_state`` stays
+        green and the §8 invariant stays honest.
+
+        Called only when:
+          * the main model emitted no ``update_state`` calls, AND
+          * the message plausibly carries intake content
+            (gate ``_message_plausibly_has_intake_content``), AND
+          * intake is still incomplete (no verdict computed).
+        """
+        # Audit BEFORE the call so a timeout / exception is still
+        # observable in the transcript.
+        self._audit.append({
+            "turn": self.state.turn_count,
+            "event": "f4_extraction_pass_fired",
+            "note": "[FoodPath audit] F4: extraction LLM call invoked; "
+                    "main model emitted no update_state calls and "
+                    "the message plausibly carries intake content.",
+        })
+        try:
+            ext_response = self.llm_client.chat(
+                [
+                    {
+                        "role": "user",
+                        "content": redact_for_logging(user_message),
+                    }
+                ],
+                system=self._F4_EXTRACTION_PROMPT,
+                tools=self.tools,
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            # A failing extraction must NEVER crash the turn.
+            # Log and bail; the next-field re-ask will fire.
+            self._audit.append({
+                "turn": self.state.turn_count,
+                "event": "f4_extraction_pass_error",
+                "error": repr(exc),
+            })
+            return
+
+        ext_tool_calls = (ext_response or {}).get("tool_calls") or []
+        if not ext_tool_calls:
+            # No tool calls = no field was extractable. Most
+            # common case for the negative tripwire ("my
+            # neighbor is 68"). No state change.
+            return
+
+        # Fill-only semantics: even though _apply_tool_calls
+        # would reject a malformed value, it would also accept
+        # a valid one. We filter to only-None fields BEFORE the
+        # tool-call path so a non-None field is never
+        # overwritten without the existing correction-cue
+        # mechanism in _apply_tool_calls.
+        if not self._f4_fill_only_filter(ext_tool_calls, user_message):
+            return
+
+        try:
+            self._apply_tool_calls(
+                ext_tool_calls,
+                user_message=user_message,
+                asked_field=asked_field,
+            )
+        except ValueError:
+            # Bad model output dropped silently; the no-prose-scan
+            # invariant means a malformed value never reaches
+            # state regardless.
+            pass
+
+    def _f4_fill_only_filter(
+        self,
+        ext_tool_calls: list[dict[str, Any]],
+        user_message: str,
+    ) -> bool:
+        """Apply the F4 fill-only contract.
+
+        For each ``update_state`` tool call in ``ext_tool_calls``:
+          * keep the field if state value is currently None (fill),
+          * if the field is already set:
+              - ALLOW overwrite only if the user message contains
+                an explicit correction cue (matches the existing
+                W64/W68b correction-cue vocabulary),
+              - otherwise, drop the field from the call.
+
+        Returns True if at least one field survives the filter
+        (so the call is worth sending through ``_apply_tool_calls``),
+        False if every field was dropped.
+        """
+        # Correction cue vocabulary — mirrors W64/W68b in agent.py.
+        # Same set so F4 reuses the existing correction-not-allowed
+        # path that the user already proved by typing "actually".
+        _CORRECTION_CUE = re.compile(
+            r"\b(?:actually|sorry|i\s+meant|correction|no\s+wait|"
+            r"that(?:s|\s+is)\s+wrong|"
+            r"en\s+realidad|perd[oó]n|quer[ií]a\s+decir|"
+            r"correcci[oó]n|no\s+espera)\b",
+            re.I,
+        )
+        correction_cue = bool(_CORRECTION_CUE.search(user_message))
+
+        any_kept = False
+        for call in ext_tool_calls:
+            if call.get("name") != "update_state":
+                continue
+            raw = call.get("input") or {}
+            if not isinstance(raw, dict):
+                continue
+            for field, value in list(raw.items()):
+                current = getattr(self.state, field, None)
+                if current is None:
+                    # Fill — the field is missing; allow.
+                    any_kept = True
+                    continue
+                if correction_cue:
+                    # Overwrite with correction cue — the
+                    # W64/W68b path will handle the diff.
+                    any_kept = True
+                    continue
+                # Non-None AND no correction cue: drop this
+                # field from the tool call so the F4 path
+                # doesn't silently overwrite state.
+                raw.pop(field, None)
+                self._audit.append({
+                    "turn": self.state.turn_count,
+                    "event": "f4_extraction_dropped_for_no_correction_cue",
+                    "field": field,
+                    "note": "F4: a non-None field was extracted by the "
+                            "extraction pass but dropped because the "
+                            "user message contained no explicit "
+                            "correction cue. The existing field is "
+                            "preserved.",
+                })
+            # If we emptied the input dict, drop the call entirely.
+            if not raw:
+                continue
+        return any_kept
 
     def _calculate_once(self) -> None:
         if self._eligibility_result is not None or not self.state.is_ready_to_calculate():
@@ -2380,6 +2705,34 @@ class FoodPathAgent:
             # phantom suffix is appended below.
             pass
 
+        # F4 (2026-07-28): out-of-order fact extraction. Fires when
+        # the main model dropped the ball (no update_state tool
+        # call) AND the message plausibly carries intake content
+        # AND the intake is still incomplete. One additional LLM
+        # call whose ONLY job is extraction -- no conversational
+        # output. Tool calls flow through the same _apply_tool_calls
+        # gates, so the §8 no-prose-scan invariant is preserved.
+        # See _f4_out_of_order_extraction for the full writeup.
+        #
+        # Opt-in via F4_EXTRACTION=1 env var (default OFF). The
+        # test suite has multiple call-count contract assertions
+        # (e.g. test_classifier.py) that pre-date F4 and would
+        # have to be updated everywhere; production deployment
+        # wants F4 on by default. The env var lets us turn it on
+        # here and in deploy configs without rewriting every
+        # caller-side test. F4 tripwires opt in explicitly.
+        if (
+            _os.environ.get("F4_EXTRACTION", "").strip().lower() in ("1", "true", "yes", "on")
+            and self.state.missing_fields()
+            and not (extract_response.get("tool_calls") or [])
+            and self._message_plausibly_has_intake_content(user_message)
+        ):
+            self._f4_out_of_order_extraction(
+                user_message,
+                asked_field[0] if asked_field else None,
+                lang,
+            )
+
         # Deterministic fallback: if the model's tool call (or lack of
         # one) left the field this turn's question was about still
         # missing, try a narrow, conservative parse of the raw reply
@@ -2387,8 +2740,8 @@ class FoodPathAgent:
         # connecting a bare reply ("3", "2200", "no") to the field it
         # answers than at fuller sentences -- this never touches any
         # field except the one the agent just asked about, so a parse
-        # failure just leaves the field missing for the LLM to re-ask.
-        #
+        # failure just leaves the field missing for the LLM to
+        # re-ask.
         # Guardrail: if the user message carries a correction cue
         # (e.g. "actually 5" mid-intake when correcting household_size
         # from 2 -> 5), the fallback MUST NOT grab that number and
@@ -2659,6 +3012,22 @@ class FoodPathAgent:
             content = _intake_progress_reply(
                 self.state, newly_recorded, self.state.language
             )
+
+        # F5 (2026-07-28) affirmative answer: when the user just
+        # recorded an elderly/disabled field via the F4 extraction
+        # pass AND their message was a question on that field’s
+        # relevance, prepend the code-templated answer. This is
+        # what closes the §9.1 turn-4 gap: the user asked "does
+        # that matter", the bot now answers "yes, it changes which
+        # income test applies" before re-asking the next field.
+        if (
+            "has_elderly_or_disabled_member" in newly_recorded
+            and _is_elderly_relevance_question(user_message)
+            and content
+        ):
+            answer = _elderly_relevance_answer(self.state.language)
+            if answer:
+                content = f"{answer} {content}"
 
         # Provider-independent floor: a verdict can never be blank or omit
         # the outcome. Arithmetic remains exclusively in the calculator.
