@@ -394,6 +394,81 @@ AMBIGUITY_HOURLY_NO_HOURS = "hourly_no_hours"
 AMBIGUITY_DAILY_NO_DAYS = "daily_no_days"
 AMBIGUITY_PERIOD_UNCLEAR_HIGH = "period_unclear_high"
 AMBIGUITY_PERIOD_UNCLEAR_LOW = "period_unclear_low"
+# F3 (2026-07-28): a single user message that states TWO income figures
+# — typically "I was making $X, now I get $Y" (job loss, raise, second
+# job, etc.). The current income could be either figure; we must ask
+# which is the current monthly total instead of guessing or dropping
+# the message. The probe message from §9.1: "i was making 2500 but
+# now i just get unemployment, like 300 a week i think" — the
+# brief's *named* ambiguous-income case.
+AMBIGUITY_TWO_FIGURES = "two_figures"
+
+
+# F3 detection: a past-tense income marker ("was making", "was getting",
+# "used to make", "before") AND a present-tense income marker ("now",
+# "currently", "get", "gets") within the same message. Conservative
+# on purpose — we don't want to fire this for messages that just
+# contain one figure, even if "now" appears incidentally ("now what's
+# the next question").
+_PAST_TENSE_INCOME_HINT = re.compile(
+    r"\b(?:was\s+(?:making|getting|making|earning|bringing|doing)|"
+    r"used\s+to\s+(?:make|get|earn|bring|do)|"
+    r"before\b|previously|prior\b)",
+    re.IGNORECASE,
+)
+_PRESENT_TENSE_INCOME_HINT = re.compile(
+    r"\b(?:now\b|currently\b|get\s+|gets\b|getting\b|earning\b|bringing\b|"
+    r"i\s+only\s+(?:get|make|earn)|"
+    r"these\s+days|right\s+now)",
+    re.IGNORECASE,
+)
+
+# A money-shaped token (permissive: with or without $ / commas / k
+# suffix / decimal). Matches "$2500", "2500", "$2,500", "$1.5k",
+# "300", "$600", etc.
+_MONEY_TOKEN_PATTERN = re.compile(
+    r"\$?\s*([\d,]+(?:\.\d+)?)(?:\s*k\b)?",
+    re.IGNORECASE,
+)
+
+
+def _extract_two_figures(text: str) -> "tuple[float, float] | None":
+    """If *text* names two distinct income-shaped numbers, return
+    them as ``(first, second)`` in the order they appear in the
+    message. Returns ``None`` if there aren't at least two distinct
+    money-shaped numbers in *text*.
+
+    Used by F3 to populate the two-figures clarification question.
+    Single-figure messages and messages with one figure repeated
+    ("2500 ... 2500 a month") are excluded: the second appearance
+    is the same figure and doesn't represent a new income.
+
+    The detection is permissive on purpose — false positives fall
+    through to the existing single-figure branches; false negatives
+    would surface the user's two figures without a question and
+    silently produce the wrong verdict.
+    """
+    if not isinstance(text, str):
+        return None
+    seen: list[float] = []
+    for match in _MONEY_TOKEN_PATTERN.finditer(text):
+        raw = match.group(1).replace(",", "")
+        try:
+            value = float(raw)
+        except ValueError:
+            continue
+        if value <= 0:
+            continue
+        # Skip "100%" / "50%" / etc. — the surrounding context check
+        # happens in classify_income_ambiguity; here we just collect.
+        if value not in seen and (value, value) not in [(s, s) for s in seen]:
+            # Actually we want distinct values: skip a repeat of an
+            # already-seen value.
+            if not any(abs(value - s) < 0.5 for s in seen):
+                seen.append(value)
+        if len(seen) >= 2:
+            return (seen[0], seen[1])
+    return None
 
 # A bare number below this is far more likely a daily/weekly figure (or an
 # hourly rate) than a real monthly income, so we ask instead of assuming.
@@ -442,6 +517,22 @@ def classify_income_ambiguity(
         return None
     lowered = raw.casefold()
 
+    # F3: a two-figures case (past income + current income in the
+    # same message) MUST be checked BEFORE the hourly/daily/period
+    # branches. The pre-F3 early-out at the bottom of this function
+    # was triggered by "a week" matching the weekly hint, so the
+    # function returned None for "i was making 2500 but now i just
+    # get unemployment, like 300 a week i think" — silently dropping
+    # the income update. We want this branch to fire FIRST when both
+    # a past-tense and present-tense income hint appear in the same
+    # message AND there are at least two distinct money figures.
+    if (
+        _PAST_TENSE_INCOME_HINT.search(lowered)
+        and _PRESENT_TENSE_INCOME_HINT.search(lowered)
+        and _extract_two_figures(lowered) is not None
+    ):
+        return AMBIGUITY_TWO_FIGURES
+
     # A rate with no quantity of time is unusable -- but only when the
     # message genuinely lacks the quantity, not when it merely phrased it
     # in a shape the parser above does not recognise.
@@ -452,6 +543,11 @@ def classify_income_ambiguity(
 
     # A value that parsed, but whose PERIOD was never stated and whose
     # magnitude makes "per month" an implausible reading.
+    # (Pre-F3 bug: this early-out was firing for two-figures messages
+    # because the SECOND figure carried a period hint; the function
+    # bailed thinking the period was stated, even though the FIRST
+    # figure had no period. The two-figures check above catches this
+    # case before we reach this line.)
     if _explicit_period_stated(lowered):
         return None
     naive = normalize_income(raw)
@@ -481,16 +577,34 @@ def _explicit_period_stated(lowered: str) -> bool:
 
 
 def income_clarification_question(
-    reason: str, lang: str = "en", *, value: Optional[float] = None
+    reason: str, lang: str = "en", *, value: Optional[float] = None,
+    text: Optional[str] = None,
 ) -> str:
     """Return the follow-up question that resolves *reason*.
 
     Code-templated, never model-written: a clarifying question that
     invented a number or a period would defeat the point of asking.
+
+    *value* is the figure the caller has committed-or-about-to-commit
+    to state. When None (the agent pipeline's normal case for an
+    ambiguous message), the function looks at *text* for a money-shaped
+    token so the user's own figure still appears quoted back. *text*
+    is also the source for two-figures extraction in F3.
     """
     amount = ""
     if value is not None:
         amount = f"${value:,.0f}" if float(value).is_integer() else f"${value:,.2f}"
+
+    # F3: extract two distinct money figures from the raw text. Used
+    # when reason is two_figures; falls through to the existing
+    # single-figure wording otherwise.
+    two_figures = _extract_two_figures(text) if text else None
+    if two_figures is not None:
+        f1, f2 = two_figures
+        a1 = f"${f1:,.0f}" if float(f1).is_integer() else f"${f1:,.2f}"
+        a2 = f"${f2:,.0f}" if float(f2).is_integer() else f"${f2:,.2f}"
+        two_amount_en = f"{a1} before, and {a2} now"
+        two_amount_es = f"{a1} antes, y {a2} ahora"
 
     if lang == "es":
         questions = {
@@ -511,6 +625,20 @@ def income_clarification_question(
                 "Necesito el total mensual bruto del hogar."
             ).strip(),
         }
+        if reason == AMBIGUITY_TWO_FIGURES:
+            if two_figures is not None:
+                questions[AMBIGUITY_TWO_FIGURES] = (
+                    f"Parece que mencionaste dos cifras diferentes — {two_amount_es}. "
+                    "¿Cuál es tu ingreso mensual bruto actual?"
+                )
+            else:
+                # Fallback when text wasn't supplied: still surface the
+                # two-figures framing without inventing amounts.
+                questions[AMBIGUITY_TWO_FIGURES] = (
+                    "Parece que mencionaste dos cifras de ingreso diferentes. "
+                    "¿Cuál es tu ingreso mensual bruto actual? "
+                    "Si me dices las dos, te ayudo a calcular el total."
+                )
     else:
         questions = {
             AMBIGUITY_HOURLY_NO_HOURS: (
@@ -530,6 +658,18 @@ def income_clarification_question(
                 "I need the household's gross monthly total."
             ).strip(),
         }
+        if reason == AMBIGUITY_TWO_FIGURES:
+            if two_figures is not None:
+                questions[AMBIGUITY_TWO_FIGURES] = (
+                    f"Sounds like two different figures — {two_amount_en}. "
+                    "Which one is your current gross monthly income?"
+                )
+            else:
+                questions[AMBIGUITY_TWO_FIGURES] = (
+                    "Sounds like two different income figures. "
+                    "Which one is your current gross monthly income? "
+                    "If you give me both, I can work out the total."
+                )
     return questions.get(reason, "")
 
 

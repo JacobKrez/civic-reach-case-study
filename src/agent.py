@@ -2756,10 +2756,15 @@ class FoodPathAgent:
             self._pending_income_clarification
             and "gross_monthly_income" in self.state.missing_fields()
         ):
+            # F3: pass text so the two-figures clarification can quote
+            # both numbers back. The pre-F3 code passed only ``value``,
+            # which is None for ambiguous messages (normalize_income
+            # refuses to guess), so the question had no figures quoted.
             clarification = income_clarification_question(
                 self._pending_income_clarification,
                 self.state.language,
                 value=normalize_income(user_message),
+                text=self._pending_income_context or user_message,
             ) or None
         self._pending_income_clarification = None
         if clarification:

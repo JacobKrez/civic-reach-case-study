@@ -442,6 +442,14 @@ _USER_INCOME_ECHO_MARKERS = (
     # ambiguity would never get resolved.
     "have this right —",
     "solo para confirmar:",
+    # F3 (2026-07-28): the two-figures clarification quotes BOTH of the
+    # user's stated figures back ("$2,500 before, and $300 now") -- not
+    # as income limits, but as the user's own figures the clarification
+    # is asking them to pick from. Without these markers, the
+    # income_limit validator would fall back to the generic re-ask and
+    # the ambiguity would never resolve.
+    "two different figures",
+    "dos cifras diferentes",
 )
 
 
@@ -459,18 +467,31 @@ def check_income_limits(reply: str, *, household_size: int | None) -> list[Valid
     Scans the reply for dollar amounts (any $X,XXX pattern) and
     verifies each one against ``income_limits(household_size)`` for
     the gross/net/expanded tracks. Any dollar amount that doesn't
-    match one of those three values is a fabrication \u2014 the model
+    match one of those three values is a fabrication — the model
     made it up.
 
     *household_size* may be None (intake hasn't filled it yet); in
     that case the validator passes (no limits to check).
 
-    Note: a reply that says "Your income is $2,500" is fine \u2014 the
+    Note: a reply that says "Your income is $2,500" is fine — the
     validator only checks against income *limits*, not against the
     user's stated income. The user's own dollar amounts are echoed
     in the citations suffix and are not limits.
     """
     if household_size is None:
+        return []
+    # F3 (2026-07-28): a whole-reply two-figures clarification quotes
+    # BOTH of the user's stated figures back ("$2,500 before, and $300
+    # now"). The 40-char-window echo-marker check only catches the FIRST
+    # figure; the SECOND figure ("$300 now") sits ~30 chars after the
+    # marker phrase and falls outside any 40-char window. Short-circuit:
+    # if the reply STARTS with a two-figures marker, treat ALL dollar
+    # amounts in the reply as user figures (none are limits).
+    lowered_reply = reply.lower()
+    if (
+        lowered_reply.startswith("sounds like two different figures")
+        or lowered_reply.startswith("parece que mencionaste dos cifras diferentes")
+    ):
         return []
     limits = income_limits(household_size)
     allowed = {int(round(limits["gross"])), int(round(limits["net"])), int(round(limits["expanded"]))}
