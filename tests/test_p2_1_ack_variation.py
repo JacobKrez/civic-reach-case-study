@@ -155,8 +155,14 @@ def test_p2_1_ack_opener_value_tail_preserved():
     assert "3" in h, f"household value missing: {h!r}"
     # The income reply must contain the income value with $ prefix.
     assert "1,500" in i or "1500" in i, f"income value missing: {i!r}"
-    # The elderly reply must contain the elderly/disabled word.
-    assert "elderly" in e.lower() or "disabled" in e.lower(), (
+    # The elderly reply must acknowledge the elderly/disabled answer.
+    # Accepts person-first phrasing ("has a disability") alongside the
+    # older adjectival forms: the plain-language verdict says "no one in
+    # your household is 60 or older or has a disability", which
+    # acknowledges the answer just as the previous wording did. The
+    # requirement is that the answer is named, not which synonym is used.
+    elderly_wording = ("elderly", "disabled", "disability", "60 or older")
+    assert any(token in e.lower() for token in elderly_wording), (
         f"elderly wording missing: {e!r}"
     )
 

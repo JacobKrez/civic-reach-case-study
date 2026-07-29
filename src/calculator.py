@@ -815,6 +815,73 @@ def calculate_eligibility(
         f"{outcome_note}"
     )
 
+    # The same finding, addressed to the person who asked.
+    #
+    # ``notes`` above is the technical record: it names the rule, the
+    # citation, and every deduction, and the audit trail and tests read
+    # it. It is also what the resident was being shown, and it is not
+    # written for them -- "Household has no elderly (60+) or disabled
+    # member and is screened under North Carolina's Broad-Based
+    # Categorical Eligibility (BBCE). Under NC BBCE the gross income
+    # screen is 200% of the federal poverty guideline (NCDHHS); the
+    # federal 130% floor applies in other states." states the verdict
+    # twice, speaks about the user in the third person, and spends most
+    # of its words on a rule that is not theirs to care about. The
+    # system prompt targets a 6th-grade reading level; this was nowhere
+    # near it, and the continuous simulator's judge flagged it as the
+    # single most frequent quality failure.
+    #
+    # Both are kept. ``notes`` stays exactly as it was, so nothing that
+    # depends on it changes; ``plain_notes`` is what the reply renders.
+    who = f"a household of {household_size}"
+    if has_elderly_or_disabled:
+        basis = (
+            f"Because someone in your household is 60 or older or has a "
+            f"disability, we compare your income after deductions to the "
+            f"limit for {who}: ${limit:,.2f} a month."
+        )
+    elif separate_elderly_disabled_household:
+        basis = (
+            f"Because your household is counted separately as an elderly or "
+            f"disabled household, the limit for {who} is ${limit:,.2f} a month."
+        )
+    else:
+        # Names the elderly/disabled answer back even though it was a
+        # "no": the user answered that question a moment ago, and a
+        # verdict that never mentions it reads as though the answer went
+        # nowhere. It also states which limit applies and why.
+        basis = (
+            f"Since no one in your household is 60 or older or has a "
+            f"disability, the limit North Carolina uses for {who} is "
+            f"${limit:,.2f} a month."
+        )
+
+    comparison = f"Your income is ${income_considered:,.2f}."
+    if outcome == "likely_eligible":
+        judgement = "That is under the limit, so you likely qualify."
+    elif outcome == "likely_eligible_gross_pending_net":
+        judgement = (
+            "That is under the limit, so you likely qualify so far. Costs like "
+            "rent, childcare, or medical bills could still change the result — "
+            "tell me about them and I can factor them in."
+        )
+    elif outcome == "uncertain_apply_anyway":
+        judgement = (
+            "That is over the limit, but costs like rent, childcare, or medical "
+            "bills are subtracted before the final decision, so you may still "
+            "qualify. It is worth applying."
+        )
+    else:
+        judgement = (
+            "That is over the limit, so you likely do not qualify on income "
+            "alone."
+        )
+
+    if income_considered == limit:
+        judgement = "That is exactly at the limit, which still qualifies."
+
+    plain_notes = f"{basis} {comparison} {judgement}"
+
     return {
         "qualifies": qualifies,
         "test_used": test_used,
@@ -826,6 +893,7 @@ def calculate_eligibility(
         "outcome": outcome,
         "deductions": deductions,
         "notes": notes,
+        "plain_notes": plain_notes,
     }
 
 
