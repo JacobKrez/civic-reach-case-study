@@ -132,6 +132,41 @@ figure. If the user only knows their annual or post-tax income, the
 agent should ask for a pre-tax monthly figure before running the
 calculator — see the "Annual / post-tax / 'it varies'" note below.
 
+## Which month's income counts — current and expected, not past
+
+The screen asks about the household's income **now and going forward**,
+not what it earned earlier in the year. Federal rule bases eligibility on
+the household's circumstances in the month of application, using the
+income the household reasonably expects to receive during the
+certification period (7 CFR 273.10(c) and 273.10(e)(2)(ii)(A) —
+"anticipating income").
+
+Practical consequences the agent should state plainly when asked:
+
+  - **A job that has ended does not count going forward.** A household
+    that lost a job reports what it expects to receive now — unemployment
+    compensation, a remaining earner's wages, or **$0** if no income is
+    coming in. It does **not** report the wages from the job it no longer
+    has. Reporting the old wage is the most common way a newly
+    unemployed household talks itself out of benefits it qualifies for.
+  - **Last year's income is not the measure.** Annual figures (a tax
+    return, "I made about $42,000 last year") are only useful as a way to
+    reach a current monthly figure, and only if that income is still
+    being received. See the annual-conversion note below.
+  - **Steady pay is averaged; changed pay is not.** Where income is
+    stable, a recent month or a recent set of pay stubs (typically the
+    last 30 days) is a fair basis. Where income has just changed, the
+    expected new amount is what counts, not the average of a period that
+    no longer reflects the household.
+  - **Irregular or seasonal income** is averaged over the period it is
+    expected to cover, not annualized from a single high or low month.
+
+If the household's income is mid-change and no figure is yet reliable,
+DSS can still take the application: the caseworker resolves anticipated
+income at the interview. The screen should not stall on an exact number
+in that situation — record the household's best current estimate and say
+plainly that the county office will confirm it.
+
 ## Annual / post-tax / "it varies" — handling non-monthly income (W43 close-the-loop KB addition)
 
 The screen targets **gross monthly income** for the calculator. Real
