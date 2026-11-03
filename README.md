@@ -298,9 +298,9 @@ flowchart TD
   a malformed tool call is dropped and the field stays missing so the
   loop re-asks on the next turn.
 * *Deterministic calculator.* Pure-Python, no I/O, no network. The
-  decision is a table lookup plus arithmetic against the FY2026 federal
+  decision is a table lookup plus arithmetic against the FY2027 federal
   SNAP income-eligibility standards published by USDA FNS (effective
-  2025-10-01 through 2026-09-30): the 130% gross screen, the 100% net
+  2026-10-01 through 2027-09-30): the 130% gross screen, the 100% net
   screen for households with an elderly or disabled member, and the
   NC BBCE 200% ceiling. All arithmetic happens here, not in the prompt.
 * *Retrieval + visible citations.* Every final answer is appended with a
@@ -346,19 +346,65 @@ classifier on and one with it off — so a regression in either mode
 breaks the build rather than slipping through as a different test
 count on a different shell.
 
+## Voice channel
+
+FoodPath also runs as a spoken (IVR) line. The channel lives in
+`src/voice/` and is documented in **[VOICE.md](VOICE.md)**.
+
+It exists because three things change when the input is speech rather
+than text, and each one has a safety consequence:
+
+* **"Call 911" is the wrong instruction on a phone.** The text crisis
+  response says "call 911 now" because there is no phone leg. On a
+  voice line the caller is already holding a phone, so the spoken
+  rendering says **hang up and call 911**, drops the markdown bullets
+  and parentheses that make no sense read aloud, and shortens the
+  resource list. The hotline numbers are imported from the same
+  `CRISIS_RESOURCES` constant the text channel uses, so the two can
+  never drift apart.
+* **Silence is not an empty message.** An empty turn on a text
+  interface means the user pressed enter. On a voice line it can mean
+  the recognizer cut them off or they fell asleep. It gets its own
+  handling and is bounded before a person takes over.
+* **A misheard confirmation is a wrong benefits record.** The spoken
+  confirmation protocol is asymmetric on purpose: a reply containing a
+  negation is a rejection even if it also contains a confirmation
+  token, and a partial match like "ye" is never treated as a
+  confirmation.
+
+DTMF is implemented as an accessibility path, not a convenience. A
+voice-only benefits line excludes callers who cannot speak, who are not
+heard, or who are somewhere speaking aloud is unsafe. That is a
+correctness problem, not a usability preference.
+
+The channel reuses `FoodPathAgent` rather than reimplementing it, and
+calls the same guardrail detectors in the same order, so it cannot
+bypass a guardrail the text channel has. That parity is asserted by
+`tests/voice/test_channel.py`.
+
 ## Known limitations
 
+* **The income standards go stale every October 1, and this repo does
+  not go stale silently.** The knowledge base carries a provenance
+  window, and the `kb_provenance` gate fails when that window closes.
+  The tables were last refreshed to the FY2027 standards (effective
+  2026-10-01 through 2027-09-30) on 2026-11-02, after the FY2026 window
+  expired and the screener would otherwise have been screening
+  households against the prior year's thresholds, which can wrongly deny
+  benefits to a household that qualifies. The gate exists so that this
+  class of staleness is a red build rather than a quiet wrong answer.
+  It will fail again on 2027-10-01 unless the tables are re-sourced.
 * **Initial screen, not a determination.** The agent returns a likely /
   maybe / unlikely verdict against the federal gross / net income tests.
   It is not a final agency determination, and the conversation banner
   and system prompt both say so. Real applicants still need to file with
   their county DSS.
 * **Net-income deductions are computed, not stubbed.** The federal
-  net-income test subtracts the SNAP standard deduction (FY2026
+  net-income test subtracts the SNAP standard deduction (FY2027
   USDA-published amounts by household size), the 20% earned-income
   deduction, the dependent-care deduction, the excess medical
   deduction (elderly / disabled), and the excess shelter deduction
-  (capped at the FY2026 48-states & DC maximum). The calculator
+  (capped at the FY2027 48-states & DC maximum). The calculator
   honors all of these when the applicant volunteers the underlying
   fields (`earned_monthly_income`, `dependent_care_monthly`,
   `medical_expenses_monthly`, `shelter_costs_monthly`); when none are
@@ -410,7 +456,7 @@ count on a different shell.
 What we would build next, in priority order, given more time:
 
 1. **165% track for separate elderly/disabled households.** The
-   FY2026 memo defines a third gross-income standard for households
+   FY2027 memo defines a third gross-income standard for households
    where an elderly or disabled member buys and prepares food
    separately. The knowledge base documents it (kb/03) so a reviewer
    can trace the rules; the calculator and intake flow do not yet
@@ -438,7 +484,7 @@ What we would build next, in priority order, given more time:
 ```
 src/
   agent.py            # conversation loop, tool handling, correction tracking
-  calculator.py       # deterministic eligibility arithmetic (FY2026 SNAP standards)
+  calculator.py       # deterministic eligibility arithmetic (FY2027 SNAP standards)
   retrieval.py        # RAG over knowledge_base/
   llm_client.py       # provider-agnostic client (8 providers, incl. local Ollama)
   state.py            # typed Pydantic AssessmentState
@@ -455,12 +501,18 @@ src/
     classifier.py     # LLM intent classifier (defense in depth)
     pii.py            # redact_for_logging (SSN, account, routing, email, phone, address)
     ambiguity.py      # normalize_income ("$2,500", "$600/week" -> monthly float)
+  voice/
+    channel.py       # voice (IVR) channel: guardrail dispatch, silence, DTMF path
+    crisis_voice.py  # spoken crisis rendering ("hang up and call 911", not "call 911")
+    confirmation.py  # spoken confirmation protocol (a rejection beats a confirmation)
 
-knowledge_base/       # FY2026 NC FNS rules (English); 01 is also translated to Spanish
+knowledge_base/       # FY2027 NC FNS rules (English); 01 is also translated to Spanish
 redteam/              # attack_cases.jsonl (corpus) + failures_queue.jsonl (local triage) + run_redteam + file_failures + findings/ (gitignored)
 tests/                # pytest suite (calculator, guardrails, agent, web, golden transcripts, red-team signatures)
+tests/voice/          # voice-channel tests (crisis rendering, confirmation protocol, guardrail parity)
 scripts/              # KB table generator, simulator daemon, live red-team runner
 static/               # web UI static assets (manifest + service worker)
+VOICE.md              # the voice (IVR) channel: what it changes and what it does not do
 ```
 
 ## Safety

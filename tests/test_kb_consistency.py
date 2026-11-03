@@ -74,7 +74,7 @@ def test_generator_is_idempotent():
 
 
 def test_worked_example_matches_calculator():
-    """The FY2026 $1,800-wages example must cite the calculator's result."""
+    """The $1,800-wages example must cite the calculator's result."""
     result = calculate_eligibility(
         household_size=1,
         gross_monthly_income=1800.0,
@@ -82,13 +82,13 @@ def test_worked_example_matches_calculator():
         earned_monthly_income=1800.0,
     )
     assert result["deductions"] is not None
-    assert result["deductions"]["net_income"] == 1231.0
-    assert income_limits(1)["net"] == 1305.0
+    assert result["deductions"]["net_income"] == 1223.0
+    assert income_limits(1)["net"] == 1330.0
 
     doc = DEDUCTIONS_KB_PATH.read_text(encoding="utf-8")
-    assert "net monthly income of **$1,231**" in doc
-    assert "FY2026 **$1,305 net limit**" in doc
-    assert "209" in doc
-    assert "744" in doc
-    assert "198.99" in doc
+    assert "net monthly income of **$1,223**" in doc
+    assert "FY2027 **$1,330 net limit**" in doc
+    assert "217" in doc
+    assert "769" in doc
+    assert "205.66" in doc
     assert "child support" not in doc.lower()

@@ -75,7 +75,7 @@ def calculate_eligibility(*args, **kwargs):
 # households can be higher, but for property-test purposes 0..2000 is
 # plenty of headroom and keeps the test fast.
 HOUSEHOLD_SIZE_MIN = 1
-HOUSEHOLD_SIZE_MAX = max_household_size()  # 20 in the FY2026 table
+HOUSEHOLD_SIZE_MAX = max_household_size()  # 20 in the FY2027 table
 
 household_size_st = st.integers(
     min_value=HOUSEHOLD_SIZE_MIN, max_value=HOUSEHOLD_SIZE_MAX

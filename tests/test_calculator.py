@@ -2,13 +2,13 @@
 
 The values in these tests are read directly from the calculator's own
 income-limit and deduction tables (``src.calculator``) — the calculator's
-tables are the single source of truth, sourced from the USDA FNS FY2026
+tables are the single source of truth, sourced from the USDA FNS FY2027
 SNAP income-eligibility standards (48 States & DC). Pulling expected
 values from the same module the production code reads from guarantees
 the tests stay in sync with the production numbers.
 
-Primary source: USDA FNS, "SNAP FY 2026 Cost-of-Living Adjustments"
-memo (effective 2025-10-01 through 2026-09-30):
+Primary source: USDA FNS, "SNAP FY 2027 Cost-of-Living Adjustments"
+memo (effective 2026-10-01 through 2027-09-30):
     https://www.usda.gov/sites/default/files/guidance-documents/fns.snap-cola-fy26memo.pdf
 """
 
@@ -44,7 +44,7 @@ HH1_BBCE_LIMIT = HH1_LIMITS["expanded"]    # 2,610.00 — NC BBCE 200% gross scr
 HH4_GROSS_LIMIT = HH4_LIMITS["gross"]      # 3,483.00 — federal 130% floor (NOT the NC ceiling)
 HH4_NET_LIMIT = HH4_LIMITS["net"]          # 2,680.00
 HH4_BBCE_LIMIT = HH4_LIMITS["expanded"]    # 5,360.00 — NC BBCE 200% gross screen
-HH2_NET_LIMIT = HH2_LIMITS["net"]          # 1,763.00
+HH2_NET_LIMIT = HH2_LIMITS["net"]          # 1,804.00
 
 
 # ---------- 1. household = 1, clearly UNDER NC BBCE gross ceiling ----------
@@ -137,7 +137,7 @@ def test_income_exactly_at_limit_qualifies():
     # Policy decision (documented in calculator.py): income == limit
     # counts as qualifying. Under W30 the NC default gross ceiling is
     # 200% of poverty (BBCE), so HH=1's BBCE limit is HH1_BBCE_LIMIT
-    # (=2,610.00 in the calculator's FY2026 SNAP-published table).
+    # (=2,610.00 in the calculator's FY2027 SNAP-published table).
     result = calculate_eligibility(
         household_size=1,
         gross_monthly_income=HH1_BBCE_LIMIT,  # exactly 2,608.33
@@ -179,8 +179,8 @@ def test_negative_income_rejected():
 
 # ---------- source URL is exported (and so independently verifiable) ----------
 def test_source_url_is_a_real_https_link():
-    # The calculator's primary source URL is the USDA FNS SNAP FY2026
-    # COLA memo (effective 2025-10-01 through 2026-09-30), which is
+    # The calculator's primary source URL is the USDA FNS SNAP FY2027
+    # COLA memo (effective 2026-10-01 through 2027-09-30), which is
     # where the calculator's published monthly income limits and
     # deduction standards come from. USDA FNS re-sources this annually.
     assert _POVERTY_GUIDELINES_SOURCE_URL.startswith("https://")
@@ -341,51 +341,51 @@ def test_w30_separate_elderly_household_uses_165pct_ceiling():
         separate_elderly_disabled_household=True,
     )
     assert result["test_used"] == "gross"
-    assert result["limit"] == 2152.0  # FY2026 HH1 separate-household standard
+    assert result["limit"] == 2195.0  # FY2027 HH1 separate-household standard
     assert result["qualifies"] is True  # 2000 ≤ 2152
 
 
 def test_w30_separate_elderly_household_above_165pct_is_uncertain():
     result = calculate_eligibility(
         household_size=2,
-        gross_monthly_income=3500.0,  # above HH2 165% limit of $2,909
+        gross_monthly_income=3500.0,  # above HH2 165% limit of $2,976
         has_elderly_or_disabled=False,
         separate_elderly_disabled_household=True,
     )
     assert result["test_used"] == "gross"
-    assert result["limit"] == 2909.0
+    assert result["limit"] == 2976.0
     assert result["qualifies"] is False
     assert result["outcome"] == "uncertain_apply_anyway"
 
 
-def test_w30_separate_household_limits_match_fy2026_table():
-    # Sourced values from USDA FNS FY2026 income-eligibility tables
+def test_w30_separate_household_limits_match_fy2027_table():
+    # Sourced values from USDA FNS FY2027 income-eligibility tables
     # (48 States & DC, separate-elderly/disabled household row).
     from src.calculator import separate_household_limits
     expected = {
-        1: 2152.0, 2: 2909.0, 3: 3665.0, 4: 4421.0,
-        5: 5177.0, 6: 5934.0, 7: 6690.0, 8: 7446.0,
+        1: 2195.0, 2: 2976.0, 3: 3757.0, 4: 4538.0,
+        5: 5319.0, 6: 6100.0, 7: 6881.0, 8: 7662.0,
     }
     for size, value in expected.items():
         assert separate_household_limits(size) == value, (
-            f"HH{size} 165% FY2026 limit expected ${value}, got ${separate_household_limits(size)}"
+            f"HH{size} 165% FY2027 limit expected ${value}, got ${separate_household_limits(size)}"
         )
-    # Per-addition delta: 9th person is HH8 + $757.
-    assert separate_household_limits(9) == 7446.0 + 757.0
+    # Per-addition delta: 9th person is HH8 + $781.
+    assert separate_household_limits(9) == 7662.0 + 781.0
 
 
 # ===========================================================================
-# W31 — real federal net-income deduction chain (7 CFR §273.9(d), FY2026)
+# W31 — real federal net-income deduction chain (7 CFR §273.9(d), FY2027)
 #
-# FY2026 deduction standards (48 States & DC, effective 2025-10-01 through
-# 2026-09-30):
-#   standard deduction: $209 (sizes 1-3), $223 (4), $261 (5), $299 (6+)
+# FY2027 deduction standards (48 States & DC, effective 2026-10-01 through
+# 2027-09-30):
+#   standard deduction: $217 (sizes 1-3), $229 (4), $268 (5), $308 (6+)
 #   earned-income deduction: 20% of gross earned income
 #   medical: out-of-pocket medical above $35/mo, elderly/disabled only
-#   shelter: costs above half of adjusted income, capped at $744/mo
+#   shelter: costs above half of adjusted income, capped at $769/mo
 #            unless the household has an elderly/disabled member
-# Source: USDA FNS, "SNAP FY 2026 Cost-of-Living Adjustments" memo
-#   https://www.usda.gov/sites/default/files/guidance-documents/fns.snap-cola-fy26memo.pdf
+# Source: USDA FNS, "SNAP FY 2027 Cost-of-Living Adjustments" memo
+#   https://www.fna.usda.gov/snap/allotment/cola
 # ===========================================================================
 
 from src.calculator import compute_net_monthly_income
@@ -425,19 +425,19 @@ def test_w14_no_deduction_inputs_is_regression_safe():
 def test_w14_earned_income_deduction_moves_household_into_eligibility():
     # HH=1, gross $1,800 (all earned) is ABOVE the federal 130% gross
     # floor but UNDER the NC BBCE 200% ceiling, so pre-W14 this household
-    # landed in "uncertain_apply_anyway". With the FY2026 chain:
-    # standard $209 + earned 20%*$1,800=$360 →
-    # net = 1800 - 209 - 360 = $1,231 ≤ net limit $1,305.00 → eligible.
+    # landed in "uncertain_apply_anyway". With the FY2027 chain:
+    # standard $217 + earned 20%*$1,800=$360 →
+    # net = 1800 - 217 - 360 = $1,223 ≤ net limit $1,330.00 → eligible.
     result = calculate_eligibility(
         household_size=1,
         gross_monthly_income=1800.0,
         has_elderly_or_disabled=False,
         earned_monthly_income=1800.0,
     )
-    assert result["deductions"]["standard"] == 209.0
+    assert result["deductions"]["standard"] == 217.0
     assert result["deductions"]["earned_income"] == 360.0
-    assert result["deductions"]["net_income"] == 1231.0
-    assert result["income_considered"] == 1231.0
+    assert result["deductions"]["net_income"] == 1223.0
+    assert result["income_considered"] == 1223.0
     assert result["qualifies"] is True
     assert result["outcome"] == "likely_eligible"
     assert "earned-income" in result["notes"]
@@ -455,10 +455,10 @@ def test_w14_earned_income_cannot_exceed_gross():
 
 # ---------- dependent-care deduction: actual cost, uncapped ----------
 def test_w14_dependent_care_deduction():
-    # HH=4, gross $3,600 (above HH4 federal 130% floor $3,483.00),
-    # $900/mo childcare. FY2026 chain:
-    # standard $223 + dependent care $900 → adjusted = 3600-223-900 = $2,477
-    # ≤ HH4 net limit $2,680.00 → likely eligible after deductions.
+    # HH=4, gross $3,600 (above HH4 federal 130% floor $3,575.00),
+    # $900/mo childcare. FY2027 chain:
+    # standard $229 + dependent care $900 → adjusted = 3600-229-900 = $2,471
+    # ≤ HH4 net limit $2,750.00 → likely eligible after deductions.
     result = calculate_eligibility(
         household_size=4,
         gross_monthly_income=3600.0,
@@ -466,16 +466,16 @@ def test_w14_dependent_care_deduction():
         dependent_care_monthly=900.0,
     )
     assert result["deductions"]["dependent_care"] == 900.0
-    assert result["deductions"]["net_income"] == 2477.0
+    assert result["deductions"]["net_income"] == 2471.0
     assert result["qualifies"] is True
     assert result["outcome"] == "likely_eligible"
 
 
 # ---------- excess medical deduction: elderly/disabled only, above $35 ----------
 def test_w14_medical_deduction_elderly_household():
-    # HH=1 elderly, gross $1,500 (above net limit $1,305.00).
-    # standard $209 + medical ($200-$35=$165) → net = 1500-209-165 = $1,126
-    # ≤ $1,305.00 → qualifies under the net test.
+    # HH=1 elderly, gross $1,500 (above net limit $1,330.00).
+    # standard $217 + medical ($200-$35=$165) → net = 1500-217-165 = $1,118
+    # ≤ $1,330.00 → qualifies under the net test.
     result = calculate_eligibility(
         household_size=1,
         gross_monthly_income=1500.0,
@@ -484,7 +484,7 @@ def test_w14_medical_deduction_elderly_household():
     )
     assert result["test_used"] == "net"
     assert result["deductions"]["medical"] == 165.0
-    assert result["deductions"]["net_income"] == 1126.0
+    assert result["deductions"]["net_income"] == 1118.0
     assert result["qualifies"] is True
     assert result["outcome"] == "likely_eligible"
 
@@ -492,8 +492,8 @@ def test_w14_medical_deduction_elderly_household():
 def test_w14_medical_deduction_ignored_for_non_elderly():
     # Same figures without the elderly/disabled flag: medical must NOT
     # be deducted (7 CFR §273.9(d)(3) restricts it to elderly/disabled
-    # households). Net = 1500 - 209 = $1,291 ≤ net limit $1,305.00 →
-    # household qualifies under net (with FY2026 deduction applied) — but
+    # households). Net = 1500 - 217 = $1,283 ≤ net limit $1,330.00 →
+    # household qualifies under net (with FY2027 deduction applied) — but
     # via gross test with NO medical deduction applied. The flag, not the
     # income, controls which path is taken.
     result = calculate_eligibility(
@@ -503,7 +503,7 @@ def test_w14_medical_deduction_ignored_for_non_elderly():
         medical_expenses_monthly=200.0,
     )
     assert result["deductions"]["medical"] == 0.0
-    assert result["deductions"]["net_income"] == 1291.0
+    assert result["deductions"]["net_income"] == 1283.0
 
 
 def test_w14_medical_below_35_threshold_yields_no_deduction():
@@ -519,11 +519,11 @@ def test_w14_medical_below_35_threshold_yields_no_deduction():
 # ---------- excess shelter deduction: capped vs uncapped ----------
 def test_w14_shelter_deduction_does_not_bind_for_low_shelter_non_elderly():
     # HH=1, gross $2,500 all unearned, shelter $1,500/mo.
-    # adjusted = 2500 - 209 = $2,291; half = $1,145.5;
-    # excess shelter = 1500 - 1145.5 = $354.5 (< $744 cap, so cap not binding).
-    # net = 2291 - 354.5 = $1,936.5. NC HH=1 BBCE ceiling is $2,610.00;
+    # adjusted = 2500 - 217 = $2,283; half = $1,141.5;
+    # excess shelter = 1500 - 1141.5 = $358.5 (< $769 cap, so cap not binding).
+    # net = 2283 - 358.5 = $1,924.5. NC HH=1 BBCE ceiling is $2,660.00;
     # the household passes the gross screen categorically AND its
-    # computed net ($1,936.50) is below the BBCE ceiling → likely_eligible.
+    # computed net ($1,924.50) is below the BBCE ceiling → likely_eligible.
     # This is the W30 fix: under NC BBCE the household at $2,500 with
     # $1,500 shelter is NOT "uncertain" — it's likely eligible.
     result = calculate_eligibility(
@@ -532,33 +532,33 @@ def test_w14_shelter_deduction_does_not_bind_for_low_shelter_non_elderly():
         has_elderly_or_disabled=False,
         shelter_costs_monthly=1500.0,
     )
-    assert result["deductions"]["shelter"] == 354.5
-    assert result["deductions"]["net_income"] == 1936.5
+    assert result["deductions"]["shelter"] == 358.5
+    assert result["deductions"]["net_income"] == 1924.5
     assert result["qualifies"] is True
     assert result["outcome"] == "likely_eligible"
 
 
 def test_w14_shelter_deduction_cap_binds_for_non_elderly():
-    # Drive excess shelter above the $744 cap: HH=1, gross $4,000,
-    # shelter $3,000. adjusted = 4000-209 = $3,791; half = $1,895.5;
-    # excess = 3000-1895.5 = $1,104.5 → capped to $744.
-    # net = 3791 - 744 = $3,047 > 200% band → likely_ineligible.
+    # Drive excess shelter above the $769 cap: HH=1, gross $4,000,
+    # shelter $3,000. adjusted = 4000-217 = $3,783; half = $1,891.5;
+    # excess = 3000-1891.5 = $1,108.5 → capped to $769.
+    # net = 3783 - 769 = $3,014 > 200% band → likely_ineligible.
     result = calculate_eligibility(
         household_size=1,
         gross_monthly_income=4000.0,
         has_elderly_or_disabled=False,
         shelter_costs_monthly=3000.0,
     )
-    assert result["deductions"]["shelter"] == 744.0
-    assert result["deductions"]["net_income"] == 3047.0
+    assert result["deductions"]["shelter"] == 769.0
+    assert result["deductions"]["net_income"] == 3014.0
     assert result["outcome"] == "likely_ineligible"
 
 
 def test_w14_shelter_deduction_uncapped_for_elderly():
-    # Same shelter burden with an elderly member: no $744 cap.
+    # Same shelter burden with an elderly member: no $769 cap.
     # HH=1 elderly, gross $2,500, shelter $1,500.
-    # adjusted = 2500-209 = $2,291; half = $1,145.5; excess = $354.5.
-    # net = 2291-354.5 = $1,936.5 > net limit $1,305.00; gross ≤ 200% →
+    # adjusted = 2500-217 = $2,283; half = $1,141.5; excess = $358.5.
+    # net = 2283-358.5 = $1,924.5 > net limit $1,330.00; gross ≤ 200% →
     # uncertain. Use higher shelter to prove uncapped behavior instead:
     result = calculate_eligibility(
         household_size=1,
@@ -566,29 +566,29 @@ def test_w14_shelter_deduction_uncapped_for_elderly():
         has_elderly_or_disabled=True,
         shelter_costs_monthly=1500.0,
     )
-    assert result["deductions"]["shelter"] == 354.5
+    assert result["deductions"]["shelter"] == 358.5
 
     # Uncapped proof: gross $4,000, shelter $3,000, elderly → excess
-    # $1,104.5 NOT capped (would be $744 for non-elderly).
+    # $1,108.5 NOT capped (would be $769 for non-elderly).
     result_uncapped = calculate_eligibility(
         household_size=1,
         gross_monthly_income=4000.0,
         has_elderly_or_disabled=True,
         shelter_costs_monthly=3000.0,
     )
-    assert result_uncapped["deductions"]["shelter"] == 1104.5
-    assert result_uncapped["deductions"]["net_income"] == 2686.5
+    assert result_uncapped["deductions"]["shelter"] == 1108.5
+    assert result_uncapped["deductions"]["net_income"] == 2674.5
 
 
 # ---------- full chain: all four deductions together ----------
 def test_w14_full_deduction_chain_elderly_household():
     # HH=2 elderly; gross $3,000 ($2,000 earned); dependent care $100;
     # medical $235 (→ $200 deductible); shelter $1,400.
-    # standard $209 + earned $400 + dependent $100 + medical $200 = $909
-    # adjusted = 3000 - 909 = $2,091; half = $1,045.5
-    # shelter excess = 1400 - 1045.5 = $354.5 (uncapped, elderly)
-    # net = 2091 - 354.5 = $1,736.5 ≤ HH2 net limit $1,763.00 → likely eligible.
-    hh2_net = HH2_NET_LIMIT  # 1,763.00
+    # standard $217 + earned $400 + dependent $100 + medical $200 = $917
+    # adjusted = 3000 - 917 = $2,083; half = $1,041.5
+    # shelter excess = 1400 - 1041.5 = $358.5 (uncapped, elderly)
+    # net = 2083 - 358.5 = $1,724.5 ≤ HH2 net limit $1,804.00 → likely eligible.
+    hh2_net = HH2_NET_LIMIT  # 1,804.00
     result = calculate_eligibility(
         household_size=2,
         gross_monthly_income=3000.0,
@@ -599,14 +599,14 @@ def test_w14_full_deduction_chain_elderly_household():
         shelter_costs_monthly=1400.0,
     )
     d = result["deductions"]
-    assert d["standard"] == 209.0
+    assert d["standard"] == 217.0
     assert d["earned_income"] == 400.0
     assert d["dependent_care"] == 100.0
     assert d["medical"] == 200.0
-    assert d["shelter"] == 354.5
-    assert d["total_deductions"] == 1263.5
-    assert d["net_income"] == 1736.5
-    assert result["income_considered"] == 1736.5
+    assert d["shelter"] == 358.5
+    assert d["total_deductions"] == 1275.5
+    assert d["net_income"] == 1724.5
+    assert result["income_considered"] == 1724.5
     assert result["qualifies"] is True
     assert result["outcome"] == "likely_eligible"
     assert result["limit"] == hh2_net
@@ -614,10 +614,10 @@ def test_w14_full_deduction_chain_elderly_household():
 
 # ---------- standard deduction table by household size ----------
 def test_w14_standard_deduction_table():
-    # FY2026 standard deduction, 48 States & DC. Sourced from the
-    # USDA FNS SNAP FY2026 COLA memo.
-    for size, expected in [(1, 209.0), (2, 209.0), (3, 209.0),
-                           (4, 223.0), (5, 261.0), (6, 299.0), (8, 299.0)]:
+    # FY2027 standard deduction, 48 States & DC. Sourced from the
+    # USDA FNS SNAP FY2027 COLA memo.
+    for size, expected in [(1, 217.0), (2, 217.0), (3, 217.0),
+                           (4, 229.0), (5, 268.0), (6, 308.0), (8, 308.0)]:
         chain = compute_net_monthly_income(
             household_size=size,
             gross_monthly_income=5000.0,
@@ -658,10 +658,10 @@ def test_w14_negative_deduction_inputs_rejected():
 
 
 # ===========================================================================
-# W29 — FY2026 published-table boundary tests
+# W29 — FY2027 published-table boundary tests
 #
-# Re-sourcing the SNAP income-standard constants from the USDA FNS FY2026
-# COLA memo (48 States & DC, effective 2025-10-01 through 2026-09-30) and
+# Re-sourcing the SNAP income-standard constants from the USDA FNS FY2027
+# COLA memo (48 States & DC, effective 2026-10-01 through 2027-09-30) and
 # proving the calculator's monthly limit table matches the published
 # whole-dollar columns VERBATIM, with the boundary semantics USDA prescribes:
 # a household at exactly the published limit qualifies; a household at
@@ -677,25 +677,25 @@ def test_w14_negative_deduction_inputs_rejected():
 # directly, mirroring the no-deductions path the calculator's regression
 # tests use elsewhere).
 #
-# Primary source: USDA FNS SNAP FY2026 COLA memo,
+# Primary source: USDA FNS SNAP FY2027 COLA memo,
 #   https://www.usda.gov/sites/default/files/guidance-documents/fns.snap-cola-fy26memo.pdf
 # ===========================================================================
-USDA_FY2026_GROSS = {1: 1696.0, 2: 2292.0, 3: 2888.0, 4: 3483.0,
-                     5: 4079.0, 6: 4675.0, 7: 5271.0, 8: 5867.0}
-USDA_FY2026_NET = {1: 1305.0, 2: 1763.0, 3: 2221.0, 4: 2680.0,
-                   5: 3138.0, 6: 3596.0, 7: 4055.0, 8: 4513.0}
-USDA_FY2026_GROSS_PER_ADDITIONAL = 596.0
-USDA_FY2026_NET_PER_ADDITIONAL = 459.0
+USDA_FY2027_GROSS = {1: 1729.0, 2: 2345.0, 3: 2960.0, 4: 3575.0,
+                     5: 4191.0, 6: 4806.0, 7: 5421.0, 8: 6037.0}
+USDA_FY2027_NET = {1: 1330.0, 2: 1804.0, 3: 2277.0, 4: 2750.0,
+                   5: 3224.0, 6: 3697.0, 7: 4170.0, 8: 4644.0}
+USDA_FY2027_GROSS_PER_ADDITIONAL = 616.0
+USDA_FY2027_NET_PER_ADDITIONAL = 474.0
 
 
 @pytest.mark.parametrize("hh_size", range(1, 9))
-def test_w29_income_limits_match_usda_fy2026_gross_column(hh_size):
-    """USDA FNS FY2026 monthly gross-income standard (130% FPL, 48 States & DC).
+def test_w29_income_limits_match_usda_fy2027_gross_column(hh_size):
+    """USDA FNS FY2027 monthly gross-income standard (130% FPL, 48 States & DC).
 
     The published column is whole-dollar. The calculator's ``income_limits()``
     table must reproduce it verbatim — no rounding, no derivation drift.
     """
-    expected = USDA_FY2026_GROSS[hh_size]
+    expected = USDA_FY2027_GROSS[hh_size]
     actual = income_limits(hh_size)["gross"]
     assert abs(actual - expected) < 0.01, (
         f"HH{hh_size} gross limit ${actual} != USDA-published ${expected}"
@@ -703,9 +703,9 @@ def test_w29_income_limits_match_usda_fy2026_gross_column(hh_size):
 
 
 @pytest.mark.parametrize("hh_size", range(1, 9))
-def test_w29_income_limits_match_usda_fy2026_net_column(hh_size):
-    """USDA FNS FY2026 monthly net-income standard (100% FPL, 48 States & DC)."""
-    expected = USDA_FY2026_NET[hh_size]
+def test_w29_income_limits_match_usda_fy2027_net_column(hh_size):
+    """USDA FNS FY2027 monthly net-income standard (100% FPL, 48 States & DC)."""
+    expected = USDA_FY2027_NET[hh_size]
     actual = income_limits(hh_size)["net"]
     assert abs(actual - expected) < 0.01, (
         f"HH{hh_size} net limit ${actual} != USDA-published ${expected}"
@@ -720,7 +720,7 @@ def test_w29_federal_130pct_gross_floor_boundary(hh_size):
     the public three-argument API boundary: the published federal gross
     column is the operative ceiling when no state is selected.
     """
-    floor = USDA_FY2026_GROSS[hh_size]
+    floor = USDA_FY2027_GROSS[hh_size]
     at_limit = _calculate_eligibility(
         household_size=hh_size,
         gross_monthly_income=floor,
@@ -758,7 +758,7 @@ def test_w29_net_limit_at_or_below_qualifies_above_does_not(hh_size):
     elderly/disabled household. Exactly the published whole-dollar limit
     passes; one dollar above it does not.
     """
-    net_limit = USDA_FY2026_NET[hh_size]
+    net_limit = USDA_FY2027_NET[hh_size]
     reported = income_limits(hh_size)["net"]
     assert abs(reported - net_limit) < 0.01, (
         f"HH{hh_size} net limit ${reported} != USDA-published ${net_limit}"
@@ -779,9 +779,9 @@ def test_w29_net_limit_at_or_below_qualifies_above_does_not(hh_size):
     assert over_limit["qualifies"] is False
 
 
-def test_w29_gross_additional_per_person_matches_fy2026():
-    """Per-addition delta for household size > 8, USDA FY2026 whole-dollar column."""
-    expected = USDA_FY2026_GROSS_PER_ADDITIONAL
+def test_w29_gross_additional_per_person_matches_fy2027():
+    """Per-addition delta for household size > 8, USDA FY2027 whole-dollar column."""
+    expected = USDA_FY2027_GROSS_PER_ADDITIONAL
     actual_9 = income_limits(9)["gross"] - income_limits(8)["gross"]
     actual_10 = income_limits(10)["gross"] - income_limits(9)["gross"]
     assert abs(actual_9 - expected) < 0.01, (
@@ -792,8 +792,8 @@ def test_w29_gross_additional_per_person_matches_fy2026():
     )
 
 
-def test_w29_net_additional_per_person_matches_fy2026():
-    expected = USDA_FY2026_NET_PER_ADDITIONAL
+def test_w29_net_additional_per_person_matches_fy2027():
+    expected = USDA_FY2027_NET_PER_ADDITIONAL
     actual_9 = income_limits(9)["net"] - income_limits(8)["net"]
     actual_10 = income_limits(10)["net"] - income_limits(9)["net"]
     assert abs(actual_9 - expected) < 0.01, (
@@ -804,15 +804,15 @@ def test_w29_net_additional_per_person_matches_fy2026():
     )
 
 
-def test_w29_usda_fy2026_constants_match_published_table():
-    """The calculator's gross/net limits table must match the USDA FY2026
+def test_w29_usda_fy2027_constants_match_published_table():
+    """The calculator's gross/net limits table must match the USDA FY2027
     published column verbatim (48 States & DC). This is the single
     whole-table assertion — a regression in any one cell fails here.
     """
     for hh_size in range(1, 9):
         L = income_limits(hh_size)
-        assert abs(L["gross"] - USDA_FY2026_GROSS[hh_size]) < 0.01
-        assert abs(L["net"] - USDA_FY2026_NET[hh_size]) < 0.01
+        assert abs(L["gross"] - USDA_FY2027_GROSS[hh_size]) < 0.01
+        assert abs(L["net"] - USDA_FY2027_NET[hh_size]) < 0.01
     # Beyond 8: per-addition delta per USDA published table.
-    assert abs(income_limits(9)["gross"] - (5867.0 + 596.0)) < 0.01
-    assert abs(income_limits(9)["net"] - (4513.0 + 459.0)) < 0.01
+    assert abs(income_limits(9)["gross"] - (6037.0 + 616.0)) < 0.01
+    assert abs(income_limits(9)["net"] - (4644.0 + 474.0)) < 0.01

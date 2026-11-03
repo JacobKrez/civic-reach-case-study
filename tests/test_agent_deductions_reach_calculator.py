@@ -9,7 +9,7 @@ accepts four optional deduction inputs:
   - shelter_costs_monthly
 
 When any of them is non-zero, the calculator runs the real federal net-income
-deduction chain (7 CFR §273.9(d), FY2026 standards) and the agent's verdict
+deduction chain (7 CFR §273.9(d), FY2027 standards) and the agent's verdict
 is the result of that chain — not a comparison of gross income against the
 130% limit.
 
@@ -29,7 +29,7 @@ The flagship case comes straight from
 ``knowledge_base/03_deductions_and_household.md``::
 
     household = 1, gross = $1,800/mo, all earned, no elderly/disabled
-    -> net income = 1,231.00, likely eligible under the applicable test.
+    -> net income = 1,223.00, likely eligible under the applicable test.
 
 Before the fix, the agent reported 1,800.00 / qualifies=False because the
 deduction never reached the calculator.
@@ -141,7 +141,7 @@ def test_flagship_case_deductions_flip_verdict():
     """The documented flagship example: household of 1, $1,800 gross all
     earned. Without W26 the agent reported 1800.0 / qualifies=False; with
     the fix, the calculator runs the deduction chain and reports
-    1231.0 / qualifies=True."""
+    1223.0 / qualifies=True."""
     agent_result = _run_agent_with_deductions(
         household_size=1,
         gross_monthly_income=1800.0,
@@ -154,7 +154,7 @@ def test_flagship_case_deductions_flip_verdict():
         has_elderly_or_disabled=False,
         earned_monthly_income=1800.0,
     )
-    assert agent_result["income_considered"] == direct["income_considered"] == 1231.0
+    assert agent_result["income_considered"] == direct["income_considered"] == 1223.0
     assert agent_result["qualifies"] is direct["qualifies"] is True
     assert agent_result["test_used"] == "gross"  # no elderly/disabled -> gross test
     assert agent_result["deductions"] is not None
@@ -323,5 +323,5 @@ def test_deduction_disclosed_after_verdict_invalidates_cache():
         household_size=1, gross_monthly_income=1800.0,
         has_elderly_or_disabled=False, earned_monthly_income=1800.0,
     )
-    assert agent_result["income_considered"] == direct["income_considered"] == 1231.0
+    assert agent_result["income_considered"] == direct["income_considered"] == 1223.0
     assert agent_result["qualifies"] is True

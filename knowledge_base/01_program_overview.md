@@ -3,8 +3,8 @@ doc_id: nc-fns-overview-en
 jurisdiction: nc
 authority: North Carolina Department of Health and Human Services
 source_url: https://www.ncdhhs.gov/divisions/social-services/program-benefits/food-and-nutrition-services
-retrieved: 2026-07-24
-effective: 2025-10-01..2026-09-30
+retrieved: 2026-11-02
+effective: 2026-10-01..2027-09-30
 supersedes: null
 ---
 

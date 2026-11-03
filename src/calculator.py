@@ -34,7 +34,7 @@ with others who purchase and prepare food separately — see
   separately) are screened against the **separate-household gross**
   monthly income limit — **165% of the federal poverty guideline** for
   the household size. This is the federal SNAP rule for separate
-  elderly/disabled households, which NC follows. See "FY2026 165%
+  elderly/disabled households, which NC follows. See "FY2027 165%
   standard for separate households" below.
 
 Passing ``state_code="NC"`` activates NC BBCE. The generic calculator API
@@ -44,13 +44,13 @@ its jurisdiction explicitly.
 ## Net-income deduction chain (W31)
 
 The net test computes the household's actual net monthly income per
-7 CFR §273.9(d), using the FY2026 SNAP deduction standards published by
-USDA FNS for the 48 contiguous states and DC (effective 2025-10-01 through
-2026-09-30; NC is a contiguous state):
+7 CFR §273.9(d), using the FY2027 SNAP deduction standards published by
+USDA FNS for the 48 contiguous states and DC (effective 2026-10-01 through
+2027-09-30; NC is a contiguous state):
 
 * **Standard deduction** — a flat monthly amount by household size
-  (FY2026, 48 states & DC): $209 for sizes 1–3, $223 for size 4,
-  $261 for size 5, $299 for sizes 6+.
+  (FY2027, 48 states & DC): $217 for sizes 1–3, $229 for size 4,
+  $268 for size 5, $308 for sizes 6+.
 * **Earned-income deduction** — 20% of gross earned income (wages or
   self-employment), when an earned-income figure is supplied.
 * **Dependent-care deduction** — actual out-of-pocket dependent-care
@@ -59,14 +59,14 @@ USDA FNS for the 48 contiguous states and DC (effective 2025-10-01 through
   $35/month, only for households with an elderly or disabled member.
 * **Excess shelter deduction** — shelter costs (rent/mortgage, taxes,
   insurance, utilities) above half of the household's adjusted income
-  after the deductions above, capped at $744/month for households
+  after the deductions above, capped at $769/month for households
   WITHOUT an elderly/disabled member; uncapped for households WITH one.
 
-Deduction source (USDA FNS, "SNAP FY 2026 Cost-of-Living Adjustments",
-effective 2025-10-01 through 2026-09-30):
+Deduction source (USDA FNS, "SNAP FY 2027 Cost-of-Living Adjustments",
+effective 2026-10-01 through 2027-09-30):
     https://www.fns.usda.gov/snap/allotment/cola
-The memo's 48 States & DC table gives standard deductions $209 / $223 /
-$261 / $299 and maximum excess shelter deduction $744.
+The memo's 48 States & DC table gives standard deductions $217 / $229 /
+$268 / $308 and maximum excess shelter deduction $769.
 
 These deduction inputs are OPTIONAL. A household that supplies none of
 them is computed exactly as before this change (gross income compared
@@ -80,10 +80,10 @@ the uncertain band.
 
 ## Source for the underlying poverty figures
 
-The base figures below are the USDA FNS **FY2026 SNAP income-eligibility
+The base figures below are the USDA FNS **FY2027 SNAP income-eligibility
 standards** for the 48 contiguous states and DC. The USDA memo publishes
 the monthly 100% and 130% standards as whole-dollar values, effective
-October 1, 2025 through September 30, 2026. See:
+October 1, 2026 through September 30, 2027. See:
 
     https://www.fns.usda.gov/snap/allotment/cola
 
@@ -116,7 +116,7 @@ and actual eligibility then turns on the net test (for elderly/disabled
 households) or on the federal 130%/200% reference bands for the
 non-elderly/disabled path.
 
-## FY2026 165% standard for separate households (sourced)
+## FY2027 165% standard for separate households (sourced)
 
 When an elderly (60+) or disabled person lives with others but
 purchases and prepares food separately, they may be classified as a
@@ -124,7 +124,7 @@ purchases and prepares food separately, they may be classified as a
 and NC FNS both apply a **165% gross-income standard** to such
 separate households, replacing the 200% BBCE ceiling and the 130%
 federal floor. This standard was set by USDA FNS and is re-sourced
-annually alongside the poverty guidelines. FY2026 monthly figures
+annually alongside the poverty guidelines. FY2027 monthly figures
 (48 States & DC, NC uses this column):
 
     HH1 $2,152   HH5 $5,177
@@ -133,13 +133,13 @@ annually alongside the poverty guidelines. FY2026 monthly figures
     HH4 $4,421   HH8 $7,446
     each additional person: +$757/month
 
-Source: USDA FNS SNAP FY2026 income-eligibility tables (48 States &
+Source: USDA FNS SNAP FY2027 income-eligibility tables (48 States &
 DC column, separate-elderly/disabled household row). The calculator
 keeps the 165% standard as a documented reference point; the
 calculator itself does not currently auto-route a household to the
 165% track (the agent's intake form is responsible for surfacing
 the separate-household question — see kb/03 "Who Can Be Separate?").
-The figures are exported as ``_SEPARATE_HOUSEHOLD_LIMITS_2026`` so
+The figures are exported as ``_SEPARATE_HOUSEHOLD_LIMITS_2027`` so
 tests and consumers can cross-reference them without re-deriving.
 
 ## IMPORTANT — update policy
@@ -159,28 +159,28 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
-# Source for the FY2026 SNAP income standards and deductions:
-# USDA FNS, "SNAP FY 2026 Cost-of-Living Adjustments" memo,
-# effective 2025-10-01 through 2026-09-30.
+# Source for the FY2027 SNAP income standards and deductions:
+# USDA FNS, "SNAP FY 2027 Cost-of-Living Adjustments" memo,
+# effective 2026-10-01 through 2027-09-30.
 _POVERTY_GUIDELINES_SOURCE_URL = "https://www.fns.usda.gov/snap/allotment/cola"
 
-# USDA publishes these FY2026 monthly standards directly as operative
+# USDA publishes these FY2027 monthly standards directly as operative
 # whole-dollar thresholds (48 States & DC), so they are stored as data rather
 # than re-derived at runtime. Audit trail: the source table derives gross at
 # 130% and net at 100% from the 2025 HHS poverty guidelines, then rounds each
 # monthly threshold UP to the next whole dollar. For example, HH1 arithmetic
 # gives $1,695.42 gross / $1,304.17 net, while USDA publishes $1,696 / $1,305.
 # The expanded NC BBCE column is twice the published net standard.
-_GROSS_LIMITS_2026: Dict[int, float] = {
-    1: 1696.0, 2: 2292.0, 3: 2888.0, 4: 3483.0,
-    5: 4079.0, 6: 4675.0, 7: 5271.0, 8: 5867.0,
+_GROSS_LIMITS_2027: Dict[int, float] = {
+    1: 1729.0, 2: 2345.0, 3: 2960.0, 4: 3575.0,
+    5: 4191.0, 6: 4806.0, 7: 5421.0, 8: 6037.0,
 }
-_NET_LIMITS_2026: Dict[int, float] = {
-    1: 1305.0, 2: 1763.0, 3: 2221.0, 4: 2680.0,
-    5: 3138.0, 6: 3596.0, 7: 4055.0, 8: 4513.0,
+_NET_LIMITS_2027: Dict[int, float] = {
+    1: 1330.0, 2: 1804.0, 3: 2277.0, 4: 2750.0,
+    5: 3224.0, 6: 3697.0, 7: 4170.0, 8: 4644.0,
 }
-_GROSS_ADDITIONAL_2026: float = 596.0
-_NET_ADDITIONAL_2026: float = 459.0
+_GROSS_ADDITIONAL_2027: float = 616.0
+_NET_ADDITIONAL_2027: float = 474.0
 _MAX_HOUSEHOLD_SIZE: int = 20  # precomputed table size; larger households extrapolate.
 
 
@@ -201,16 +201,16 @@ def _build_limits() -> Dict[int, Dict[str, float]]:
 
     The 165% separate-household standard for elderly/disabled separate
     households is built separately in ``_build_separate_household_limits``
-    and exported as ``_SEPARATE_HOUSEHOLD_LIMITS_2026``.
+    and exported as ``_SEPARATE_HOUSEHOLD_LIMITS_2027``.
     """
     limits: Dict[int, Dict[str, float]] = {}
     for size in range(1, _MAX_HOUSEHOLD_SIZE + 1):
         if size <= 8:
-            gross = _GROSS_LIMITS_2026[size]
-            net = _NET_LIMITS_2026[size]
+            gross = _GROSS_LIMITS_2027[size]
+            net = _NET_LIMITS_2027[size]
         else:
-            gross = _GROSS_LIMITS_2026[8] + (size - 8) * _GROSS_ADDITIONAL_2026
-            net = _NET_LIMITS_2026[8] + (size - 8) * _NET_ADDITIONAL_2026
+            gross = _GROSS_LIMITS_2027[8] + (size - 8) * _GROSS_ADDITIONAL_2027
+            net = _NET_LIMITS_2027[8] + (size - 8) * _NET_ADDITIONAL_2027
         limits[size] = {
             "gross": gross,
             "net": net,
@@ -223,44 +223,44 @@ _LIMITS: Dict[int, Dict[str, float]] = _build_limits()
 
 
 # ---------------------------------------------------------------------------
-# W30 — FY2026 165% standard for SEPARATE elderly/disabled households
-# (48 States & DC, USDA FNS SNAP FY2026 income-eligibility table).
+# W30 — FY2027 165% standard for SEPARATE elderly/disabled households
+# (48 States & DC, USDA FNS SNAP FY2027 income-eligibility table).
 #
 # When an elderly (60+) or disabled person lives with others but buys and
 # prepares food separately, federal SNAP rules (and NC FNS) apply a 165%
-# gross-income standard. The figures below are the FY2026 monthly limits
+# gross-income standard. The figures below are the FY2027 monthly limits
 # published by USDA FNS (48 States & DC column). The calculator does not
 # currently auto-route a household to this track — the agent's intake form
 # surfaces the separate-household question — but the table is exported so
 # tests, docs, and downstream consumers can cross-reference it without
-# re-deriving. See the "FY2026 165% standard for separate households"
+# re-deriving. See the "FY2027 165% standard for separate households"
 # section in the module docstring for the primary source.
 # ---------------------------------------------------------------------------
-_SEPARATE_HOUSEHOLD_LIMITS_2026: Dict[int, float] = {
-    1: 2152.0,
-    2: 2909.0,
-    3: 3665.0,
-    4: 4421.0,
-    5: 5177.0,
-    6: 5934.0,
-    7: 6690.0,
-    8: 7446.0,
+_SEPARATE_HOUSEHOLD_LIMITS_2027: Dict[int, float] = {
+    1: 2195.0,
+    2: 2976.0,
+    3: 3757.0,
+    4: 4538.0,
+    5: 5319.0,
+    6: 6100.0,
+    7: 6881.0,
+    8: 7662.0,
 }
-_SEPARATE_HOUSEHOLD_ADDITIONAL_PERSON: float = 757.0
+_SEPARATE_HOUSEHOLD_ADDITIONAL_PERSON: float = 781.0
 
 
 def _build_separate_household_limits() -> Dict[int, float]:
     """Extend the 165% separate-household table out to ``_MAX_HOUSEHOLD_SIZE``.
 
-    For household sizes 1-8 we use the published FY2026 figures verbatim
+    For household sizes 1-8 we use the published FY2027 figures verbatim
     (USD-rounded). For each additional person beyond 8, we add
-    ``_SEPARATE_HOUSEHOLD_ADDITIONAL_PERSON`` ($757/mo for FY2026, the
-    annual guideline's per-addition delta of $9,084 / 12 = $757/month).
+    ``_SEPARATE_HOUSEHOLD_ADDITIONAL_PERSON`` ($781/mo for FY2027, the
+    annual guideline's per-addition delta of $9,372 / 12 = $781/month).
     """
-    limits: Dict[int, float] = dict(_SEPARATE_HOUSEHOLD_LIMITS_2026)
+    limits: Dict[int, float] = dict(_SEPARATE_HOUSEHOLD_LIMITS_2027)
     for size in range(9, _MAX_HOUSEHOLD_SIZE + 1):
         limits[size] = round(
-            _SEPARATE_HOUSEHOLD_LIMITS_2026[8]
+            _SEPARATE_HOUSEHOLD_LIMITS_2027[8]
             + (size - 8) * _SEPARATE_HOUSEHOLD_ADDITIONAL_PERSON,
             2,
         )
@@ -271,13 +271,13 @@ _SEPARATE_HOUSEHOLD_LIMITS: Dict[int, float] = _build_separate_household_limits(
 
 
 def separate_household_limits(household_size: int) -> float:
-    """Public accessor for the FY2026 165% separate-household limit.
+    """Public accessor for the FY2027 165% separate-household limit.
 
     Returns the monthly gross-income limit (USD) for a separate
     elderly/disabled household of the given size. NC follows the federal
     48-States-and-DC column.
 
-    The figures are sourced from the FY2026 USDA FNS SNAP income-eligibility
+    The figures are sourced from the FY2027 USDA FNS SNAP income-eligibility
     tables (separate-elderly/disabled household row) and re-sourced annually
     alongside the poverty guidelines.
     """
@@ -286,34 +286,34 @@ def separate_household_limits(household_size: int) -> float:
     if household_size in _SEPARATE_HOUSEHOLD_LIMITS:
         return _SEPARATE_HOUSEHOLD_LIMITS[household_size]
     return round(
-        _SEPARATE_HOUSEHOLD_LIMITS_2026[8]
+        _SEPARATE_HOUSEHOLD_LIMITS_2027[8]
         + (household_size - 8) * _SEPARATE_HOUSEHOLD_ADDITIONAL_PERSON,
         2,
     )
 
 
 # ---------------------------------------------------------------------------
-# W31 — FY2026 federal SNAP deduction standards (48 States & DC).
+# W31 — FY2027 federal SNAP deduction standards (48 States & DC).
 #
-# Source: USDA FNS, "SNAP FY 2026 Cost-of-Living Adjustments" memo,
-# effective 2025-10-01 through 2026-09-30. The underlying table is titled
-# "SUPPLEMENTAL NUTRITION ASSISTANCE PROGRAM DEDUCTIONS, OCTOBER 1, 2025,
-# TO SEPTEMBER 30, 2026". NC uses the 48-States-and-DC column.
+# Source: USDA FNS, "SNAP FY 2027 Cost-of-Living Adjustments" memo,
+# effective 2026-10-01 through 2027-09-30. The underlying table is titled
+# "SUPPLEMENTAL NUTRITION ASSISTANCE PROGRAM DEDUCTIONS, OCTOBER 1, 2026,
+# TO SEPTEMBER 30, 2027". NC uses the 48-States-and-DC column.
 #
 # These constants are re-sourced annually alongside the poverty guidelines
 # (see the "IMPORTANT — update policy" section in the module docstring).
 # ---------------------------------------------------------------------------
 
-# Standard deduction by household size (48 States & DC, FY2026).
-# Sizes 1-2: $209; 3: $209; 4: $223; 5: $261; 6+: $299.
-_STANDARD_DEDUCTION_2026: Dict[int, float] = {
-    1: 209.0,
-    2: 209.0,
-    3: 209.0,
-    4: 223.0,
-    5: 261.0,
+# Standard deduction by household size (48 States & DC, FY2027).
+# Sizes 1-2: $217; 3: $217; 4: $229; 5: $268; 6+: $308.
+_STANDARD_DEDUCTION_2027: Dict[int, float] = {
+    1: 217.0,
+    2: 217.0,
+    3: 217.0,
+    4: 229.0,
+    5: 268.0,
 }
-_STANDARD_DEDUCTION_6_PLUS: float = 299.0
+_STANDARD_DEDUCTION_6_PLUS: float = 308.0
 
 # Fraction of gross earned income deducted (20%).
 _EARNED_INCOME_DEDUCTION_RATE: float = 0.20
@@ -323,21 +323,21 @@ _EARNED_INCOME_DEDUCTION_RATE: float = 0.20
 _MEDICAL_EXPENSE_THRESHOLD: float = 35.0
 
 # Maximum excess-shelter deduction for households WITHOUT an
-# elderly/disabled member (48 States & DC, FY2026). Households WITH an
+# elderly/disabled member (48 States & DC, FY2027). Households WITH an
 # elderly/disabled member are uncapped.
-_MAX_SHELTER_DEDUCTION_2026: float = 744.0
+_MAX_SHELTER_DEDUCTION_2027: float = 769.0
 
-# Maximum homeless shelter deduction (48 States & DC, FY2026). This value is
+# Maximum homeless shelter deduction (48 States & DC, FY2027). This value is
 # documented in the KB for operational reference; the current calculator
 # intake has no homeless-shelter field and therefore does not apply it.
-_MAX_HOMELESS_SHELTER_DEDUCTION_2026: float = 198.99
+_MAX_HOMELESS_SHELTER_DEDUCTION_2027: float = 205.66
 
 
 def _standard_deduction(household_size: int) -> float:
-    """Flat standard deduction for the household size (FY2026 table)."""
+    """Flat standard deduction for the household size (FY2027 table)."""
     if household_size >= 6:
         return _STANDARD_DEDUCTION_6_PLUS
-    return _STANDARD_DEDUCTION_2026[household_size]
+    return _STANDARD_DEDUCTION_2027[household_size]
 
 
 def compute_net_monthly_income(
@@ -351,7 +351,7 @@ def compute_net_monthly_income(
 ) -> Dict[str, float]:
     """Compute SNAP net monthly income via the federal deduction chain.
 
-    Implements 7 CFR §273.9(d) using the FY2026 deduction standards for
+    Implements 7 CFR §273.9(d) using the FY2027 deduction standards for
     the 48 States & DC. All deduction inputs are monthly dollar amounts
     and default to 0.0, so a caller that supplies none of them gets the
     pre-W14 behavior (gross income unchanged by the chain — the standard
@@ -421,7 +421,7 @@ def compute_net_monthly_income(
             "shelter": 0.0,
         }
 
-    # Federal deduction chain, 7 CFR §273.9(d), FY2026 amounts.
+    # Federal deduction chain, 7 CFR §273.9(d), FY2027 amounts.
     standard = _standard_deduction(household_size)
     earned = round(_EARNED_INCOME_DEDUCTION_RATE * earned_monthly_income, 2)
     dependent_care = dependent_care_monthly
@@ -436,7 +436,7 @@ def compute_net_monthly_income(
 
     shelter_excess = max(0.0, shelter_costs_monthly - (adjusted / 2.0))
     if not has_elderly_or_disabled:
-        shelter_excess = min(shelter_excess, _MAX_SHELTER_DEDUCTION_2026)
+        shelter_excess = min(shelter_excess, _MAX_SHELTER_DEDUCTION_2027)
 
     net = adjusted - shelter_excess
     net = max(0.0, net)
@@ -458,8 +458,8 @@ def _limit_for(household_size: int, test: str) -> float:
         raise ValueError(f"household_size must be >= 1; got {household_size}")
     if household_size in _LIMITS:
         return _LIMITS[household_size][test]
-    gross = _GROSS_LIMITS_2026[8] + (household_size - 8) * _GROSS_ADDITIONAL_2026
-    net = _NET_LIMITS_2026[8] + (household_size - 8) * _NET_ADDITIONAL_2026
+    gross = _GROSS_LIMITS_2027[8] + (household_size - 8) * _GROSS_ADDITIONAL_2027
+    net = _NET_LIMITS_2027[8] + (household_size - 8) * _NET_ADDITIONAL_2027
     return {"gross": gross, "net": net, "expanded": round(net * 2.0, 2)}[test]
 
 
@@ -528,7 +528,7 @@ def calculate_eligibility(
         True when the elderly/disabled member is a SEPARATE household
         (lives with others but purchases and prepares food separately).
         Routes the household to the federal 165% separate-household
-        gross-income standard (FY2026 figures) instead of the regular
+        gross-income standard (FY2027 figures) instead of the regular
         100% net test. The agent's intake form is responsible for
         surfacing this question — see ``knowledge_base/03_deductions_and_household.md``.
 
@@ -624,7 +624,7 @@ def calculate_eligibility(
     #   - NC non-elderly/disabled → gross test against 200% FPL (BBCE)
     #   - NC elderly/disabled same household → net test against 100% FPL
     #   - Separate elderly/disabled household → gross test against 165%
-    #     FPL (FY2026 separate-household standard, federal rule NC follows)
+    #     FPL (FY2027 separate-household standard, federal rule NC follows)
     #   - Non-NC states → gross test against the 130% federal floor
     #     (only NC is implemented today; the flag is here so the
     #     calculator cannot silently drift from NC behavior if reused).
@@ -904,5 +904,5 @@ __all__ = [
     "max_household_size",
     "separate_household_limits",
     "_POVERTY_GUIDELINES_SOURCE_URL",
-    "_SEPARATE_HOUSEHOLD_LIMITS_2026",
+    "_SEPARATE_HOUSEHOLD_LIMITS_2027",
 ]

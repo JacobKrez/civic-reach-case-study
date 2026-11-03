@@ -1,10 +1,10 @@
 ---
-doc_id: nc-fns-income-fy2026
+doc_id: nc-fns-income-fy2027
 jurisdiction: nc
 authority: USDA Food and Nutrition Service; North Carolina DHHS
-source_url: https://www.usda.gov/sites/default/files/guidance-documents/fns.snap-cola-fy26memo.pdf
-retrieved: 2026-07-24
-effective: 2025-10-01..2026-09-30
+source_url: https://www.fna.usda.gov/snap/allotment/cola
+retrieved: 2026-11-02
+effective: 2026-10-01..2027-09-30
 supersedes: null
 ---
 
@@ -30,13 +30,13 @@ supersedes: null
 - Households where an elderly/disabled person is a **separate household** (lives
   with others but buys and prepares food separately) are screened against a
   different gross-income standard — see kb/03 ("Separate Elderly/Disabled
-  Households — FY2026 165% standard").
+  Households — FY2027 165% standard").
 
-## Monthly income limits — FY 2026 SNAP income-eligibility standards
+## Monthly income limits — FY 2027 SNAP income-eligibility standards
 
-The base figures are the USDA FNS FY2026 SNAP income-eligibility standards
-for the 48 contiguous states and DC (effective 2025-10-01 through
-2026-09-30). The 130% gross and 100% net columns are the figures USDA FNS
+The base figures are the USDA FNS FY2027 SNAP income-eligibility standards
+for the 48 contiguous states and DC (effective 2026-10-01 through
+2027-09-30). The 130% gross and 100% net columns are the figures USDA FNS
 publishes directly for SNAP; the expanded 200% column is the NC BBCE
 ceiling (NCDHHS) — twice the published 100% net figure, expressed monthly.
 USDA FNS re-sources these annually in the SNAP COLA memo.
@@ -48,23 +48,23 @@ USDA FNS re-sources these annually in the SNAP COLA memo.
 
 | Household Size | Gross (130%) | Net (100%) | Expanded (200%) |
 |---:|---:|---:|---:|
-| 1 | $1,696.00 | $1,305.00 | $2,610.00 |
-| 2 | $2,292.00 | $1,763.00 | $3,526.00 |
-| 3 | $2,888.00 | $2,221.00 | $4,442.00 |
-| 4 | $3,483.00 | $2,680.00 | $5,360.00 |
-| 5 | $4,079.00 | $3,138.00 | $6,276.00 |
-| 6 | $4,675.00 | $3,596.00 | $7,192.00 |
-| 7 | $5,271.00 | $4,055.00 | $8,110.00 |
-| 8 | $5,867.00 | $4,513.00 | $9,026.00 |
-| each additional | +$596.00 | +$459.00 | +$918.00 |
+| 1 | $1,729.00 | $1,330.00 | $2,660.00 |
+| 2 | $2,345.00 | $1,804.00 | $3,608.00 |
+| 3 | $2,960.00 | $2,277.00 | $4,554.00 |
+| 4 | $3,575.00 | $2,750.00 | $5,500.00 |
+| 5 | $4,191.00 | $3,224.00 | $6,448.00 |
+| 6 | $4,806.00 | $3,697.00 | $7,394.00 |
+| 7 | $5,421.00 | $4,170.00 | $8,340.00 |
+| 8 | $6,037.00 | $4,644.00 | $9,288.00 |
+| each additional | +$616.00 | +$474.00 | +$948.00 |
 
 <!-- END GENERATED TABLE -->
 
 ## Verification
 Income limits change every federal fiscal year. Before giving a final
 eligibility answer, the agent should:
-1. Note which year's guidelines are in effect (FY2026, effective
-   2025-10-01 through 2026-09-30).
+1. Note which year's guidelines are in effect (FY2027, effective
+   2026-10-01 through 2027-09-30).
 2. Direct the user to confirm current figures on the USDA FNS eligibility
    page: https://www.fns.usda.gov/snap/eligibility-income-and-deductions
 3. For NC BBCE specifically, confirm the 200% gross screen and the no-asset-

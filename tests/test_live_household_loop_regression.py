@@ -45,9 +45,9 @@ def test_reported_large_household_transcript_moves_forward(monkeypatch):
     assert "disability" in income
     assert "likely eligible" in verdict.lower()
 
-    # The FY2026 additional-person amounts continue past the published 1-8
+    # The FY2027 additional-person amounts continue past the published 1-8
     # table; a large valid household never falls back into the intake loop.
-    assert income_limits(17)["net"] == 4513 + (17 - 8) * 459
+    assert income_limits(17)["net"] == 4644 + (17 - 8) * 474
 
 
 def test_initial_intro_is_two_bubbles_inside_conversation_log():

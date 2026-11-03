@@ -1375,7 +1375,7 @@ class FoodPathAgent:
                 # meaningless to them and faintly alarming. The citation
                 # still names a real, checkable source; it just names it
                 # the way a person would.
-                "label": "FY2026 SNAP income limits (USDA)",
+                "label": "FY2027 SNAP income limits (USDA)",
                 "snippet": (
                     f"Household size {self.state.household_size}: gross 130 percent "
                     f"limit ${limits['gross']:,.2f}; net 100 percent limit "
