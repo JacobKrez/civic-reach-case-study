@@ -27,6 +27,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Full history so gate G4 can date the last change to src/.
+          fetch-depth: 0
 
       - uses: actions/setup-python@v5
         with:

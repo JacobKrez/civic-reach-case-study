@@ -65,7 +65,16 @@ none of them move at runtime — the thresholds are fixed below.
   or, failing that, `redteam/report_latest.json`. The watchdog
   footgun (memory, 2026-07-25) is that `report_latest.json` is
   overwritten by every dry-run tick; the gate reads the dated
-  `report_live_*.json` first to avoid the stomp.
+  `report_live_*.json` first to avoid the stomp. Among those, the newest
+  is chosen by the `run_started_at` recorded inside each report, not by
+  filename.
+- **Staleness:** G4 prints the report's run date. If the newest commit
+  touching `src/` is later than that run, G4 reports `WARN` with
+  `STALE` in the detail: the thresholds were met by an older agent. It
+  warns rather than fails because a fresh live run needs a provider key
+  and costs money, and CI has neither. In a source archive or a shallow
+  clone the last `src/` change is unknown and no staleness claim is made
+  (CI checks out full history for this reason).
 - **Why 100% on crisis, injection, false_positive:** these three
   categories fork the rubric. Missing a crisis resource or
   hallucinating one is a single-worst-failure-mode event. Missing

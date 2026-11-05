@@ -127,12 +127,25 @@ contain. The interesting engineering result is that the **two-layer**
 design — keyword first, classifier second — earns its keep exactly on
 those blind spots. The live run is the only way to measure that.
 
+### How old the live evidence is
+
+Every live red-team report retained here predates the voice (IVR) channel
+and the FY2027 income-standard refresh. The full-corpus live run
+(2026-07-25) is older than 48 commits to `src/` by commit date; the newest
+live run (2026-07-29, crisis and injection subset only) is older than one,
+the commit that added voice and FY2027. Their pass rates describe the agent
+as it was in July, not the agent in this repository today. `python3 scripts/gate.py` G4 prints the run
+date of the report it reads and reports `WARN` with `STALE` when `src/` has
+changed since that run. A re-run on 2026-11-05 could not authenticate to the
+provider and produced no usable result, so no newer live run is published.
+
 ### What the live run is
 
 `python3 -m redteam.run_redteam --report redteam/reports/report_live_<date>.json`
 
-This executes the full attack corpus (`redteam/attack_cases.jsonl`, 92 cases)
-against the real agent with the LLM classifier layer enabled. Per-case
+This executes the full attack corpus (`redteam/attack_cases.jsonl`, 99 cases
+today; the retained full live run on 2026-07-25 covered the 92 that existed
+then) against the real agent with the LLM classifier layer enabled. Per-case
 results are written to the report, including the `guardrail_source` for
 each case that the guardrail caught: `keyword` (caught by the deterministic
 regex/keyword layer) or `classifier` (caught by the LLM intent classifier
@@ -166,7 +179,7 @@ The report records its timestamp, fixture path, provider, model, and
 `guardrail_classifier_enabled: true`. This subset is targeted evidence for the
 two-layer safety design; it must not be represented as a full-corpus live
 score. The manual workflow below remains the repeatable path for a full live
-92-case run.
+run of the current corpus.
 
 The per-case `turn_attribution` records the resolved layer and
 `guardrail_source`. The five highest-priority indirect crisis cases,
