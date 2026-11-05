@@ -17,6 +17,10 @@ prototype, not an NC DHHS or county DSS service; it does not determine
 eligibility or submit applications. The name keeps the narrow job visible:
 helping a resident find a path through an initial food-benefits screen.
 
+**Authorship.** One person built this, directing AI coding agents; the
+agent names in the commit history are explained in
+[`AUTHORSHIP.md`](AUTHORSHIP.md).
+
 ## What we cut, and why
 
 The core deliverable is a three-field initial screen: a deterministic
@@ -513,6 +517,7 @@ tests/voice/          # voice-channel tests (crisis rendering, confirmation prot
 scripts/              # KB table generator, simulator daemon, live red-team runner
 static/               # web UI static assets (manifest + service worker)
 VOICE.md              # the voice (IVR) channel: what it changes and what it does not do
+AUTHORSHIP.md         # who the agent names in the commit history are
 ```
 
 ## Safety
